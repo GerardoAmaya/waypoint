@@ -1,0 +1,38 @@
+services:
+  db:
+    # Imagen con PostGIS incluido. Postgres pelado no sirve: las consultas
+    # espaciales son el nucleo de este proyecto.
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-waypoint}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-waypoint}
+      POSTGRES_DB: ${POSTGRES_DB:-waypoint}
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-waypoint}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      args:
+        INSTALL_DEV: "true"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-waypoint}:${POSTGRES_PASSWORD:-waypoint}@db:5432/${POSTGRES_DB:-waypoint}
+    ports:
+      - "8100:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  pgdata:

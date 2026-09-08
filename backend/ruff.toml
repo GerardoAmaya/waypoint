@@ -1,0 +1,17 @@
+line-length = 95
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]
+
+ignore = [
+    # Depends(), Query() y File() como valor por defecto es el idioma de
+    # FastAPI, no un descuido. B008 no lo distingue.
+    "B008",
+    # El import de app.models en env.py registra las tablas en Base.metadata
+    # aunque el nombre no se use.
+    "E402",
+]
+
+[lint.per-file-ignores]
+"alembic/versions/*" = ["E501"]

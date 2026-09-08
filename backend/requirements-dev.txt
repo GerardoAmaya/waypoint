@@ -1,0 +1,6 @@
+# Dependencias de desarrollo y CI. La imagen de produccion se construye con
+# INSTALL_DEV=false y no las incluye.
+-r requirements.txt
+
+pytest==8.3.4
+ruff==0.9.2

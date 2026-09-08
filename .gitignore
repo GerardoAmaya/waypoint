@@ -1,0 +1,14 @@
+.env
+.env.local
+.env.deploy
+*.key
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+.next/
+.DS_Store
+data/
