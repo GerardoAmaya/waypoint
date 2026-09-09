@@ -371,6 +371,131 @@ class TestFranjasDeComida:
         assert len(nombres) == len(set(nombres))
 
 
+class TestUbicacionDeLaComida:
+    """La comida va donde menos kilometros cueste, no donde caiga la hora.
+
+    El caso real de Ataco: tres paradas dentro del Parque El Imposible, el
+    unico restaurante en el pueblo a dieciseis kilometros. Eligiendo por
+    cercania a la parada anterior, el dia salia parque - pueblo - parque:
+    33.91 km para un recorrido que dentro del parque son cinco.
+    """
+
+    def _restricciones(self, **extra):
+        base = dict(
+            days=1,
+            center_lat=13.83,
+            center_lon=-89.95,
+            max_travel_km_per_day=200,
+        )
+        base.update(extra)
+        return Constraints(**base)
+
+    def test_no_sale_y_vuelve_para_almorzar(self):
+        from app.services.itinerary import _day_travel_km, _insert_meals
+
+        # Tres paradas juntas y un restaurante lejos, en una sola direccion.
+        ruta = [
+            lugar("El Imposible", 13.8309, -89.9589, Category.nature),
+            lugar("Parque El Imposible", 13.8280, -89.9485),
+            lugar("Mirador El Mulo", 13.8288, -89.9415, Category.viewpoint),
+        ]
+        comidas = [lugar("Pupuseria Ataco", 13.8705, -89.8517, Category.food)]
+        restricciones = self._restricciones()
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+
+        assert any(c == "lunch" for _, c in secuencia), "tiene que almorzar"
+        posicion = next(i for i, (_, c) in enumerate(secuencia) if c == "lunch")
+        assert posicion == len(secuencia) - 1, "el almuerzo va al final, no en medio"
+
+        # Con el almuerzo intercalado el dia costaba el doble.
+        km = _day_travel_km(secuencia, restricciones.mode)
+        ida_y_vuelta = km * 1.8
+        assert km < ida_y_vuelta
+
+    def test_un_restaurante_sobre_el_camino_si_va_en_medio(self):
+        """Cuando no cuesta desviarse, la comida se intercala normalmente."""
+        from app.services.itinerary import _insert_meals
+
+        ruta = [
+            lugar("A", 13.700, -89.220, Category.nature),
+            lugar("B", 13.760, -89.220),
+            lugar("C", 13.820, -89.220, Category.viewpoint),
+        ]
+        comidas = [lugar("Sobre la ruta", 13.730, -89.220, Category.food)]
+
+        secuencia = _insert_meals(ruta, comidas, self._restricciones())
+        posicion = next(i for i, (_, c) in enumerate(secuencia) if c == "lunch")
+
+        assert 0 < posicion < len(secuencia) - 1
+
+    def test_el_limite_de_traslado_manda_sobre_la_comida(self):
+        """Si el unico restaurante rompe el presupuesto, no hay almuerzo.
+
+        Y validate() lo reporta, para que el usuario decida si lleva comida o
+        levanta el limite. Meterlo rompiendo el limite seria elegir por el.
+        """
+        from app.services.itinerary import _insert_meals
+
+        ruta = [lugar("Solo", 13.700, -89.220, Category.nature)]
+        comidas = [lugar("Lejisimos", 13.950, -89.500, Category.food)]
+        restricciones = self._restricciones(max_travel_km_per_day=5)
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+
+        assert not any(c == "lunch" for _, c in secuencia)
+
+    def test_no_almuerza_tan_temprano_que_haya_que_esperar(self):
+        """Una posicion que llega a las nueve y media no es hora de almorzar."""
+        from app.services.itinerary import _insert_meals
+
+        ruta = [
+            lugar("A", 13.700, -89.220, Category.viewpoint),
+            lugar("B", 13.705, -89.220, Category.viewpoint),
+            lugar("C", 13.710, -89.220, Category.viewpoint),
+        ]
+        comidas = [lugar("Al lado", 13.701, -89.221, Category.food)]
+
+        secuencia = _insert_meals(ruta, comidas, self._restricciones())
+        posicion = next((i for i, (_, c) in enumerate(secuencia) if c == "lunch"), None)
+
+        assert posicion != 1, "a las 9:30 no se almuerza"
+
+
+class TestCategoriasEvitadas:
+    def test_lo_evitado_se_descarta_aunque_sobren_cupos(self):
+        """Restarle puntos no alcanza: con un cupo libre entra igual."""
+        candidatos = [
+            lugar("Volcan", 13.700, -89.220, Category.nature),
+            lugar("Museo", 13.702, -89.222, Category.culture),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            avoided_categories=[Category.nature],
+            include_meals=False,
+            max_travel_km_per_day=50,
+        )
+
+        dias = build_days(candidatos, restricciones)
+        categorias = {p.category for dia in dias for p in dia}
+
+        assert "nature" not in categorias
+
+    def test_si_todo_esta_evitado_no_arma_dias_falsos(self):
+        candidatos = [lugar("Volcan", 13.700, -89.220, Category.nature)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            avoided_categories=[Category.nature],
+            include_meals=False,
+        )
+
+        assert build_days(candidatos, restricciones) == []
+
+
 class TestReservaDeCupos:
     """El sitio reservado para comer solo tiene sentido si hay donde comer.
 
@@ -394,7 +519,12 @@ class TestReservaDeCupos:
 
         assert len(dias[0]) == 5
 
-    def test_con_restaurantes_se_reserva_el_sitio(self):
+    def test_un_dia_corto_reserva_solo_para_el_almuerzo(self):
+        """Con cinco paradas el dia termina cerca de las cuatro y media.
+
+        Nunca llega a la cena, asi que guardarle cupo dejaria uno vacio en el
+        caso normal y no en uno raro.
+        """
         candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(8)]
         restricciones = Constraints(
             days=1,
@@ -407,7 +537,40 @@ class TestReservaDeCupos:
 
         dias = build_days(candidatos, restricciones, meal_options=4)
 
-        assert len(dias[0]) == 3, "dos cupos quedan para almuerzo y cena"
+        assert len(dias[0]) == 4, "un cupo queda para el almuerzo"
+
+    def test_un_dia_largo_reserva_para_las_dos_comidas(self):
+        candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(14)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=10,
+            latest_end=time(21, 0),
+            include_meals=True,
+            max_travel_km_per_day=120,
+        )
+
+        dias = build_days(candidatos, restricciones, meal_options=4)
+
+        assert len(dias[0]) == 8, "dos cupos quedan para almuerzo y cena"
+
+    def test_sin_tiempo_hasta_la_cena_no_se_reserva_para_ella(self):
+        """Un dia largo pero que cierra temprano tampoco llega a cenar."""
+        candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(14)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=10,
+            latest_end=time(16, 0),
+            include_meals=True,
+            max_travel_km_per_day=120,
+        )
+
+        dias = build_days(candidatos, restricciones, meal_options=4)
+
+        assert len(dias[0]) == 9
 
     def test_con_un_solo_restaurante_se_reserva_uno(self):
         candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(8)]
@@ -422,7 +585,7 @@ class TestReservaDeCupos:
 
         dias = build_days(candidatos, restricciones, meal_options=1)
 
-        assert len(dias[0]) == 4
+        assert len(dias[0]) == 4, "solo hay un restaurante y solo cabe el almuerzo"
 
     def test_el_techo_de_paradas_se_respeta_igual(self):
         """Llenar los cupos libres no es excusa para pasarse del limite."""
