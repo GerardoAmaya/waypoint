@@ -12,3 +12,6 @@ node_modules/
 .next/
 .DS_Store
 data/
+# Volcado del catalogo para el despliegue: son megabytes de datos que ya
+# estan en la base, no codigo.
+catalogo.dump

@@ -12,6 +12,8 @@ el despliegue. Ver `PLAN.md` para el alcance completo.
 
 ---
 
+Para publicarlo, ver `DEPLOY.md`.
+
 ## Correr localmente
 
 ```bash

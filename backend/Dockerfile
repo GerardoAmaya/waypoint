@@ -21,6 +21,11 @@ RUN if [ "$INSTALL_DEV" = "true" ]; then \
     fi
 
 COPY . .
+RUN chmod +x start.sh
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# El arranque pasa por un guion porque la forma exec de CMD no expande
+# variables, y Railway inyecta el puerto por entorno. Ver backend/start.sh, que
+# ademas explica por que va con un solo worker.
+CMD ["./start.sh"]

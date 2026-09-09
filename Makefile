@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check
+.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check dump restore
 
 up:
 	docker compose up -d --build
@@ -69,3 +69,28 @@ web-build:
 # Las mismas tres comprobaciones que corre CI sobre el frontend.
 web-check:
 	cd frontend && npm run typecheck && npm run lint && npm run build
+
+# --------------------------------------------------------------------------
+# Despliegue. Ver DEPLOY.md.
+# --------------------------------------------------------------------------
+
+# Vuelca los datos, no el esquema: el esquema lo pone Alembic en el destino.
+# Se copian de local en vez de volver a bajar de Overpass porque las cifras del
+# README describen ESTE catalogo, y OpenStreetMap cambia todos los dias.
+#
+# travel_edges va incluida a proposito: son peticiones a OpenRouteService ya
+# pagadas, y llevarlas hace que la demo arranque con la cache caliente.
+dump:
+	docker compose exec -T db pg_dump -U waypoint -d waypoint \
+		--data-only --no-owner --no-privileges \
+		-t places -t place_names -t travel_edges -t route_legs \
+		> catalogo.dump
+	@wc -c catalogo.dump
+
+# Requiere DATABASE_URL con la cadena de Neon y psql instalado en la maquina.
+#   make restore DATABASE_URL="postgresql://...neon.tech/waypoint?sslmode=require"
+restore:
+	@test -n "$(DATABASE_URL)" || (echo "Falta DATABASE_URL"; exit 1)
+	@test -f catalogo.dump || (echo "Falta catalogo.dump: corre make dump primero"; exit 1)
+	psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -f catalogo.dump
+	@echo "Comproba con: curl TU-BACKEND/places/stats"
