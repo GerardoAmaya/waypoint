@@ -434,6 +434,34 @@ def resolve_area(
     )
 
 
+# Parecido minimo para el punto de partida. Mas exigente que para el area:
+# equivocar el area da un itinerario en otra ciudad y se nota; equivocar el
+# punto de partida da un itinerario que empieza donde el usuario no esta, y eso
+# se descubre estando ahi.
+#
+# El caso que lo justifica es real: "Hotel Barcelo" no esta en el catalogo, y
+# con umbral bajo la busqueda difusa devuelve "Hotel La Parcela", que es otro
+# sitio a veinte kilometros.
+MIN_SIMILARITY_PARTIDA = 0.60
+
+
+def resolve_start_place(db: Session, texto: str) -> PlaceHit | None:
+    """El lugar del que sale el dia, buscado por nombre en el catalogo.
+
+    **Aca si valen los comedores y los hoteles**, al contrario que para centrar
+    la busqueda. Un Pizza Hut no sirve para decidir en que zona viajar —los
+    negocios se llaman como el sitio donde estan y ganan la busqueda difusa sin
+    merecerlo— pero es perfectamente valido como punto de partida: es donde la
+    persona esta. Son dos papeles distintos del mismo dato.
+
+    Devuelve None cuando no hay nada lo bastante parecido, y quien llama tiene
+    que decirlo. Arrancar el dia en un sitio que el usuario no nombro es peor
+    que admitir que no se encontro.
+    """
+    hits = search_by_name(db, texto, limit=5, min_similarity=MIN_SIMILARITY_PARTIDA)
+    return hits[0] if hits else None
+
+
 def zone_names() -> list[str]:
     """Los nombres que el modelo puede usar. Va dentro del prompt."""
     return [z.name for z in ZONES]

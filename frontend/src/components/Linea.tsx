@@ -43,6 +43,17 @@ export default function Linea({
      no son el mismo dato, y son 40 km o 40 minutos muy distintos. */
   const iconoTraslado = mode === "walking" ? faPersonWalking : faCarSide;
 
+  /*
+    Un dia que vuelve al punto de partida tiene el mismo lugar al principio y
+    al final, y sin decirlo parece un error de duplicado. Se deduce de las
+    paradas en vez de pedirle un campo al backend: que la ultima sea la primera
+    ES lo que significa "vuelvo a donde empece".
+  */
+  const primera = day.stops[0];
+  const ultima = day.stops[day.stops.length - 1];
+  const vuelveAlInicio =
+    day.stops.length > 2 && primera.place.id === ultima.place.id;
+
   return (
     <div>
       <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-borde pb-3 text-dato text-tinta-suave">
@@ -66,7 +77,14 @@ export default function Linea({
         <AnimatePresence mode="popLayout" initial={false}>
           {day.stops.map((parada, indice) => (
             <motion.li
-              key={parada.place.id}
+              /*
+                La posicion entra en la clave porque un dia que vuelve al punto
+                de partida tiene el mismo lugar dos veces, y dos elementos con
+                la misma clave rompen React. El precio es que reordenar una
+                parada la vuelve a montar en vez de moverla; se paga solo al
+                revisar un dia, y a cambio el viaje de ida y vuelta existe.
+              */
+              key={`${parada.place.id}-${indice}`}
               layout
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
@@ -116,13 +134,27 @@ export default function Linea({
                   {parada.place.name}
                 </p>
                 <p className="mt-0.5 text-dato text-tinta-tenue">
-                  {parada.meal === "lunch"
-                    ? "Almuerzo"
-                    : parada.meal === "dinner"
-                      ? "Cena"
-                      : CATEGORIA[parada.place.category].nombre}
-                  {" · hasta las "}
-                  <span className="dato">{hora(parada.departure)}</span>
+                  {vuelveAlInicio && indice === day.stops.length - 1
+                    ? "Regreso al punto de partida"
+                    : vuelveAlInicio && indice === 0
+                      ? `Salida · ${CATEGORIA[parada.place.category].nombre}`
+                      : parada.meal === "lunch"
+                        ? "Almuerzo"
+                        : parada.meal === "dinner"
+                          ? "Cena"
+                          : CATEGORIA[parada.place.category].nombre}
+                  {/*
+                    Sin "hasta las" cuando la parada no dura nada. El punto de
+                    partida y el regreso son los dos casos: uno se sale y el
+                    otro se llega, y "llega 09:00, hasta las 09:00" se lee como
+                    un error de calculo.
+                  */}
+                  {parada.arrival !== parada.departure && (
+                    <>
+                      {" · hasta las "}
+                      <span className="dato">{hora(parada.departure)}</span>
+                    </>
+                  )}
                 </p>
 
                 {parada.travel_km_from_previous > 0 && (

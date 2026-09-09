@@ -21,7 +21,9 @@ from app.services.itinerary import (
     Day,
     Itinerary,
     Stop,
+    _insert_meals,
     _route_km,
+    _trim_to_budget,
     build_days,
     estimate_travel,
     order_by_proximity,
@@ -1129,3 +1131,198 @@ class TestConsejoDeCena:
         ]
 
         assert advise(self._itinerario(stops), restricciones, []) == []
+
+
+class TestPuntoDePartida:
+    """El dia arranca donde el usuario dijo, no donde el motor prefiere.
+
+    Es la diferencia entre "armame un dia en San Salvador" y "salgo de la
+    pizzeria de la Gran Via a las doce y almuerzo ahi". El segundo es lo que la
+    gente pide de verdad.
+
+    Ojo con el papel: un Pizza Hut no sirve para *centrar* la busqueda —los
+    negocios se llaman como el sitio donde estan y ganan la busqueda difusa sin
+    merecerlo— pero si sirve como punto de partida. Son dos cosas distintas y
+    geocode se ocupa de la primera.
+    """
+
+    def _catalogo(self):
+        return [
+            lugar("Museo", 13.7010, -89.2210, Category.culture, 0.6),
+            lugar("Parque", 13.7020, -89.2230, Category.nature, 0.6),
+            lugar("Mirador", 13.7040, -89.2260, Category.viewpoint, 0.6),
+        ]
+
+    def test_el_ancla_es_la_primera_parada(self):
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            start_place=casa,
+            include_meals=False,
+        )
+
+        [dia] = build_days(self._catalogo(), restricciones)
+
+        assert dia[0] is casa, f"el dia empieza en {dia[0].name}"
+
+    def test_el_ancla_no_gasta_cupo_de_paradas(self):
+        """Quien pide tres paradas habla de lugares que va a visitar.
+
+        Descontarle una por decir de donde sale le da menos de lo que pidio.
+        """
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        base = dict(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=3,
+            include_meals=False,
+        )
+
+        [sin_ancla] = build_days(self._catalogo(), Constraints(**base))
+        [con_ancla] = build_days(self._catalogo(), Constraints(start_place=casa, **base))
+
+        assert len(con_ancla) == len(sin_ancla) + 1
+        assert len([p for p in con_ancla if p is not casa]) == len(sin_ancla)
+
+    def test_el_ancla_no_se_recorta_cuando_el_dia_no_entra(self):
+        """El punto de partida es un dato del usuario, no una eleccion.
+
+        Si el dia no cabe en el presupuesto se quitan las paradas elegidas, no
+        el sitio de donde sale.
+        """
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        lejanos = [
+            lugar(f"Lejano {i}", 13.70 + i * 0.2, -89.22, Category.nature, 0.6)
+            for i in range(4)
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_travel_km_per_day=15,
+            start_place=casa,
+            include_meals=False,
+        )
+
+        [grupo] = build_days(lejanos, restricciones)
+        secuencia = _trim_to_budget(grupo, [], restricciones, None, 1)
+
+        assert secuencia[0][0] is casa
+        assert _route_km([p for p, _ in secuencia]) <= 15
+
+    def test_si_el_dia_vuelve_el_regreso_es_una_parada_visible(self):
+        """Quien pregunta "a que hora llego a casa" pregunta por esa linea."""
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            start_place=casa,
+            return_to_start=True,
+            include_meals=False,
+        )
+
+        dia = schedule_day(
+            1, [(casa, None), *[(p, None) for p in self._catalogo()]], restricciones
+        )
+
+        assert dia.stops[0].place is casa
+        assert dia.stops[-1].place is casa
+        assert len(dia.stops) == 5
+
+    def test_sin_regreso_el_dia_no_cierra(self):
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            start_place=casa,
+            return_to_start=False,
+            include_meals=False,
+        )
+
+        dia = schedule_day(1, [(casa, None), (self._catalogo()[0], None)], restricciones)
+
+        assert dia.stops[-1].place is not casa
+
+    def test_el_presupuesto_cuenta_el_regreso(self):
+        """Sin contarlo, el dia se llena al tope y la vuelta lo saca despues.
+
+        Y entonces ya no hay nada que recortar: el exceso aparece cuando el
+        itinerario esta armado.
+        """
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        base = dict(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_travel_km_per_day=12,
+            start_place=casa,
+            include_meals=False,
+            max_stops_per_day=6,
+        )
+        candidatos = [
+            lugar(f"P{i}", 13.70 + i * 0.02, -89.22, Category.nature, 0.6) for i in range(6)
+        ]
+
+        [ida] = build_days(candidatos, Constraints(**base))
+        [vuelta] = build_days(candidatos, Constraints(return_to_start=True, **base))
+
+        assert len(vuelta) <= len(ida), (
+            "volver cuesta kilometros y el dia deberia entrar mas corto"
+        )
+
+    def test_un_comedor_de_partida_es_la_comida_del_dia(self):
+        """ "Parto de la pupuseria y almuerzo ahi" no pide otro restaurante."""
+        pupuseria = lugar("Pupuseria", 13.6900, -89.2100, Category.food, 0.5)
+        comidas = [lugar("Otro comedor", 13.7015, -89.2215, Category.food, 0.9)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            start_place=pupuseria,
+            earliest_start=time(12, 0),
+        )
+
+        secuencia = _insert_meals([pupuseria, *self._catalogo()], comidas, restricciones)
+
+        assert secuencia[0] == (pupuseria, "lunch")
+        assert all(lugar_ is not comidas[0] for lugar_, _ in secuencia)
+
+    def test_con_regreso_el_ancla_vale_para_todos_los_dias(self):
+        """Quien vuelve cada noche esta diciendo que ese sitio es su base."""
+        hotel = lugar("Hotel", 13.6900, -89.2100, Category.lodging, 0.1)
+        restricciones = Constraints(
+            days=3,
+            center_lat=13.70,
+            center_lon=-89.22,
+            start_place=hotel,
+            return_to_start=True,
+            include_meals=False,
+        )
+
+        assert all(restricciones.anchors_day(n) for n in (1, 2, 3))
+
+    def test_sin_regreso_el_ancla_vale_solo_el_primer_dia(self):
+        """Partir de un sitio se hace una vez; dormir ahi, todas las noches."""
+        pizzeria = lugar("Pizzeria", 13.6900, -89.2100, Category.food, 0.5)
+        restricciones = Constraints(
+            days=3,
+            center_lat=13.70,
+            center_lon=-89.22,
+            start_place=pizzeria,
+            return_to_start=False,
+            include_meals=False,
+        )
+
+        assert restricciones.anchors_day(1)
+        assert not restricciones.anchors_day(2)
+        assert not restricciones.anchors_day(3)
+
+    def test_sin_ancla_nada_cambia(self):
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+
+        assert not restricciones.anchors_day(1)

@@ -62,6 +62,15 @@ QUERY_GROUPS: dict[str, str] = {
     "cultura": """
         node["amenity"~"theatre|arts_centre"]["name"](area.sv);
     """,
+    # El edificio del hotel, para los que nadie etiqueto como tourism. El Hotel
+    # Barcelo de San Salvador es asi: existe en OSM solo con building=hotel, y
+    # por eso no estaba en el catalogo. places_quality exige que el nombre
+    # confirme que es alojamiento antes de aceptarlo, porque esta etiqueta la
+    # llevan tambien las torres y los lobbies del mismo complejo.
+    "edificios_alojamiento": """
+        node["building"~"hotel|hostel|motel"]["name"](area.sv);
+        way["building"~"hotel|hostel|motel"]["name"](area.sv);
+    """,
 }
 
 # Pausa entre consultas. Overpass no publica un limite fijo pero corta a quien

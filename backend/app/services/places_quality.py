@@ -182,6 +182,30 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", sin_puntuacion).strip()
 
 
+# Palabras que en el nombre delatan un alojamiento de verdad.
+#
+# Hacen falta porque `building=hotel` describe el EDIFICIO y no el negocio, y
+# eso lo vuelve una etiqueta de poca precision: dentro de un complejo hotelero
+# hay varios edificios marcados asi —torres, lobbies, el centro de
+# convenciones— y encima aparece mal puesta en cosas que no son hoteles.
+#
+# Medido sobre El Salvador: de 17 objetos con `building=hotel`, nombre y sin
+# etiqueta `tourism`, solo 8 son hoteles. Los otros son "Torre 3", "Lobby 2",
+# "Discoteca Ixchel" y una "Emergencia Unidad Medica". Ningun filtro de nombres
+# generico los agarra: no son nombres genericos, son etiquetas equivocadas.
+LODGING_NAME = re.compile(
+    r"\b(hotel|hostal|hostel|posada|motel|suites?|resort|lodge|inn|"
+    r"albergue|caba[nñ]as?)\b",
+    re.IGNORECASE,
+)
+
+# Etiquetas de edificio que valen como alojamiento SOLO si el nombre lo
+# confirma. Es un canje explicito: se pierde algun hotel cuyo nombre no lleve
+# la palabra —"Courtyard by Marriott" es el caso real— a cambio de no meter una
+# discoteca y una sala de emergencias en la lista de alojamientos.
+BUILDING_LODGING = ("hotel", "hostel", "motel")
+
+
 def classify(tags: dict) -> tuple[Category, str] | None:
     """Determina la categoria a partir de las etiquetas de OSM."""
     for key, values, category in TAG_RULES:
@@ -191,6 +215,13 @@ def classify(tags: dict) -> tuple[Category, str] | None:
         # Una regla sin valores acepta cualquier valor de esa clave.
         if not values or raw in values:
             return category, raw
+
+    # El edificio, solo con el nombre de su parte. Va al final para que una
+    # etiqueta `tourism` explicita siempre gane: quien la puso sabia mas.
+    edificio = tags.get("building")
+    if edificio in BUILDING_LODGING and LODGING_NAME.search(tags.get("name") or ""):
+        return Category.lodging, f"building:{edificio}"
+
     return None
 
 

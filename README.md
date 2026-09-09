@@ -542,6 +542,91 @@ Medido después del cambio: de cinco tramos guardados, **cuatro no tienen
 distancia medida** —son exactamente los que antes se perdían— y la segunda
 consulta no gasta nada.
 
+### El día sale de donde el usuario dijo
+
+"Quiero partir desde Pizza Hut La Gran Vía a las 12:00, almorzaré allí, luego
+3 paradas que incluya algún museo o parque, y finalizar aprox 10 p.m." Eso es
+lo que la gente pide de verdad, y el motor solo sabía armar días alrededor de
+una zona.
+
+**El papel importa más que el lugar.** Un Pizza Hut no sirve para *centrar* la
+búsqueda —los negocios se llaman como el sitio donde están y ganan la búsqueda
+difusa sin merecerlo, que es por lo que `CATEGORIAS_NO_ANCLABLES` existe— pero
+es perfectamente válido como *punto de partida*: es donde la persona está. Son
+dos papeles del mismo dato y se resuelven con umbrales distintos.
+
+Cuatro decisiones que dan forma a esto:
+
+**El ancla no gasta cupo de paradas.** Quien pide tres paradas habla de lugares
+que va a visitar, no del sitio de donde sale. Y si ese sitio es un comedor, ya
+es la comida del día: reservarle además un hueco de almuerzo dejaba el día con
+un destino menos del pedido.
+
+**El ancla no se recorta.** Cuando el día no entra en el presupuesto se quitan
+las paradas que el motor eligió, no el dato que dio el usuario.
+
+**El regreso es una parada visible.** Quien pregunta "y a qué hora llego a
+casa" pregunta por esa línea, y un recorrido dibujado que no cierra parece un
+recorrido a medias. Se agrega al programar y no al agrupar: mientras el ancla
+está dos veces en la lista, todo lo que la recorre se confunde —`remove` saca
+la primera aparición, el orden por cercanía la cuenta como dos paradas, y el
+recorte puede quitar el regreso sin notarlo—. Los kilómetros de volver sí se
+cuentan desde el principio, porque si no el día se llena al tope y la vuelta lo
+saca del presupuesto cuando ya no hay nada que recortar.
+
+**Volver cambia a qué días aplica.** Quien vuelve cada noche está diciendo que
+ese sitio es su base, y el ancla vale para todos los días. Quien solo parte de
+un lugar lo hace una vez, el primer día: arrancar tres días seguidos en la
+misma pizzería sería absurdo.
+
+**Y si el nombre no está, se dice.** El caso es real: "Hotel Barceló" no está
+en el catálogo, y la búsqueda difusa devuelve "Hotel La Parcela", otro sitio a
+veinte kilómetros. Por eso el punto de partida pide más parecido que el área
+(0.60 contra 0.45) y falla en voz alta. Equivocar el área da un itinerario en
+otra ciudad y se nota enseguida; equivocar el punto de partida da un día que
+empieza donde el usuario no está, y eso se descubre estando ahí.
+
+Cuando lo único que se dice es de dónde se sale, el punto de partida también
+dice dónde buscar: doce kilómetros de radio, que es lo que se recorre saliendo
+de un punto y volviendo.
+
+### El hotel que estaba en OSM pero no en el catálogo
+
+"Partir desde el Hotel Barceló" fallaba, y la primera hipótesis era el nombre
+—se llama "Barceló San Salvador"—. No era eso: **no había nada con "Barcel" que
+fuera un hotel**, ni activo ni descartado. Buscando en OSM directamente
+apareció la causa real: el Hotel Barceló existe, etiquetado
+`building=hotel` y **sin ninguna etiqueta `tourism`**. La consulta del cargador
+pide `["tourism"]`, así que nunca se descargaba.
+
+`building=hotel` describe el **edificio**, no el negocio, y eso lo vuelve una
+etiqueta de poca precisión. Medido sobre El Salvador: 17 objetos con
+`building=hotel`, nombre y sin `tourism`, de los cuales solo 8 son hoteles. Los
+otros son partes del mismo complejo —"Torre 3", "Torre4", "Lobby Principal",
+"Lobby 2", "Centro de Convenciones"— y algunos simplemente mal etiquetados:
+"Discoteca Ixchel" y una "Emergencia Unidad Médica de Apopa".
+
+**El filtro de nombres genéricos no los agarra, y no es un descuido.** No son
+nombres genéricos: "Lobby 2" y "Discoteca Ixchel" identifican perfectamente un
+lugar, solo que no un alojamiento. Se comprobó pasándolos por `evaluate()`: los
+aceptaba todos.
+
+Así que la etiqueta de edificio vale solo si el **nombre confirma** que es
+alojamiento —hotel, hostal, posada, motel, suites, resort, cabañas—, y la regla
+va al final para que una `tourism` explícita siempre gane: quien la puso sabía
+más. Resultado: 7 aceptados, todos hoteles reales; 10 fuera, todos
+correctamente.
+
+**El canje se paga a sabiendas**: se pierde "Courtyard by Marriott", que es un
+hotel de verdad y cuyo nombre no lleva ninguna de esas palabras. A cambio, no
+entran una discoteca y una sala de emergencias a la lista de alojamientos. Hay
+un test que fija ese caso, para que la pérdida sea una decisión y no un olvido.
+
+El catálogo pasó de 5.652 a 5.658 lugares y el alojamiento de 509 a 515. Seis y
+no siete porque la deduplicación absorbió a "Hotel Faro" como duplicado de uno
+que ya estaba con su etiqueta canónica, que es exactamente lo que tiene que
+hacer.
+
 ---
 
 ## Frontend

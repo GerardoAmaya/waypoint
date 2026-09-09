@@ -224,3 +224,87 @@ class TestGenericosQueFaltaban:
     )
     def test_el_generico_con_apellido_si_entra(self, nombre):
         assert evaluate({"name": nombre, "tourism": "attraction"}).accepted
+
+
+class TestAlojamientoPorEdificio:
+    """`building=hotel` vale, pero solo si el nombre lo confirma.
+
+    El caso que lo motiva es real: el Hotel Barceló de San Salvador existe en
+    OpenStreetMap con `building=hotel` y sin ninguna etiqueta `tourism`, asi
+    que el catalogo no lo tenia y "partir desde el Hotel Barceló" no resolvia.
+
+    Pero la etiqueta describe el EDIFICIO y no el negocio, y eso la vuelve de
+    poca precision: dentro del mismo complejo hay torres y lobbies marcados
+    igual, y encima aparece mal puesta en cosas que no son hoteles. Medido
+    sobre El Salvador: de 17 objetos con `building=hotel`, nombre y sin
+    `tourism`, solo 8 son hoteles.
+    """
+
+    def test_acepta_un_hotel_que_solo_esta_como_edificio(self):
+        veredicto = evaluate({"building": "hotel", "name": "Hotel Barceló"})
+
+        assert veredicto.accepted
+        assert veredicto.category is Category.lodging
+        assert veredicto.subcategory == "building:hotel"
+
+    @pytest.mark.parametrize(
+        "nombre",
+        [
+            "La posada del Cielo",
+            "Hotel Las Palmeras",
+            "Quality Hotel Real",
+            "Vista Los Volcanes Hotel y Restaurante",
+            "Cabañas del Lago",
+            "Hostal El Roble",
+        ],
+    )
+    def test_acepta_los_nombres_que_dicen_que_son_alojamiento(self, nombre):
+        assert evaluate({"building": "hotel", "name": nombre}).accepted
+
+    @pytest.mark.parametrize(
+        "nombre",
+        [
+            # Partes del mismo complejo hotelero, todas con building=hotel.
+            "Torre 3",
+            "Torre4",
+            "Lobby Principal",
+            "Lobby 2",
+            "Centro de Convenciones",
+            "Edificio Height 909",
+            # Mal etiquetadas: no son hoteles ni partes de uno.
+            "Discoteca Ixchel",
+            "Emergencia Unidad Médica de Apopa",
+        ],
+    )
+    def test_descarta_lo_que_no_dice_ser_alojamiento(self, nombre):
+        """Ningun filtro de nombres genericos los agarra.
+
+        No son nombres genericos, son etiquetas equivocadas: "Lobby 2" y
+        "Discoteca Ixchel" identifican perfectamente un lugar, solo que no un
+        alojamiento.
+        """
+        veredicto = evaluate({"building": "hotel", "name": nombre})
+
+        assert not veredicto.accepted
+        assert veredicto.reason == "categoria_no_soportada"
+
+    def test_una_etiqueta_tourism_explicita_manda_sobre_el_edificio(self):
+        """Quien puso tourism sabia mas que quien puso building."""
+        veredicto = evaluate(
+            {"building": "hotel", "tourism": "museum", "name": "Museo del Ferrocarril"}
+        )
+
+        assert veredicto.category is Category.culture
+
+    def test_el_nombre_solo_no_alcanza_sin_la_etiqueta_de_edificio(self):
+        """Sin `building` ni `tourism` no hay de donde deducir la categoria."""
+        assert not evaluate({"name": "Hotel Sin Etiquetas"}).accepted
+
+    def test_el_canje_esta_asumido_y_es_explicito(self):
+        """Se pierde el hotel cuyo nombre no lleva la palabra.
+
+        "Courtyard by Marriott" es el caso real. Es el precio de no meter una
+        discoteca y una sala de emergencias en la lista de alojamientos, y se
+        paga a sabiendas.
+        """
+        assert not evaluate({"building": "hotel", "name": "Courtyard by Marriott"}).accepted

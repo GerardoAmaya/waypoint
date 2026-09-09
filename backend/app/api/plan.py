@@ -122,6 +122,8 @@ def _stream(mensaje: str) -> Iterator[str]:
             include_meals=resultado.request.include_meals,
             max_stops_per_day=resultado.request.max_stops_per_day,
             min_quality=resultado.request.min_quality,
+            start_place=resultado.start_place,
+            return_to_start=resultado.return_to_start,
         )
 
         for evento in motor.plan_streaming(db, restricciones):

@@ -29,11 +29,24 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import Category
 from app.schemas import ItineraryRequest
-from app.services.geocode import ResolvedArea, resolve_area, zone_names
+from app.services.geocode import (
+    ResolvedArea,
+    resolve_area,
+    resolve_start_place,
+    zone_names,
+)
+from app.services.places import PlaceHit
 
 logger = logging.getLogger(__name__)
 
 MAX_PHRASE_LENGTH = 600
+
+# Radio de busqueda cuando lo unico que se dijo es de donde se sale.
+#
+# Doce kilometros es lo que se recorre en un dia saliendo de un punto y
+# volviendo: mas que un barrio y menos que un municipio entero. Quien quiera
+# otra cosa nombra la zona y manda el radio de la zona.
+RADIO_DESDE_LA_PARTIDA_M = 12_000
 
 SYSTEM_PROMPT = """\
 Sos el traductor de un planificador de viajes por El Salvador. Convertis lo \
@@ -57,8 +70,21 @@ carro" es cerca de 8. Por defecto 25.
 "culture", "viewpoint", "attraction", "lodging".
 - "avoided_categories": la misma lista.
 - "include_meals": booleano. Por defecto true.
-- "max_stops_per_day": entero de 1 a 12. Por defecto 5.
+- "max_stops_per_day": entero de 1 a 12. Por defecto 5. Son los lugares que \
+quiere visitar; el sitio de donde sale no cuenta.
+- "start_place": string. El lugar concreto de donde arranca el dia, tal como lo \
+nombro: "Pizza Hut La Gran Via", "el Hotel Barcelo", "mi casa en Mejicanos". Es \
+de donde SALE, no lo que quiere visitar. Si no dice de donde sale, null.
+- "return_to_start": booleano. Si vuelve al punto de partida al terminar. \
+"regreso en la noche", "y de vuelta al hotel", "vuelvo a dormir ahi" son true. \
+Por defecto false.
 - "unmapped": lista de strings.
+
+Sobre "start_place" y "area", que se confunden facil: "area" es la zona donde \
+va a pasear y "start_place" el sitio puntual de donde sale. "quiero pasear por \
+Suchitoto saliendo del Hotel X" tiene los dos. Cuando alguien dice de donde \
+sale y nada mas, poner ese lugar en "start_place" y dejar "area" en null: el \
+punto de partida ya dice donde buscar.
 
 Sobre "unmapped", que es el campo que mas importa: pone ahi, con las palabras \
 de la persona, todo lo que entendiste pero NO pudiste representar en los \
@@ -75,6 +101,10 @@ madrugar" a earliest_start, ya lo tomaste en cuenta y no queda nada sin \
 representar: repetirlo en "unmapped" le dice a la persona que lo ignoraste \
 cuando en realidad lo aplicaste. Antes de poner algo en "unmapped", revisa si \
 alguno de los campos de arriba lo cubre.
+
+Si dice la hora a la que sale, va en "earliest_start"; si dice hasta que hora \
+puede, en "latest_end". "salgo a las 12 y termino como a las 10 de la noche" \
+son earliest_start "12:00" y latest_end "22:00".
 
 **Una frase puede estar cubierta a medias, y entonces se parte.** Pone en los \
 campos la parte que si podes representar y en "unmapped" solo lo que sobra. \
@@ -106,6 +136,11 @@ class Interpretation:
     request: ItineraryRequest | None = None
     area: ResolvedArea | None = None
     area_text: str | None = None
+    # El lugar del que sale el dia, ya resuelto contra el catalogo. No va
+    # dentro de `request` porque ahi solo entran valores serializables y esto
+    # es una parada del catalogo.
+    start_place: PlaceHit | None = None
+    return_to_start: bool = False
     unmapped: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     error: str | None = None
@@ -237,10 +272,44 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
     notes: list[str] = []
     unmapped = _strings(datos.get("unmapped"))
 
+    texto_partida = datos.get("start_place")
+    texto_partida = texto_partida.strip() if isinstance(texto_partida, str) else None
+    partida: PlaceHit | None = None
+
+    if texto_partida:
+        partida = resolve_start_place(db, texto_partida)
+        if partida is None:
+            # **Se dice, no se sustituye.** El caso real: "Hotel Barcelo" no
+            # esta en el catalogo, y con umbral bajo la busqueda difusa devuelve
+            # "Hotel La Parcela", que es otro sitio a veinte kilometros. Un dia
+            # que arranca donde el usuario no esta se descubre estando ahi.
+            return Interpretation(
+                area_text=None,
+                unmapped=unmapped,
+                notes=notes,
+                error=(
+                    f"no encontré {texto_partida!r} en el catálogo, y no quiero "
+                    "empezar el día en otro lugar parecido. Probá con el nombre "
+                    "como aparece en el mapa, o decime la zona y armo el día ahí."
+                ),
+            )
+
     texto_area = datos.get("area")
     texto_area = texto_area.strip() if isinstance(texto_area, str) else None
 
-    if not texto_area:
+    area: ResolvedArea | None = None
+
+    if not texto_area and partida is not None:
+        # El punto de partida ya dice donde buscar: quien nombra de donde sale
+        # y nada mas no tiene que nombrar tambien la zona.
+        area = ResolvedArea(
+            name=partida.name,
+            lat=partida.lat,
+            lon=partida.lon,
+            radius_m=RADIO_DESDE_LA_PARTIDA_M,
+            source="start",
+        )
+    elif not texto_area:
         return Interpretation(
             area_text=None,
             unmapped=unmapped,
@@ -251,18 +320,18 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
                 + " u otra."
             ),
         )
-
-    area = resolve_area(db, texto_area)
-    if area is None:
-        return Interpretation(
-            area_text=texto_area,
-            unmapped=unmapped,
-            notes=notes,
-            error=(
-                f"no encontré {texto_area!r} en el catálogo. Las zonas que conozco "
-                "son: " + ", ".join(zone_names())
-            ),
-        )
+    else:
+        area = resolve_area(db, texto_area)
+        if area is None:
+            return Interpretation(
+                area_text=texto_area,
+                unmapped=unmapped,
+                notes=notes,
+                error=(
+                    f"no encontré {texto_area!r} en el catálogo. Las zonas que "
+                    "conozco son: " + ", ".join(zone_names())
+                ),
+            )
 
     if area.source == "catalog":
         notes.append(
@@ -333,6 +402,8 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
         request=peticion,
         area=area,
         area_text=texto_area,
+        start_place=partida,
+        return_to_start=bool(datos.get("return_to_start", False)),
         unmapped=unmapped,
         notes=notes,
     )

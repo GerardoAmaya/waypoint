@@ -163,6 +163,25 @@ class Constraints:
     max_stops_per_day: int = 5
     min_quality: float = 0.0
 
+    # De donde sale el dia: la casa, el hotel, la pizzeria donde se almuerza.
+    #
+    # **No cuenta contra max_stops_per_day.** Quien pide "tres paradas" habla
+    # de lugares que va a visitar, no del sitio de donde sale; descontarle una
+    # parada por decir de donde parte le daria menos de lo que pidio.
+    start_place: PlaceHit | None = None
+
+    # Si el dia vuelve al punto de partida. Cambia tambien a que dias aplica el
+    # ancla: quien vuelve cada noche esta diciendo que ese es su base y el ancla
+    # vale para todos los dias, y quien solo parte de un sitio lo hace una vez,
+    # el primer dia.
+    return_to_start: bool = False
+
+    def anchors_day(self, numero: int) -> bool:
+        """Si el dia `numero` arranca en el punto de partida."""
+        if self.start_place is None:
+            return False
+        return self.return_to_start or numero == 1
+
 
 @dataclass
 class Stop:
@@ -326,6 +345,24 @@ def order_by_proximity(
     return _two_opt(ruta, medidor)
 
 
+def _pinned_order(
+    ancla: PlaceHit | None, paradas: list[PlaceHit], travel: TravelProvider | None = None
+) -> list[PlaceHit]:
+    """Ordena dejando el ancla primera, si hay ancla.
+
+    El vecino mas cercano ya arranca por `paradas[0]` y 2-opt invierte tramos
+    desde el indice 1, asi que la primera parada se queda quieta sola: basta
+    con ponerla ahi. Lo que no se puede es dejar que el ancla entre al monton y
+    que el orden la mueva al medio, porque entonces el dia empieza en otro
+    lado.
+    """
+    if ancla is None:
+        return order_by_proximity(paradas, travel)
+
+    resto = [p for p in paradas if p is not ancla]
+    return order_by_proximity([ancla, *resto], travel)
+
+
 def _route_km(ruta: list[PlaceHit], travel: TravelProvider | None = None) -> float:
     """Kilometros de recorrido de la ruta completa.
 
@@ -400,16 +437,46 @@ def _fill_cost(
     return medidor.between(semilla, candidato)[0] + repetidas * REPEAT_PENALTY_KM
 
 
+def _closing_km(
+    ruta: list[PlaceHit],
+    numero: int,
+    constraints: Constraints,
+    travel: TravelProvider,
+) -> float:
+    """Kilometros de volver al punto de partida, si el dia vuelve.
+
+    Se suma aparte en vez de meter el ancla al final de la lista. Una lista con
+    el mismo lugar dos veces rompe todo lo que la recorre: `remove` saca la
+    primera aparicion, el orden por cercania lo trata como dos paradas, y el
+    recorte del presupuesto puede quitar el regreso y no darse cuenta.
+    """
+    if not constraints.return_to_start or not constraints.anchors_day(numero):
+        return 0.0
+    if not ruta or constraints.start_place is None:
+        return 0.0
+    return travel.between(ruta[-1], constraints.start_place)[0]
+
+
 def _fits_travel_budget(
     ruta: list[PlaceHit],
     nueva: PlaceHit,
     constraints: Constraints,
     travel: TravelProvider | None = None,
+    numero: int = 1,
+    ancla: PlaceHit | None = None,
 ) -> bool:
-    """Comprueba si agregar una parada mantiene el dia dentro del limite."""
+    """Comprueba si agregar una parada mantiene el dia dentro del limite.
+
+    Cuenta tambien el regreso al punto de partida cuando el dia vuelve: sin
+    eso, el dia se llena hasta el tope y el viaje de vuelta lo saca del
+    presupuesto despues, cuando ya no hay nada que recortar.
+    """
     medidor = _travel_or_estimate(travel, constraints.mode)
-    tentativa = order_by_proximity([*ruta, nueva], medidor)
-    return _route_km(tentativa, medidor) <= constraints.max_travel_km_per_day
+    tentativa = _pinned_order(ancla, [*ruta, nueva], medidor)
+    total = _route_km(tentativa, medidor) + _closing_km(
+        tentativa, numero, constraints, medidor
+    )
+    return total <= constraints.max_travel_km_per_day
 
 
 def build_days(
@@ -440,12 +507,23 @@ def build_days(
     )
     dias: list[list[PlaceHit]] = []
 
-    for _ in range(constraints.days):
-        if not disponibles:
+    for numero in range(1, constraints.days + 1):
+        anclado = constraints.anchors_day(numero)
+        ancla = constraints.start_place if anclado else None
+
+        if not disponibles and ancla is None:
             break
 
-        semilla = disponibles.pop(0)
-        dia = [semilla]
+        if ancla is not None:
+            # El ancla es la semilla: el dia se llena alrededor de donde
+            # empieza, que es lo que se pidio.
+            semilla = ancla
+            dia = [ancla]
+            # Puede estar en el catalogo de destinos: no se elige dos veces.
+            disponibles = [h for h in disponibles if h.id != ancla.id]
+        else:
+            semilla = disponibles.pop(0)
+            dia = [semilla]
 
         # Sin comida los cupos son solo para destinos; con comida se reserva
         # sitio para las que de verdad se van a poder colocar.
@@ -462,7 +540,17 @@ def build_days(
         # van a llenar. Es una imprecision acotada, a diferencia de la de
         # reservar contra cero.
         reservados = min(_meals_that_fit(constraints), max(0, meal_options))
-        cupo = max(constraints.max_stops_per_day - reservados, 1)
+        # Si el dia arranca en un comedor, ese comedor ya es la comida del dia
+        # y su cupo reservado sobra. Sin esto se guarda sitio para un almuerzo
+        # que nunca se coloca, y el dia sale con un destino menos del pedido.
+        if ancla is not None and ancla.category == Category.food.value:
+            reservados = max(0, reservados - 1)
+        # El ancla no gasta cupo: quien pide tres paradas habla de lugares
+        # que va a visitar, no del sitio de donde sale. Descontarle una parada
+        # por decir de donde parte le daria menos de lo que pidio.
+        cupo = max(constraints.max_stops_per_day - reservados, 1) + (
+            1 if ancla is not None else 0
+        )
 
         while len(dia) < cupo:
             # Se reordena en cada vuelta porque el coste depende de lo que
@@ -473,7 +561,7 @@ def build_days(
             )
             agregado = False
             for candidato in cercanos[:15]:
-                if _fits_travel_budget(dia, candidato, constraints, medidor):
+                if _fits_travel_budget(dia, candidato, constraints, medidor, numero, ancla):
                     dia.append(candidato)
                     disponibles.remove(candidato)
                     agregado = True
@@ -481,7 +569,7 @@ def build_days(
             if not agregado:
                 break
 
-        dias.append(order_by_proximity(dia, medidor))
+        dias.append(_pinned_order(ancla, dia, medidor))
 
     return dias
 
@@ -654,7 +742,19 @@ def _insert_meals(
     """
     secuencia: list[tuple[PlaceHit, str | None]] = [(p, None) for p in ruta]
 
-    if not constraints.include_meals or not comidas or not ruta:
+    if not constraints.include_meals or not ruta:
+        return secuencia
+
+    # Si el dia arranca en un comedor, ese comedor ES la comida del dia. Quien
+    # dice "parto de la pupuseria y almuerzo ahi" no quiere que ademas se le
+    # meta un restaurante a media tarde.
+    ancla = constraints.start_place
+    if ancla is not None and ruta[0] is ancla and ancla.category == Category.food.value:
+        etiqueta = "lunch" if constraints.earliest_start < DINNER_WINDOW[0] else "dinner"
+        secuencia[0] = (ancla, etiqueta)
+        return secuencia
+
+    if not comidas:
         return secuencia
 
     medidor = _travel_or_estimate(travel, constraints.mode)
@@ -680,10 +780,29 @@ def schedule_day(
     constraints: Constraints,
     travel: TravelProvider | None = None,
 ) -> Day:
-    """Asigna horas de llegada y salida respetando la hora minima de inicio."""
+    """Asigna horas de llegada y salida respetando la hora minima de inicio.
+
+    Si el dia vuelve al punto de partida, el regreso se agrega aca y no antes.
+    Es una parada visible a proposito: quien pregunta "y a que hora llego a
+    casa" esta preguntando por el dato que la ultima linea de la lista da, y un
+    recorrido dibujado que no cierra parece un recorrido a medias.
+
+    Se agrega al final del todo, despues de que el orden y el recorte ya
+    hicieron su trabajo: mientras el ancla esta en la lista dos veces, todo lo
+    que la recorre se confunde.
+    """
     medidor = _travel_or_estimate(travel, constraints.mode)
     dia = Day(number=numero)
     momento = constraints.earliest_start
+
+    if (
+        constraints.return_to_start
+        and constraints.anchors_day(numero)
+        and constraints.start_place is not None
+        and secuencia
+        and secuencia[-1][0] is not constraints.start_place
+    ):
+        secuencia = [*secuencia, (constraints.start_place, None)]
 
     for indice, (lugar, comida) in enumerate(secuencia):
         km = 0.0
@@ -939,6 +1058,7 @@ def _fits_the_day(
     secuencia: list[tuple[PlaceHit, str | None]],
     constraints: Constraints,
     travel: TravelProvider,
+    numero: int = 1,
 ) -> bool:
     """Si el dia entra en el presupuesto de kilometros y en su horario.
 
@@ -946,7 +1066,10 @@ def _fits_the_day(
     nadie lo hacia cumplir: un dia con ventana de 10:00 a 15:00 salia
     terminando a las 16:13. Se recorta igual que por kilometros.
     """
-    if _day_travel_km(secuencia, constraints.mode, travel) > constraints.max_travel_km_per_day:
+    km = _day_travel_km(secuencia, constraints.mode, travel) + _closing_km(
+        [lugar for lugar, _ in secuencia], numero, constraints, travel
+    )
+    if km > constraints.max_travel_km_per_day:
         return False
 
     fin = _sequence_end(secuencia, constraints, travel)
@@ -958,6 +1081,7 @@ def _trim_to_budget(
     comidas: list[PlaceHit],
     constraints: Constraints,
     travel: TravelProvider | None = None,
+    numero: int = 1,
 ) -> list[tuple[PlaceHit, str | None]]:
     """Arma el dia y le quita paradas hasta que entre, con su comida adentro.
 
@@ -977,31 +1101,38 @@ def _trim_to_budget(
     """
     medidor = _travel_or_estimate(travel, constraints.mode)
     restantes = list(grupo)
+    # El punto de partida no se recorta: es un dato del usuario y no una
+    # eleccion del motor. Si el dia no entra, se quitan las paradas elegidas.
+    ancla = constraints.start_place if constraints.anchors_day(numero) else None
 
     while restantes:
         secuencia = _insert_meals(
-            order_by_proximity(restantes, medidor), comidas, constraints, medidor
+            _pinned_order(ancla, restantes, medidor), comidas, constraints, medidor
         )
-        if _fits_the_day(secuencia, constraints, medidor):
+        if _fits_the_day(secuencia, constraints, medidor, numero):
             return secuencia
-        if len(restantes) == 1:
+
+        quitables = [p for p in restantes if p is not ancla]
+        if not quitables:
             break
 
         # Costo de cada destino: lo que se ahorraria quitandolo.
-        ordenadas = order_by_proximity(restantes, medidor)
-        base = _route_km(ordenadas, medidor)
+        base = _route_km(_pinned_order(ancla, restantes, medidor), medidor)
         peor = max(
-            restantes,
+            quitables,
             key=lambda p: (
                 base
                 - _route_km(
-                    order_by_proximity([x for x in restantes if x is not p], medidor), medidor
+                    _pinned_order(ancla, [x for x in restantes if x is not p], medidor),
+                    medidor,
                 )
             ),
         )
         restantes.remove(peor)
 
-    return _insert_meals(order_by_proximity(restantes, medidor), comidas, constraints, medidor)
+    return _insert_meals(
+        _pinned_order(ancla, restantes, medidor), comidas, constraints, medidor
+    )
 
 
 def _crosses_lunch(
@@ -1080,7 +1211,7 @@ def assemble(
         # Cada dia toma las comidas mas cercanas a su primera parada, para no
         # repetir restaurante entre dias.
         cercanas = _meal_candidates(grupo, comidas_restantes, medidor)
-        secuencia = _trim_to_budget(grupo, cercanas, constraints, medidor)
+        secuencia = _trim_to_budget(grupo, cercanas, constraints, medidor, numero)
         for lugar, comida in secuencia:
             if comida and lugar in comidas_restantes:
                 comidas_restantes.remove(lugar)
