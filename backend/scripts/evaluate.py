@@ -93,7 +93,7 @@ def _motivo(detalle: str) -> str:
     """Clasifica el consejo por su causa, leyendo el texto que emitio el motor."""
     if "no hay ningún lugar" in detalle:
         return "sin restaurantes en la zona"
-    if "horario de almuerzo" in detalle:
+    if "cae dentro del horario" in detalle:
         return "ninguno cae en la franja horaria"
     return "el mas cercano no entra en el presupuesto"
 

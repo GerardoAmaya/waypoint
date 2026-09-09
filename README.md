@@ -4,10 +4,11 @@ Planificador de viajes conversacional por El Salvador. Escribís tus gustos y
 restricciones en lenguaje natural y el sistema arma un itinerario de varios días
 sobre un mapa, con lugares reales y distancias reales.
 
-**En construcción.** Fases 0 a 4 cerradas: infraestructura, catálogo desde
+**En construcción.** Fases 0 a 5 y 7 cerradas: infraestructura, catálogo desde
 OpenStreetMap, consultas espaciales con PostGIS, motor de itinerarios con
-restricciones duras, y rutas reales de OpenRouteService. Ver `PLAN.md` para el
-alcance completo.
+restricciones duras, rutas reales de OpenRouteService, capa conversacional con
+streaming y edición incremental, y evaluación automática. Falta el frontend y
+el despliegue. Ver `PLAN.md` para el alcance completo.
 
 ---
 
@@ -169,16 +170,17 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 
 | Qué | Cuánto |
 |---|---|
+| Cumplimiento de límites duros | 96% (25 de 26 casos) |
+| Lugares inventados | 0 de 285 paradas generadas |
 | Factor de desvío medido | 1.45, mediana sobre 812 pares |
 | Velocidad efectiva en carro | 35 a 62 km/h según el tramo |
 | Pares sin ruta en ORS | 7% (58 de 870) |
 | Cupo del endpoint de matriz | 50 peticiones / ventana de 24 h |
 | Peticiones por itinerario en zona fría | 1 |
-| Lugares inventados | 0, por construcción |
 | Lugares en el catálogo | 5.652 activos de 6.296 bajados |
 | Descarte del filtro de calidad | 5.9% (370 registros) |
 | Duplicados fusionados | 4.4% (274 registros) |
-| Tests | 278 |
+| Tests | 315 |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -216,15 +218,68 @@ consecuencia previsible de la forma del catálogo.
 
 ---
 
+## Cómo se mide el cumplimiento
+
+26 peticiones con restricciones conocidas, sobre 11 zonas. **El corpus incluye a
+propósito las zonas donde el sistema sufre**: Perquín tiene nueve lugares que no
+son destino en quince kilómetros, Costa del Sol tiene diecisiete destinos en
+total, y dentro del Parque El Imposible no hay dónde comer. Una muestra que solo
+tomara San Salvador y la Ruta de las Flores mediría un sistema más fácil.
+
+**Las comprobaciones no usan `validate()`.** El motor arma el itinerario y
+después lo juzga con la misma lógica; medir así mide consistencia consigo mismo.
+El evaluador relee la salida y deriva las condiciones de cero, y eso además deja
+comprobar cosas que `validate()` ni mira: un lugar repetido entre dos días, una
+parada fuera del radio, un horario que retrocede, un identificador ausente del
+catálogo.
+
+### Límites duros y recomendaciones son cosas distintas
+
+Al principio las mezclé y el cumplimiento daba 58%. La mitad de los «fallos» eran
+días sin almuerzo, y eso no es romper un límite que el usuario puso: es no poder
+dar algo que quería. Separadas, el cumplimiento de límites duros es 96%, y el
+único fallo es correcto —Alegría no tiene material para siete días y el sistema
+lo reporta en vez de inventar contenido—.
+
+Con las dos juntas, el número describía la cobertura de restaurantes de
+OpenStreetMap en El Salvador y no la calidad del planificador.
+
+### El almuerzo se aconseja, no se impone
+
+Cuando el restaurante más conveniente no entra en el presupuesto de kilómetros,
+el día queda completo y sale un consejo con el número:
+
+> el lugar para comer más conveniente es Comedor Los Tarros, que agrega 14.2 km
+> y dejaría el día en 34.5 km, sobre tu límite de 25. Llevá almuerzo, o subí el
+> límite de traslado a 35 km
+
+Se intentó lo contrario —achicar el día para hacerle lugar— y estaba mal. Alguien
+pide cinco paradas y un almuerzo; devolverle cuatro destinos a cambio de un
+comedor es decidir por él. Llevar comida es una solución del mundo real, saltarse
+un volcán no lo es.
+
+**El aviso anterior además mentía.** Decía «no hay ningún lugar para comer en la
+zona», y sobre 12 días medidos, **los 12** tenían restaurantes al alcance: lo que
+no entraba eran los kilómetros. Decir la causa equivocada es peor que no decir
+nada.
+
+Eso deja un hallazgo sobre el valor por defecto: `max_travel_km_per_day: 25` es
+lo bastante apretado como para dejar al 21% de los días sin almorzar.
+
+---
+
 ## Limitaciones conocidas
 
-**Una parada marginal puede costar mucho y entrar igual.** El motor llena hasta
-`max_stops_per_day` mientras el presupuesto de kilómetros aguante, sin evaluar si
-una parada vale lo que agrega. En el día de Ataco, la quinta parada suma 16 km de
-rebote y entra porque 34 es menos que 40. Cualquier regla para evitarlo
-—«descartá la parada que cueste más del 30% del presupuesto»— sería un número
-inventado ajustado contra un ejemplo. Se decide en la fase 7, con la medición
-sobre muchas peticiones.
+**La parada marginal resultó no ser un problema.** Quedó abierto si el motor
+agrega paradas que cuestan desproporcionadamente: en Ataco, una quinta parada
+sumaba 16 km de rebote. Medido sobre 54 días, quitar la parada intermedia más
+cara ahorra un 22% mediano, que es aproximadamente lo proporcional. Ataco era un
+caso duro, no un patrón, y la conclusión es no agregar ninguna regla.
+
+La primera versión de esa métrica estaba mal diseñada: medía qué fracción del día
+aporta el tramo más largo, y eso depende de cuántos tramos haya —con dos, el
+mayor pasa del 50% por aritmética—. Una mediana del 45% no distinguía un mal
+reparto de un día corto.
 
 **La reserva de cupos para comer se cuenta por itinerario, no por día.**
 `build_days` arma todos los grupos antes de que se repartan las comidas, así que
@@ -234,6 +289,10 @@ llenar. Es una imprecisión acotada y en la dirección segura.
 **El tramo corto de la calibración se apoya en 8 pares.** Es el menos firme de
 los cuatro y probablemente el más frecuente en un itinerario real, porque las
 paradas de un mismo día están cerca entre sí.
+
+**El costo por itinerario en tokens no está medido.** Sí lo está el de rutas: una
+petición a OpenRouteService por itinerario en zona fría, cero con la caché
+caliente.
 
 ---
 
@@ -246,7 +305,7 @@ paradas de un mismo día están cerca entre sí.
 | Lugares | OpenStreetMap vía Overpass, cargado una vez |
 | Rutas | OpenRouteService, endpoint de matriz |
 | Modelo | Claude (Haiku para armar, Sonnet para conversar) |
-| Tests | pytest, 278 casos |
+| Tests | pytest, 315 casos |
 | CI | GitHub Actions, con migraciones en ambos sentidos |
 
 Sin Celery: la carga del catálogo es un guion que corre una vez y la generación

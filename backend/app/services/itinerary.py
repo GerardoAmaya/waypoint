@@ -779,23 +779,42 @@ def advise(
             continue
 
         cruza_almuerzo = dia.start <= LUNCH_WINDOW[1] and dia.end >= LUNCH_WINDOW[0]
-        if not cruza_almuerzo or any(p.meal == "lunch" for p in dia.stops):
-            continue
+        if cruza_almuerzo and not any(p.meal == "lunch" for p in dia.stops):
+            consejos.append(
+                _meal_advice(dia, constraints, comidas, medidor, "lunch", LUNCH_WINDOW)
+            )
 
-        consejos.append(_lunch_advice(dia, constraints, comidas, medidor))
+        # La cena tambien: el comprobador de la evaluacion la reclamaba y
+        # advise() no decia nada, asi que un dia que llegaba a la noche sin
+        # cenar se quedaba sin explicacion.
+        llega_a_la_cena = dia.end >= DINNER_WINDOW[0]
+        if llega_a_la_cena and not any(p.meal == "dinner" for p in dia.stops):
+            consejos.append(
+                _meal_advice(dia, constraints, comidas, medidor, "dinner", DINNER_WINDOW)
+            )
 
     return consejos
 
 
-def _lunch_advice(
-    dia: Day, constraints: Constraints, comidas: list[PlaceHit], travel: TravelProvider
+MEAL_LABELS = {"lunch": ("almuerzo", "bring_lunch"), "dinner": ("cena", "bring_dinner")}
+
+
+def _meal_advice(
+    dia: Day,
+    constraints: Constraints,
+    comidas: list[PlaceHit],
+    travel: TravelProvider,
+    tipo: str,
+    ventana: tuple[time, time],
 ) -> Advice:
-    """Por que no hubo almuerzo, con el numero que lo explica."""
+    """Por que no hubo esta comida, con el numero que lo explica."""
+    nombre, kind = MEAL_LABELS[tipo]
+
     if not comidas:
         return Advice(
-            "bring_lunch",
+            kind,
             dia.number,
-            "no hay ningún lugar para comer registrado en esta zona: llevá almuerzo",
+            f"no hay ningún lugar para comer registrado en esta zona: llevá {nombre}",
         )
 
     secuencia = [(p.place, p.meal) for p in dia.stops]
@@ -806,8 +825,8 @@ def _lunch_advice(
     _, comida, costo = _best_meal_insertion(
         secuencia,
         candidatos,
-        "lunch",
-        LUNCH_WINDOW,
+        tipo,
+        ventana,
         constraints,
         travel,
         enforce_budget=False,
@@ -815,19 +834,19 @@ def _lunch_advice(
 
     if comida is None:
         return Advice(
-            "bring_lunch",
+            kind,
             dia.number,
-            "ningún lugar para comer cae dentro del horario de almuerzo de este "
-            "día: llevá almuerzo",
+            f"ningún lugar para comer cae dentro del horario de {nombre} de este "
+            f"día: llevá {nombre}",
         )
 
     total = dia.travel_km + costo
     return Advice(
-        "bring_lunch",
+        kind,
         dia.number,
         f"el lugar para comer más conveniente es {comida.name}, que agrega "
         f"{costo:.1f} km y dejaría el día en {total:.1f} km, sobre tu límite de "
-        f"{constraints.max_travel_km_per_day:.0f}. Llevá almuerzo, o subí el "
+        f"{constraints.max_travel_km_per_day:.0f}. Llevá {nombre}, o subí el "
         f"límite de traslado a {total:.0f} km",
     )
 

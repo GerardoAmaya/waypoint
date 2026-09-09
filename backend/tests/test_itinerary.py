@@ -1009,3 +1009,70 @@ class TestConsejoDeLlevarAlmuerzo:
         stops = [Stop(lugar("A", 13.700, -89.220), time(9, 0), time(10, 30))]
 
         assert advise(self._itinerario(stops), restricciones, []) == []
+
+
+class TestConsejoDeCena:
+    """La discrepancia que destapo la evaluacion.
+
+    El comprobador contaba 13 dias sin comida y el motor emitia 12 consejos.
+    La diferencia era la cena: advise() solo hablaba del almuerzo, asi que un
+    dia que llegaba a la noche sin cenar se quedaba sin explicacion.
+    """
+
+    def _itinerario(self, stops):
+        d = Day(number=1)
+        d.stops.extend(stops)
+        return Itinerary(days=[d])
+
+    def test_aconseja_sobre_la_cena(self):
+        from app.services.itinerary import advise
+
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            latest_end=time(21, 0),
+            max_travel_km_per_day=10,
+        )
+        stops = [
+            Stop(lugar("A", 13.700, -89.220, Category.nature), time(9, 0), time(13, 0)),
+            Stop(
+                lugar("Comedor", 13.701, -89.221, Category.food),
+                time(13, 10),
+                time(14, 10),
+                5,
+                1.0,
+                meal="lunch",
+            ),
+            Stop(
+                lugar("B", 13.705, -89.220, Category.nature),
+                time(14, 20),
+                time(19, 0),
+                5,
+                1.0,
+            ),
+        ]
+
+        consejos = advise(self._itinerario(stops), restricciones, [])
+        tipos = {c.kind for c in consejos}
+
+        assert "bring_dinner" in tipos
+        assert "bring_lunch" not in tipos, "el almuerzo si lo tuvo"
+
+    def test_un_dia_que_termina_de_tarde_no_recibe_consejo_de_cena(self):
+        from app.services.itinerary import advise
+
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+        stops = [
+            Stop(lugar("A", 13.700, -89.220), time(9, 0), time(11, 0)),
+            Stop(
+                lugar("Comedor", 13.701, -89.221, Category.food),
+                time(11, 40),
+                time(12, 40),
+                5,
+                1.0,
+                meal="lunch",
+            ),
+        ]
+
+        assert advise(self._itinerario(stops), restricciones, []) == []
