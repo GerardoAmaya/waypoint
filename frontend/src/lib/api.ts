@@ -85,6 +85,17 @@ function mensajeDeError(estado: number, detalle: string): string {
       /* cae al mensaje generico */
     }
   }
+  if (estado === 429) {
+    // El backend manda cuanto falta y con que limite se choco; repetirlo aca
+    // en generico perderia el unico dato accionable del mensaje.
+    try {
+      const cuerpo = JSON.parse(detalle);
+      if (typeof cuerpo.detail === "string") return cuerpo.detail;
+    } catch {
+      /* cae al mensaje generico */
+    }
+    return "Demasiadas peticiones seguidas. Esperá un momento y probá de nuevo.";
+  }
   if (estado === 0 || estado >= 500) {
     return "El planificador no respondió. Probá de nuevo en un momento.";
   }

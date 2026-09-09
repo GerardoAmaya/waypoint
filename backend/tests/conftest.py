@@ -25,6 +25,26 @@ def database_url() -> str:
     return url
 
 
+@pytest.fixture(autouse=True)
+def limites_limpios():
+    """Vacia la cuenta del limitador antes de cada test.
+
+    El limitador es un singleton del proceso, que es lo correcto en produccion
+    —una cuenta por IP no sirve si cada peticion empieza de cero— y un
+    acoplamiento entre tests aqui: sin esto, la bateria entera comparte una sola
+    cuota y los tests se cortan unos a otros segun el orden en que corran.
+
+    Se declara en vez de esconderse con limites altos en el entorno de prueba:
+    un limite que en los tests vale mil no prueba nada del que vale cuatro.
+    """
+    from app.api import itinerary as api_itinerary
+    from app.api import plan as api_plan
+
+    for modulo in (api_itinerary, api_plan):
+        modulo._limiter._hits.clear()
+    yield
+
+
 @pytest.fixture(scope="session")
 def engine():
     engine = create_engine(database_url(), pool_pre_ping=True)

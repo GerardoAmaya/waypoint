@@ -31,6 +31,18 @@ class Settings(BaseSettings):
     # cupo para la demo. Al llegar al techo los traslados se estiman.
     ors_daily_budget: int = 45
 
+    # Limite por IP. Los itinerarios cuestan tokens de Haiku y cupo de rutas, y
+    # la demo no tiene cuentas: sin techo, una persona curioseando vacia el
+    # cupo diario en un minuto.
+    plan_per_minute: int = 4
+    plan_per_day: int = 40
+    # El endpoint sin modelo es mas barato, pero gasta cupo de rutas igual.
+    itinerary_per_minute: int = 12
+    itinerary_per_day: int = 120
+    # X-Forwarded-For lo pone quien quiera. Solo se lee detras de un proxy que
+    # lo reescriba; en local, confiar en el es regalar el limite.
+    trust_proxy_header: bool = False
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

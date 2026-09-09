@@ -20,11 +20,13 @@ import logging
 from collections.abc import Iterator
 from dataclasses import replace
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.api.itinerary import _to_out
+from app.core.config import settings
 from app.core.db import SessionLocal
+from app.core.ratelimit import Limit, RateLimiter, limiter_dependency
 from app.schemas import (
     AreaOut,
     InterpretationOut,
@@ -39,6 +41,15 @@ from app.services.places import by_ids as places_by_ids
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/plan", tags=["plan"])
+
+# El limite mas estricto del proyecto: estos dos endpoints llaman al modelo.
+_limiter = RateLimiter(
+    [
+        Limit(settings.plan_per_minute, 60, "por minuto"),
+        Limit(settings.plan_per_day, 86_400, "por día"),
+    ]
+)
+limitar = limiter_dependency(_limiter, settings.trust_proxy_header)
 
 
 def _event(nombre: str, datos: dict) -> str:
@@ -137,7 +148,7 @@ def _phase_payload(evento) -> dict:
     return _to_out(evento.itinerary, evento.stats).model_dump(mode="json")
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(limitar)])
 def plan(peticion: PlanMessage) -> StreamingResponse:
     """Arma un itinerario a partir de una frase, transmitiendo cada fase.
 
@@ -176,7 +187,7 @@ def _to_constraints(peticion) -> motor.Constraints:
     )
 
 
-@router.post("/revise", response_model=RevisionOut)
+@router.post("/revise", response_model=RevisionOut, dependencies=[Depends(limitar)])
 def revise(peticion: ReviseRequest) -> RevisionOut:
     """Cambia un dia del itinerario dejando los demas como estaban.
 

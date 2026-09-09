@@ -14,7 +14,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.db import get_db
+from app.core.ratelimit import Limit, RateLimiter, limiter_dependency
 from app.schemas import (
     AdviceOut,
     DayOut,
@@ -29,6 +31,16 @@ from app.services import itinerary as motor
 from app.services.routing import client_from_settings
 
 router = APIRouter(prefix="/itinerary", tags=["itinerary"])
+
+# Sin modelo de por medio es mas barato, pero una zona fria gasta una peticion
+# de las cincuenta diarias de OpenRouteService igual.
+_limiter = RateLimiter(
+    [
+        Limit(settings.itinerary_per_minute, 60, "por minuto"),
+        Limit(settings.itinerary_per_day, 86_400, "por día"),
+    ]
+)
+limitar = limiter_dependency(_limiter, settings.trust_proxy_header)
 
 
 def _to_constraints(peticion: ItineraryRequest) -> motor.Constraints:
@@ -121,7 +133,7 @@ def _to_out(itinerario: motor.Itinerary, stats) -> ItineraryOut:
     )
 
 
-@router.post("", response_model=ItineraryOut)
+@router.post("", response_model=ItineraryOut, dependencies=[Depends(limitar)])
 def build(peticion: ItineraryRequest, db: Session = Depends(get_db)) -> ItineraryOut:
     """Arma un itinerario que respeta las restricciones dadas.
 

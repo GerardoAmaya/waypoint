@@ -229,3 +229,52 @@ class TestInterpretadorReal:
 
         assert [n for n, _ in eventos] == ["error"]
         assert "ANTHROPIC_API_KEY" in eventos[0][1]["message"]
+
+
+class TestLimitePorIP:
+    """El limite corta antes de que salga un solo byte.
+
+    Importa que sea antes: una vez que empezo el flujo de eventos el codigo de
+    estado ya se mando y no hay forma de responder 429.
+    """
+
+    def _con_limite(self, requests: int):
+        """Reemplaza la dependencia por una mas estrecha, y la devuelve.
+
+        La clave del reemplazo tiene que ser la funcion que la ruta capturo al
+        importarse. Cambiar el atributo del modulo con monkeypatch no alcanza:
+        la ruta guarda su propia referencia y ya no mira el modulo.
+        """
+        from app.api import plan as modulo
+        from app.core.ratelimit import Limit, RateLimiter, limiter_dependency
+
+        original = modulo.limitar
+        estrecho = RateLimiter([Limit(requests, 60, "por minuto")])
+        app.dependency_overrides[original] = limiter_dependency(estrecho, False)
+        return original
+
+    def test_rechaza_con_429_al_pasarse(self, cliente, monkeypatch):
+        con_interpretacion(monkeypatch, interpretacion_buena())
+        original = self._con_limite(2)
+        try:
+            codigos = [
+                cliente.post("/plan", json={"message": "un dia"}).status_code for _ in range(3)
+            ]
+        finally:
+            app.dependency_overrides.pop(original, None)
+
+        assert codigos[:2] == [200, 200]
+        assert codigos[2] == 429
+
+    def test_el_rechazo_dice_cuanto_esperar(self, cliente, monkeypatch):
+        con_interpretacion(monkeypatch, interpretacion_buena())
+        original = self._con_limite(1)
+        try:
+            cliente.post("/plan", json={"message": "un dia"})
+            respuesta = cliente.post("/plan", json={"message": "otro"})
+        finally:
+            app.dependency_overrides.pop(original, None)
+
+        assert respuesta.status_code == 429
+        assert "Retry-After" in respuesta.headers
+        assert "segundos" in respuesta.json()["detail"]
