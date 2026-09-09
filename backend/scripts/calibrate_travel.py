@@ -1,6 +1,6 @@
 """Calibra la estimacion geodesica contra rutas reales.
 
-DETOUR_FACTOR y SPEED_KMH se eligieron a ojo. Este guion los mide contra el
+DETOUR_FACTOR y SPEED_BANDS salieron de este guion. Vuelve a medirlos contra el
 catalogo: toma una muestra de lugares, pide una matriz real, y compara cada
 par con lo que la estimacion habria dicho.
 
@@ -27,7 +27,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models import Place
-from app.services.geo import DETOUR_FACTOR, SPEED_KMH, haversine_km
+from app.services.geo import DETOUR_FACTOR, haversine_km, speed_kmh
 from app.services.routing import ORSClient, ORSError
 
 # Tramos en kilometros de linea recta, con su nombre para el reporte.
@@ -83,19 +83,23 @@ def calibrar(cliente: ORSClient, lugares: list[Place], modo: str, profile: str) 
                     por_tramo[nombre].append((desvio, velocidad))
                     break
 
-    print(
-        f"\n### {modo}  (constantes actuales: desvio {DETOUR_FACTOR}, {SPEED_KMH[modo]} km/h)"
-    )
-    print(f"{'tramo':<16} {'pares':>6} {'desvio':>8} {'km/h':>8}")
+    print(f"\n### {modo}  (desvio actual {DETOUR_FACTOR})")
+    print(f"{'tramo':<16} {'pares':>6} {'desvio':>8} {'km/h':>8} {'esperado':>9}")
 
-    for nombre, _, _ in TRAMOS:
+    for nombre, minimo, maximo in TRAMOS:
         datos = por_tramo[nombre]
+        # Lo que diria la constante para un viaje tipico de este tramo.
+        referencia = minimo + 1 if maximo == float("inf") else (minimo + maximo) / 2
+        esperado = speed_kmh(modo, referencia)
         if not datos:
-            print(f"{nombre:<16} {0:>6}        -        -")
+            print(f"{nombre:<16} {0:>6}        -        - {esperado:>9.1f}")
             continue
         desvios = statistics.median(d for d, _ in datos)
         velocidades = statistics.median(v for _, v in datos)
-        print(f"{nombre:<16} {len(datos):>6} {desvios:>8.2f} {velocidades:>8.1f}")
+        print(
+            f"{nombre:<16} {len(datos):>6} {desvios:>8.2f} {velocidades:>8.1f} "
+            f"{esperado:>9.1f}"
+        )
 
     if sin_ruta:
         total = len(lugares) * (len(lugares) - 1)

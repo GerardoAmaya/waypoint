@@ -10,7 +10,7 @@ from datetime import time
 import pytest
 
 from app.models import Category
-from app.services.geo import haversine_km
+from app.services.geo import DETOUR_FACTOR, haversine_km, speed_kmh
 from app.services.itinerary import (
     Constraints,
     Day,
@@ -63,6 +63,52 @@ class TestGeometria:
         b = lugar("B", 13.7929, -89.2182)
         km, _ = estimate_travel(a, b, "driving")
         assert km > haversine_km(a.lat, a.lon, b.lat, b.lon)
+
+
+class TestCalibracion:
+    """Las constantes salieron de scripts/calibrate_travel, no de la intuicion.
+
+    Medido sobre 812 pares del catalogo contra OpenRouteService.
+    """
+
+    def test_en_carro_la_velocidad_sube_con_la_distancia(self):
+        """Un salto urbano y la carretera a Santa Ana no se recorren igual."""
+        urbano = speed_kmh("driving", 1.0)
+        medio = speed_kmh("driving", 5.0)
+        largo = speed_kmh("driving", 80.0)
+
+        assert urbano < medio < largo
+
+    def test_a_pie_la_velocidad_es_plana(self):
+        """ORS usa 5 km/h fijos para el perfil peatonal, sin mirar pendiente.
+
+        Se replica su comportamiento a proposito: fingir una variacion que la
+        fuente no tiene seria inventar precision.
+        """
+        assert speed_kmh("walking", 0.5) == speed_kmh("walking", 40.0)
+
+    def test_un_modo_desconocido_cae_a_los_tramos_de_carro(self):
+        assert speed_kmh("teleport", 30.0) == speed_kmh("driving", 30.0)
+
+    def test_el_desvio_supera_la_linea_recta_en_todo_tramo(self):
+        for km in (0.5, 5.0, 30.0, 120.0):
+            assert DETOUR_FACTOR > 1.0, km
+
+    def test_el_tramo_largo_tarda_menos_por_kilometro(self):
+        """La correccion que motivo la recalibracion.
+
+        Con una sola velocidad de 40 km/h, un viaje de cien kilometros salia
+        al doble del tiempo real. Ahora el minuto por kilometro baja cuando el
+        viaje se alarga.
+        """
+        cerca = lugar("A", 13.700, -89.220)
+        vecino = lugar("B", 13.706, -89.226)
+        lejos = lugar("C", 14.400, -89.900)
+
+        km_corto, min_corto = estimate_travel(cerca, vecino, "driving")
+        km_largo, min_largo = estimate_travel(cerca, lejos, "driving")
+
+        assert min_corto / km_corto > min_largo / km_largo
 
 
 class TestOrdenamiento:

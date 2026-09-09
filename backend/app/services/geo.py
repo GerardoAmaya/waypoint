@@ -19,14 +19,47 @@ from typing import Protocol, runtime_checkable
 # Los caminos reales no van en linea recta. Este factor convierte la distancia
 # geodesica en una aproximacion de la distancia por carretera.
 #
-# Desde la fase 4 ya no es la fuente principal: se usa cuando no hay llave de
-# ORS, cuando se agoto el cupo diario, y para los pares que ORS no puede
-# resolver porque el punto esta lejos de toda carretera. Eso ultimo no es raro
-# en este catalogo: cumbres de volcanes y cascadas suelen estar a varios
-# cientos de metros del camino mas cercano.
-DETOUR_FACTOR = 1.35
+# Medido contra ORS sobre 812 pares del catalogo (scripts/calibrate_travel,
+# muestra de 30 lugares, semilla 42): la mediana por tramo dio 1.36, 1.48,
+# 1.41 y 1.51, sin tendencia clara con la distancia. O sea que una constante
+# describe bien el desvio, pero no era 1.35.
+#
+# El valor viejo salio de una sola medicion, San Salvador a Santa Ana, que dio
+# 1.26 y nos habria llevado a bajarlo. Ese par es la mejor carretera del pais
+# y no representa al resto.
+DETOUR_FACTOR = 1.45
 
-SPEED_KMH = {"walking": 4.5, "driving": 40.0}
+# La velocidad, en cambio, no aguanta ser una constante. Medida sobre los
+# mismos pares, en carro sube de 35 a 62 km/h segun el largo del viaje: el
+# salto corto es urbano con semaforos y el largo es carretera. Con un solo
+# numero, los tiempos de los tramos largos salian al doble de lo real.
+#
+# Cada entrada es (limite superior del tramo en kilometros de linea recta,
+# velocidad efectiva). El tramo de menos de 2 km se apoya en solo 8 pares, asi
+# que es el menos firme de los cuatro.
+SPEED_BANDS: dict[str, list[tuple[float, float]]] = {
+    "driving": [(2.0, 35.0), (10.0, 41.0), (50.0, 56.0), (float("inf"), 62.0)],
+    # ORS devolvio 5.0 km/h exactos en los cuatro tramos. Eso no es una
+    # medicion del terreno: es la constante que usa su perfil peatonal, que
+    # ignora la pendiente. En un pais de volcanes el tiempo a pie que da ORS
+    # no es mucho mejor que este numero, y conviene recordarlo antes de
+    # presentarlo como dato duro.
+    "walking": [(float("inf"), 5.0)],
+}
+
+
+def speed_kmh(mode: str, straight_line_km: float) -> float:
+    """Velocidad efectiva para un viaje de esa distancia.
+
+    El tramo se elige por la distancia en linea recta y no por la de
+    carretera, porque asi se midio: al estimar todavia no existe la segunda.
+    """
+    bandas = SPEED_BANDS.get(mode, SPEED_BANDS["driving"])
+    for limite, velocidad in bandas:
+        if straight_line_km < limite:
+            return velocidad
+    return bandas[-1][1]
+
 
 # Nuestros modos de traslado traducidos a perfiles de OpenRouteService.
 ORS_PROFILES = {"walking": "foot-walking", "driving": "driving-car"}
@@ -80,8 +113,9 @@ class EstimatedTravel:
 
     def __init__(self, mode: str = "driving") -> None:
         self.mode = mode
-        self.speed_kmh = SPEED_KMH.get(mode, SPEED_KMH["driving"])
 
     def between(self, origen: Waypoint, destino: Waypoint) -> tuple[float, int]:
-        km = haversine_km(origen.lat, origen.lon, destino.lat, destino.lon) * DETOUR_FACTOR
-        return round(km, 3), max(1, round(km / self.speed_kmh * 60))
+        recta = haversine_km(origen.lat, origen.lon, destino.lat, destino.lon)
+        km = recta * DETOUR_FACTOR
+        velocidad = speed_kmh(self.mode, recta)
+        return round(km, 3), max(1, round(km / velocidad * 60))
