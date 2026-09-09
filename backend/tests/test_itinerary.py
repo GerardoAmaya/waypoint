@@ -1032,7 +1032,7 @@ class TestConsejoDeLlevarAlmuerzo:
 
         consejos = advise(self._itinerario(stops), restricciones, [])
 
-        assert "no hay ningún lugar para comer" in consejos[0].detail
+        assert "No hay ningún lugar para comer" in consejos[0].detail
 
     def test_con_almuerzo_puesto_no_aconseja_nada(self):
         from app.services.itinerary import advise

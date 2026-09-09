@@ -1125,7 +1125,7 @@ def _meal_advice(
         return Advice(
             kind,
             dia.number,
-            f"no hay ningún lugar para comer registrado en esta zona: llevá {nombre}",
+            f"No hay ningún lugar para comer registrado en esta zona: llevá {nombre}",
         )
 
     secuencia = [(p.place, p.meal) for p in dia.stops]
@@ -1148,7 +1148,7 @@ def _meal_advice(
         return Advice(
             kind,
             dia.number,
-            f"ningún lugar para comer cae dentro del horario de {nombre} de este "
+            f"Ningún lugar para comer cae dentro del horario de {nombre} de este "
             f"día: llevá {nombre}",
         )
 
