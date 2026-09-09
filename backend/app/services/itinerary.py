@@ -16,6 +16,7 @@ restricciones, se puede comprobar automaticamente si el resultado las cumple.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import time, timedelta
 
@@ -857,10 +858,68 @@ def plan(
     return assemble(comidas, destinos, constraints, travel)
 
 
-def plan_with_routing(
-    db: Session, constraints: Constraints, client=None
-) -> tuple[Itinerary, object]:
-    """Igual que plan(), pero con distancias reales de carretera.
+# --------------------------------------------------------------------------
+# Construccion por fases
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class CandidatesReady:
+    """Los lugares utilizables de la zona, antes de repartirlos en dias.
+
+    Llega en microsegundos y sin tocar la red. El mapa ya puede dibujar los
+    pines mientras el resto se calcula.
+    """
+
+    phase: str = field(default="candidates", init=False)
+    destinations: list[PlaceHit] = field(default_factory=list)
+    meals: list[PlaceHit] = field(default_factory=list)
+
+
+@dataclass
+class DraftReady:
+    """Itinerario completo con distancias estimadas.
+
+    **No es un adelanto parcial: esta armado, ordenado y verificado.** Si la
+    llamada a OpenRouteService falla o se acabo el cupo, esto es lo que el
+    usuario se queda mirando, y es utilizable. Que el camino degradado sea el
+    mismo que el camino normal, una fase antes, es lo que hace que no se pudra
+    sin que nadie se entere.
+    """
+
+    itinerary: Itinerary
+    phase: str = field(default="draft", init=False)
+
+
+@dataclass
+class PlanReady:
+    """Itinerario con distancias reales de carretera.
+
+    Cambia el orden del recorrido, los kilometros del dia y las horas de
+    llegada. Dos lugares que la linea recta pone juntos pueden estar separados
+    por un cerro.
+    """
+
+    itinerary: Itinerary
+    stats: object | None = None
+    phase: str = field(default="plan", init=False)
+
+
+PlanEvent = CandidatesReady | DraftReady | PlanReady
+
+
+def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterator[PlanEvent]:
+    """Arma el itinerario emitiendo cada fase en cuanto esta lista.
+
+    **Las fases son las que existen de verdad, no las que quedarian bonitas.**
+    La matriz de OpenRouteService es una sola llamada que cubre el itinerario
+    entero: partirla por dia costaria una peticion por dia, y con cincuenta
+    diarias eso se agota enseguida. Emitir los dias de a uno despues de que la
+    matriz ya volvio seria fingir un progreso que no ocurrio.
+
+    Lo que si tiene latencia entre medio es el salto de la estimacion a las
+    rutas reales. El borrador se arma sin red y llega de inmediato; la matriz
+    tarda lo que tarde y despues corrige. Esa transicion es visible y es real.
 
     **Agrupa con estimaciones y refina con rutas reales.** La busqueda puede
     devolver ciento cincuenta candidatos, y pedir su matriz completa serian
@@ -868,30 +927,18 @@ def plan_with_routing(
     lugares que nunca entran al itinerario. Repartir los dias con la
     estimacion cuesta cero y acota el problema a las paradas elegidas mas sus
     restaurantes cercanos: menos de cincuenta lugares, una sola peticion.
-
-    Lo que se decide con rutas reales es lo que el usuario ve: el orden del
-    recorrido, los kilometros del dia, las horas de llegada, y si el limite de
-    traslado se respeta o se reporta como violado.
-
-    Devuelve el itinerario y las estadisticas de la matriz, que dicen cuantos
-    pares salieron de cache, cuantos de ORS y cuantos hubo que estimar.
     """
     from app.services.routing import client_from_settings, load_travel_matrix
 
     comidas, destinos = select_candidates(db, constraints)
+    yield CandidatesReady(destinations=destinos, meals=comidas)
 
     estimado = EstimatedTravel(constraints.mode)
     grupos = build_days(destinos, constraints, estimado, meal_options=len(comidas))
-
-    elegidos = [lugar for grupo in grupos for lugar in grupo]
-    cercanas: list[PlaceHit] = []
-    for grupo in grupos:
-        if not grupo:
-            continue
-        cercanas.extend(sorted(comidas, key=lambda c: estimado.between(grupo[0], c)[0])[:4])
+    yield DraftReady(itinerary=assemble(comidas, destinos, constraints, estimado, grupos))
 
     matriz = load_travel_matrix(
-        elegidos + cercanas,
+        _places_to_measure(grupos, comidas, estimado),
         constraints.mode,
         db=db,
         client=client if client is not None else client_from_settings(),
@@ -899,8 +946,47 @@ def plan_with_routing(
 
     # El reparto de dias se rehace con distancias reales: dos lugares que la
     # linea recta pone en el mismo dia pueden estar separados por un cerro.
-    itinerario = assemble(comidas, destinos, constraints, matriz)
-    return itinerario, matriz.stats
+    yield PlanReady(
+        itinerary=assemble(comidas, destinos, constraints, matriz),
+        stats=matriz.stats,
+    )
+
+
+def _places_to_measure(
+    grupos: list[list[PlaceHit]], comidas: list[PlaceHit], travel: TravelProvider
+) -> list[PlaceHit]:
+    """Los lugares que de verdad pueden entrar al itinerario.
+
+    Las paradas elegidas mas los restaurantes cercanos a cada dia. Medir los
+    ciento cincuenta candidatos gastaria nueve peticiones sobre lugares que
+    nunca se van a usar.
+    """
+    lugares = [lugar for grupo in grupos for lugar in grupo]
+    for grupo in grupos:
+        if not grupo:
+            continue
+        lugares.extend(sorted(comidas, key=lambda c: travel.between(grupo[0], c)[0])[:4])
+    return lugares
+
+
+def plan_with_routing(
+    db: Session, constraints: Constraints, client=None
+) -> tuple[Itinerary, object]:
+    """Igual que plan(), pero con distancias reales de carretera.
+
+    Consume plan_streaming y devuelve el resultado final. Existe para quien no
+    necesita las fases intermedias, que es todo lo que no sea el streaming.
+    """
+    ultimo: PlanReady | DraftReady | None = None
+    for evento in plan_streaming(db, constraints, client):
+        if isinstance(evento, DraftReady | PlanReady):
+            ultimo = evento
+
+    if isinstance(ultimo, PlanReady):
+        return ultimo.itinerary, ultimo.stats
+    if ultimo is not None:
+        return ultimo.itinerary, None
+    return Itinerary(days=[]), None
 
 
 def used_place_ids(itinerario: Itinerary) -> set[uuid.UUID]:
