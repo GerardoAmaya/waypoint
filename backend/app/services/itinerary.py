@@ -496,6 +496,14 @@ def _best_meal_insertion(
     incumplida y el usuario decide si lleva comida o levanta el limite. Meter
     la comida rompiendo el limite seria elegir por el.
     """
+    # **El tope de paradas se comprueba aqui y no se predice antes.** La
+    # reserva de cupos en build_days estima cuantas comidas van a caber; si la
+    # estimacion dice una y despues la cena tambien entra por hora, el dia
+    # termina con seis paradas y el limite era cinco. Una restriccion dura no
+    # se puede predecir, se hace cumplir donde se puede garantizar.
+    if len(secuencia) >= constraints.max_stops_per_day:
+        return secuencia, None
+
     base_km = _sequence_km(secuencia, travel)
     limite_temprano = _add_minutes(ventana[0], -MEAL_EARLY_TOLERANCE_MINUTES)
     mejor: tuple[float, list[tuple[PlaceHit, str | None]], PlaceHit] | None = None
@@ -727,6 +735,38 @@ def _day_travel_km(
     )
 
 
+def _sequence_end(
+    secuencia: list[tuple[PlaceHit, str | None]],
+    constraints: Constraints,
+    travel: TravelProvider,
+) -> time | None:
+    """Hora a la que termina la ultima parada de la secuencia."""
+    if not secuencia:
+        return None
+    horas = _arrival_times(secuencia, constraints, travel)
+    ultimo, _ = secuencia[-1]
+    duracion = DEFAULT_DURATIONS.get(Category(ultimo.category), 60)
+    return _add_minutes(horas[-1], duracion)
+
+
+def _fits_the_day(
+    secuencia: list[tuple[PlaceHit, str | None]],
+    constraints: Constraints,
+    travel: TravelProvider,
+) -> bool:
+    """Si el dia entra en el presupuesto de kilometros y en su horario.
+
+    **latest_end era un aviso y no un limite.** validate() lo reportaba y
+    nadie lo hacia cumplir: un dia con ventana de 10:00 a 15:00 salia
+    terminando a las 16:13. Se recorta igual que por kilometros.
+    """
+    if _day_travel_km(secuencia, constraints.mode, travel) > constraints.max_travel_km_per_day:
+        return False
+
+    fin = _sequence_end(secuencia, constraints, travel)
+    return fin is None or fin <= constraints.latest_end
+
+
 def _trim_to_budget(
     grupo: list[PlaceHit],
     comidas: list[PlaceHit],
@@ -749,10 +789,7 @@ def _trim_to_budget(
         secuencia = _insert_meals(
             order_by_proximity(restantes, medidor), comidas, constraints, medidor
         )
-        if (
-            _day_travel_km(secuencia, constraints.mode, medidor)
-            <= constraints.max_travel_km_per_day
-        ):
+        if _fits_the_day(secuencia, constraints, medidor):
             return secuencia
         if len(restantes) == 1:
             break

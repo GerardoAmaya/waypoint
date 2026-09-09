@@ -10,7 +10,12 @@ from datetime import time
 import pytest
 
 from app.models import Category
-from app.services.geo import DETOUR_FACTOR, haversine_km, speed_kmh
+from app.services.geo import (
+    DETOUR_FACTOR,
+    EstimatedTravel,
+    haversine_km,
+    speed_kmh,
+)
 from app.services.itinerary import (
     Constraints,
     Day,
@@ -351,11 +356,19 @@ class TestFranjasDeComida:
         comidas = [
             lugar(f"C{i}", 13.7001 + i * 0.001, -89.22, Category.food) for i in range(3)
         ]
+        # Con el tope por defecto de cinco, cuatro destinos mas el almuerzo ya
+        # lo llenan y la cena seria la sexta parada. El test original asumia
+        # que el tope no se hacia cumplir; ahora si.
         restricciones = Constraints(
-            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(10, 0)
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(10, 0),
+            max_stops_per_day=8,
         )
         secuencia = _insert_meals(ruta, comidas, restricciones)
         assert any(tipo == "dinner" for _, tipo in secuencia)
+        assert len(secuencia) <= restricciones.max_stops_per_day
 
     def test_ninguna_comida_se_repite_en_el_dia(self):
         from app.services.itinerary import _insert_meals
@@ -684,6 +697,74 @@ class TestComidaQueFalta:
         secuencia = _insert_meals(ruta, comidas, restricciones)
 
         assert any(comida == "lunch" for _, comida in secuencia)
+
+
+class TestLimitesDurosQueNoSeHacianCumplir:
+    """Dos restricciones que la fase 7 encontro violadas sobre datos reales."""
+
+    def test_la_comida_no_puede_pasar_el_tope_de_paradas(self):
+        """El tope se predecia en build_days y no se comprobaba al insertar.
+
+        La reserva de cupos estimaba que solo cabia el almuerzo; despues la
+        cena entraba igual porque la hora daba, y el dia terminaba con seis
+        paradas y el limite era cinco.
+        """
+        from app.services.itinerary import _insert_meals
+
+        ruta = [lugar(f"P{i}", 13.70 + i * 0.003, -89.22, Category.nature) for i in range(4)]
+        comidas = [
+            lugar(f"C{i}", 13.7001 + i * 0.001, -89.22, Category.food) for i in range(3)
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(10, 0),
+            max_stops_per_day=5,
+        )
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+
+        assert len(secuencia) <= 5
+
+    def test_el_dia_se_recorta_para_cerrar_a_tiempo(self):
+        """latest_end se reportaba como violacion y nunca se hacia cumplir."""
+        from app.services.itinerary import _sequence_end, _trim_to_budget
+
+        destinos = [
+            lugar(f"D{i}", 13.70 + i * 0.01, -89.22, Category.nature) for i in range(5)
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(10, 0),
+            latest_end=time(14, 0),
+            include_meals=False,
+            max_travel_km_per_day=200,
+        )
+
+        secuencia = _trim_to_budget(destinos, [], restricciones)
+        fin = _sequence_end(secuencia, restricciones, EstimatedTravel("driving"))
+
+        assert fin is not None and fin <= time(14, 0), f"termina {fin}"
+
+    def test_una_ventana_generosa_no_recorta_de_mas(self):
+        from app.services.itinerary import _trim_to_budget
+
+        destinos = [
+            lugar(f"D{i}", 13.70 + i * 0.005, -89.22, Category.nature) for i in range(4)
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            latest_end=time(22, 0),
+            include_meals=False,
+            max_travel_km_per_day=200,
+        )
+
+        assert len(_trim_to_budget(destinos, [], restricciones)) == 4
 
 
 class TestAtractivo:
