@@ -90,6 +90,7 @@ def _to_travel_source(stats) -> TravelSourceOut:
         fetched=stats.fetched,
         estimated=stats.estimated,
         real_ratio=round(stats.real_ratio, 3),
+        requests=stats.requests,
         quota_remaining=restante,
     )
 

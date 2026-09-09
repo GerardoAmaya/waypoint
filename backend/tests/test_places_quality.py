@@ -145,3 +145,62 @@ def test_normalize_ignora_acentos_mayusculas_y_puntuacion():
     # "Cafe, S.A." quedaria con huecos dobles y no compararia igual.
     assert normalize("Café,  S.A.") == "cafe s a"
     assert normalize("  Parque   El   Imposible  ") == "parque el imposible"
+
+
+class TestNombresQueSonDescripciones:
+    """En OSM el campo name se usa a veces como texto libre.
+
+    El caso real: "Feria Gastronomica sàbado y domingo 0800 a 1700" entro al
+    catalogo y termino como parada de un itinerario.
+    """
+
+    @pytest.mark.parametrize(
+        "nombre",
+        [
+            "Feria Gastronomica sàbado y domingo 0800 a 1700",
+            "Restaurante abierto de 8:00 a 17:00",
+            "Comedor abierto lunes a viernes",
+            "Tour 0900 a 1600",
+        ],
+    )
+    def test_rechaza_los_horarios_metidos_en_el_nombre(self, nombre):
+        veredicto = evaluate({"name": nombre, "tourism": "attraction"})
+
+        assert not veredicto.accepted
+        assert veredicto.reason == "nombre_es_horario"
+
+    @pytest.mark.parametrize(
+        "nombre",
+        [
+            # Igual de largo que la basura, pero es un nombre de verdad. Por eso
+            # la regla mira el horario y no cuenta palabras.
+            "Finca y Mirador La Providencia de Concepción de Ataco",
+            "Hotel Villa Serena 2",
+            "Ruta 5 Cafe",
+            "Parque Nacional El Imposible",
+        ],
+    )
+    def test_no_se_lleva_puesto_un_nombre_largo_legitimo(self, nombre):
+        assert evaluate({"name": nombre, "tourism": "attraction"}).accepted
+
+    def test_detecta_la_hora_aunque_lleve_acento_raro(self):
+        """normalize() borra los dos puntos, asi que la hora se busca aparte."""
+        veredicto = evaluate({"name": "Museo sábado 9:00", "tourism": "museum"})
+        assert veredicto.reason == "nombre_es_horario"
+
+
+class TestGenericosQueFaltaban:
+    @pytest.mark.parametrize(
+        "nombre", ["Piscina", "Turicentro", "Balneario", "Cerro", "Ruinas", "Cementerio"]
+    )
+    def test_rechaza_los_genericos_nuevos(self, nombre):
+        veredicto = evaluate({"name": nombre, "tourism": "attraction"})
+
+        assert not veredicto.accepted
+        assert veredicto.reason == "nombre_generico"
+
+    @pytest.mark.parametrize(
+        "nombre", ["Balneario Atzumpa", "Cerro Las Ninfas", "Ruinas de Tazumal"]
+    )
+    def test_el_generico_con_apellido_si_entra(self, nombre):
+        assert evaluate({"name": nombre, "tourism": "attraction"}).accepted

@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones
+.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter
 
 up:
 	docker compose up -d --build
@@ -37,3 +37,7 @@ ors-warm:
 # Comprueba que cada zona del nomenclator tenga lugares alrededor. No gasta cupo.
 zones:
 	docker compose exec api python -m scripts.check_zones
+
+# Reaplica el filtro de calidad al catalogo cargado. No escribe sin --apply.
+refilter:
+	docker compose exec api python -m scripts.refilter_places

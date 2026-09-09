@@ -102,13 +102,28 @@ class DailyQuota:
         self._calls = [t for t in self._calls if t > limite]
 
     @property
-    def remaining(self) -> int:
+    def remaining(self) -> int | None:
+        """Cupo restante segun ORS, o None si todavia no nos lo dijo.
+
+        **Devolver nuestro presupuesto entero como si fuera el de ORS es
+        peor que no decir nada.** Recien arrancado el proceso, "quedan 45"
+        parece una lectura y es un valor por defecto; el numero real puede ser
+        cualquiera, porque otras corridas del dia ya gastaron y la ventana de
+        24 horas no se reinicio.
+        """
+        if self._server_remaining is None:
+            return None
         with self._lock:
             self._prune(_time.monotonic())
             propio = max(0, self.budget - len(self._calls))
-        if self._server_remaining is None:
-            return propio
         return min(propio, self._server_remaining)
+
+    @property
+    def own_remaining(self) -> int:
+        """Lo que queda de nuestro presupuesto, sin mirar al servidor."""
+        with self._lock:
+            self._prune(_time.monotonic())
+            return max(0, self.budget - len(self._calls))
 
     def try_spend(self) -> bool:
         """Reserva una peticion, o dice que no queda."""
@@ -444,10 +459,14 @@ def load_travel_matrix(
         # Se piden todos los lugares aunque solo falten algunos pares: la
         # matriz es cuadrada por construccion y pedir un subconjunto de pares
         # no reduce el costo de la peticion.
+        # El contador del cliente es acumulado desde que arranco el proceso, y
+        # el cliente se comparte entre peticiones. Lo que interesa aqui es el
+        # costo de ESTE itinerario, asi que se mide la diferencia.
+        antes = client.request_count
         nuevas = fetch_edges(unicos, mode, client, chunk_size)
         nuevas = {par: valor for par, valor in nuevas.items() if par in set(faltantes)}
         stats.fetched = len(nuevas)
-        stats.requests = client.request_count
+        stats.requests = client.request_count - antes
         edges.update(nuevas)
 
         if db is not None and nuevas:

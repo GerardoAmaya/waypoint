@@ -135,6 +135,10 @@ class TravelSourceOut(BaseModel):
     fetched: int = 0
     estimated: int = 0
     real_ratio: float = 0.0
+    # Peticiones a ORS que costo este itinerario. Con la cache caliente es 0.
+    requests: int = 0
+    # Lo que ORS dice que le queda. None mientras no haya respondido: nuestro
+    # presupuesto sin estrenar no es una lectura del cupo real.
     quota_remaining: int | None = None
 
 

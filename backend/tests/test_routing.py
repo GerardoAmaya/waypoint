@@ -418,12 +418,12 @@ class TestDailyQuota:
     def test_deja_gastar_hasta_el_techo(self):
         cupo = routing.DailyQuota(3)
         assert [cupo.try_spend() for _ in range(4)] == [True, True, True, False]
-        assert cupo.remaining == 0
+        assert cupo.own_remaining == 0
 
     def test_el_encabezado_del_servidor_manda_sobre_la_cuenta_propia(self):
         """Tras un reinicio nuestra cuenta esta en cero y la de ORS no."""
         cupo = routing.DailyQuota(45)
-        assert cupo.remaining == 45
+        assert cupo.own_remaining == 45
 
         cupo.sync_with_server(2)
         assert cupo.remaining == 2
@@ -436,7 +436,8 @@ class TestDailyQuota:
     def test_un_encabezado_ausente_no_rompe_la_cuenta(self):
         cupo = routing.DailyQuota(5)
         cupo.sync_with_server(None)
-        assert cupo.remaining == 5
+        assert cupo.own_remaining == 5
+        assert cupo.remaining is None
 
     def test_la_ventana_es_deslizante(self, monkeypatch):
         """A las 24 horas de una llamada, esa llamada deja de contar."""
@@ -607,3 +608,34 @@ class TestPlausibilidad:
         assert (a.id, b.id) not in aristas
         assert (a.id, c.id) in aristas
         assert (c.id, b.id) in aristas
+
+
+class TestObservabilidadDelCupo:
+    """Lo que se reporta tiene que ser una lectura, no un valor por defecto."""
+
+    def test_sin_respuesta_de_ors_el_cupo_restante_es_desconocido(self):
+        cupo = routing.DailyQuota(45)
+        assert cupo.remaining is None, "45 sin estrenar no es una lectura del cupo real"
+        assert cupo.own_remaining == 45
+
+    def test_despues_de_la_primera_respuesta_hay_lectura(self):
+        cupo = routing.DailyQuota(45)
+        cupo.sync_with_server(31)
+        assert cupo.remaining == 31
+
+    def test_nuestro_presupuesto_puede_ser_mas_estricto_que_el_de_ors(self):
+        cupo = routing.DailyQuota(2)
+        cupo.sync_with_server(40)
+        cupo.try_spend()
+        cupo.try_spend()
+        assert cupo.remaining == 0
+
+    def test_las_peticiones_reportadas_son_las_de_este_itinerario(self):
+        """El cliente se comparte, asi que su contador es acumulado."""
+        lugares = [lugar(f"L{i}", 13.7 + i * 0.01, -89.2) for i in range(3)]
+        cliente = ClienteFalso()
+        cliente.request_count = 7  # como si ya hubiera servido otros itinerarios
+
+        matriz = load_travel_matrix(lugares, "driving", client=cliente)
+
+        assert matriz.stats.requests == 1, "no el acumulado del proceso"

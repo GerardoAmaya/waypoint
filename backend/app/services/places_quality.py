@@ -78,12 +78,42 @@ GENERIC_NAMES = {
     "salto",
     "poza",
     "finca",
+    "piscina",
+    "piscinas",
+    "la piscina",
+    "balneario",
+    "cerro",
+    "el cerro",
+    "cueva",
+    "la cueva",
+    "ruinas",
+    "monumento",
+    "parroquia",
+    "ermita",
+    "gasolinera",
+    "cementerio",
+    "estadio",
+    "turicentro",
 }
 
 # Patrones que describen señalizacion o hitos, no destinos.
 NOT_A_DESTINATION = re.compile(
     r"^(letrero|rotulo|señal|senal|hito|monolito|km\s|kilometro|deslave|"
     r"derrumbe|acceso|entrada a|desvio)\b",
+    re.IGNORECASE,
+)
+
+# En OpenStreetMap pasa seguido que alguien usa "name" como campo libre y le
+# mete el horario, el telefono o una descripcion. Un itinerario que diga
+# "visita Feria Gastronomica sabado y domingo 0800 a 1700" se delata solo.
+#
+# Se detecta por el horario y no por el largo: hay nombres legitimos igual de
+# largos ("Finca y Mirador La Providencia de Concepcion de Ataco") y contar
+# palabras los tiraria junto con la basura.
+LOOKS_LIKE_SCHEDULE = re.compile(
+    r"\d{1,2}:\d{2}"
+    r"|\b\d{3,4}\s*(a|-|hasta)\s*\d{3,4}\b"
+    r"|\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b",
     re.IGNORECASE,
 )
 
@@ -99,6 +129,17 @@ class Verdict:
     subcategory: str | None = None
     score: float = 0.0
     reason: str | None = None
+
+
+def _deaccent(text: str) -> str:
+    """Sin acentos y en minusculas, pero conservando la puntuacion.
+
+    normalize() tambien quita la puntuacion, que para comparar nombres esta
+    bien y para detectar horarios no: sin los dos puntos, "8:00" deja de
+    parecer una hora.
+    """
+    descompuesto = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in descompuesto if not unicodedata.combining(c)).lower()
 
 
 def normalize(text: str) -> str:
@@ -173,6 +214,12 @@ def evaluate(tags: dict) -> Verdict:
 
     if NOT_A_DESTINATION.match(name):
         return Verdict(False, reason="no_es_destino")
+
+    # Se comprueba sobre el nombre sin acentos pero CON puntuacion. normalize()
+    # borra los dos puntos, y sin ellos "8:00" queda como "8 00" y deja de
+    # parecer una hora.
+    if LOOKS_LIKE_SCHEDULE.search(_deaccent(name)):
+        return Verdict(False, reason="nombre_es_horario")
 
     # Un nombre sin ninguna letra ("2001", "km 45") no identifica un lugar.
     if not re.search(r"[a-zA-ZáéíóúñÁÉÍÓÚÑ]", name):
