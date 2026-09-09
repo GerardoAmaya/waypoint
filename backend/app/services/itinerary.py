@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import time, timedelta
 
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from app.models import Category
 from app.services.geo import EstimatedTravel, TravelProvider
 from app.services.places import PlaceHit, search_in_area
+from app.services.places import by_ids as places_by_ids
 
 # Cuanto se queda uno en cada tipo de lugar, en minutos. Son estimaciones de
 # sentido comun, no datos: un mirador es una parada corta y un parque nacional
@@ -987,6 +988,99 @@ def plan_with_routing(
     if ultimo is not None:
         return ultimo.itinerary, None
     return Itinerary(days=[]), None
+
+
+# --------------------------------------------------------------------------
+# Revision de un dia
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class DayState:
+    """Un dia tal como el cliente lo tiene, para poder reconstruirlo igual.
+
+    Lleva la etiqueta de comida ademas del identificador porque es un viaje de
+    ida y vuelta exacto de lo que el servidor emitio. Deducir cual parada era
+    el almuerzo por su categoria y su hora funcionaria casi siempre, y "casi"
+    en un dia que el usuario no pidio cambiar es un dia que cambia solo.
+    """
+
+    number: int
+    stops: list[tuple[uuid.UUID, str | None]] = field(default_factory=list)
+
+
+@dataclass
+class RevisionResult:
+    itinerary: Itinerary
+    stats: object | None = None
+    # Paradas que ya no estan en el catalogo. Se informan en vez de omitirse.
+    missing: list[uuid.UUID] = field(default_factory=list)
+
+
+def revise_day(
+    db: Session,
+    constraints: Constraints,
+    state: list[DayState],
+    target: int,
+    *,
+    day_constraints: Constraints | None = None,
+    exclude: set[uuid.UUID] | None = None,
+    travel: TravelProvider | None = None,
+) -> RevisionResult:
+    """Rehace un dia y deja los demas exactamente como estaban.
+
+    **Los otros dias no se recalculan, se reconstruyen.** El motor es
+    deterministico, asi que volver a planificarlos daria lo mismo... hasta que
+    cambie una constante, o la cache traiga una distancia real que antes se
+    estimaba. Entonces el usuario pidio tocar el dia 3 y se le movio el 1. Se
+    reprograman las paradas que ya tenia, en su orden, y nada mas.
+
+    El dia pedido se rearma con los candidatos de la zona menos todo lo que
+    usan los otros dias, para que no aparezca dos veces el mismo lugar.
+    """
+    excluidos = set(exclude or ())
+    medidor = _travel_or_estimate(travel, constraints.mode)
+    restricciones_dia = day_constraints or constraints
+
+    referencias = [par[0] for dia in state for par in dia.stops]
+    catalogo = places_by_ids(db, referencias)
+    faltantes = [ref for ref in referencias if ref not in catalogo]
+
+    # Lo que ocupan los otros dias no puede repetirse en el que se rehace.
+    tomados = {
+        par[0]
+        for dia in state
+        if dia.number != target
+        for par in dia.stops
+        if par[0] in catalogo
+    }
+
+    comidas, destinos = select_candidates(db, constraints)
+    disponibles = [d for d in destinos if d.id not in tomados and d.id not in excluidos]
+    comidas_libres = [c for c in comidas if c.id not in tomados and c.id not in excluidos]
+
+    grupos = build_days(
+        disponibles,
+        replace(restricciones_dia, days=1),
+        medidor,
+        meal_options=len(comidas_libres),
+    )
+    nuevo = grupos[0] if grupos else []
+
+    dias: list[Day] = []
+    for dia in sorted(state, key=lambda d: d.number):
+        if dia.number == target:
+            secuencia = _trim_to_budget(nuevo, comidas_libres[:4], restricciones_dia, medidor)
+            dias.append(schedule_day(dia.number, secuencia, restricciones_dia, medidor))
+            continue
+
+        secuencia = [(catalogo[ref], comida) for ref, comida in dia.stops if ref in catalogo]
+        if secuencia:
+            dias.append(schedule_day(dia.number, secuencia, constraints, medidor))
+
+    itinerario = Itinerary(days=dias)
+    itinerario.violations = validate(itinerario, constraints)
+    return RevisionResult(itinerary=itinerario, missing=faltantes)
 
 
 def used_place_ids(itinerario: Itinerary) -> set[uuid.UUID]:

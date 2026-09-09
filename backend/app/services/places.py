@@ -207,6 +207,30 @@ def search_in_area(
     return [_row_to_hit(f) for f in filas]
 
 
+def by_ids(db: Session, ids: list[uuid.UUID]) -> dict[uuid.UUID, PlaceHit]:
+    """Los lugares activos que correspondan a esos identificadores.
+
+    Devuelve un diccionario y no una lista porque quien llama necesita saber
+    cuales faltan. En la revision de un itinerario, un identificador que ya no
+    esta en el catalogo no es un detalle: significa que la parada desaparecio
+    y hay que decirlo, no omitirla en silencio.
+    """
+    if not ids:
+        return {}
+
+    filas = db.execute(
+        text("""
+            SELECT p.id, p.name, p.category::text AS category, p.subcategory,
+                   p.lat, p.lon, p.quality_score, p.tags
+            FROM places p
+            WHERE p.is_active AND p.id = ANY(:ids)
+        """),
+        {"ids": list(ids)},
+    ).all()
+
+    return {fila.id: _row_to_hit(fila) for fila in filas}
+
+
 def distance_between(db: Session, origen: uuid.UUID, destino: uuid.UUID) -> float | None:
     """Distancia en linea recta entre dos lugares del catalogo, en metros.
 

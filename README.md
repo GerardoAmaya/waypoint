@@ -175,10 +175,10 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Cupo del endpoint de matriz | 50 peticiones / ventana de 24 h |
 | Peticiones por itinerario en zona fría | 1 |
 | Lugares inventados | 0, por construcción |
-| Lugares en el catálogo | 5.654 activos de 6.296 bajados |
-| Descarte del filtro de calidad | 5.8% (368 registros) |
+| Lugares en el catálogo | 5.652 activos de 6.296 bajados |
+| Descarte del filtro de calidad | 5.9% (370 registros) |
 | Duplicados fusionados | 4.4% (274 registros) |
-| Tests | 180 |
+| Tests | 278 |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -246,7 +246,7 @@ paradas de un mismo día están cerca entre sí.
 | Lugares | OpenStreetMap vía Overpass, cargado una vez |
 | Rutas | OpenRouteService, endpoint de matriz |
 | Modelo | Claude (Haiku para armar, Sonnet para conversar) |
-| Tests | pytest, 180 casos |
+| Tests | pytest, 278 casos |
 | CI | GitHub Actions, con migraciones en ambos sentidos |
 
 Sin Celery: la carga del catálogo es un guion que corre una vez y la generación
