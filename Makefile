@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm
+.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones
 
 up:
 	docker compose up -d --build
@@ -33,3 +33,7 @@ ors-calibrate:
 # Sin --apply solo dice cuanto costaria. El cupo son 50 peticiones al dia.
 ors-warm:
 	docker compose exec api python -m scripts.warm_travel_cache
+
+# Comprueba que cada zona del nomenclator tenga lugares alrededor. No gasta cupo.
+zones:
+	docker compose exec api python -m scripts.check_zones

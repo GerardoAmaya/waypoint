@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models import Category, Place
+from app.services.geocode import ZONES
 from app.services.itinerary import appeal_of
 from app.services.places import PlaceHit
 from app.services.routing import (
@@ -33,16 +34,11 @@ from app.services.routing import (
     load_travel_matrix,
 )
 
-# Las zonas donde de verdad caen los itinerarios. Sacadas del alcance del
-# PLAN.md: Ruta de las Flores, volcanes, Suchitoto, la costa.
-ZONAS = {
-    "san-salvador": (13.6929, -89.2182, 15_000),
-    "santa-ana": (13.9942, -89.5597, 25_000),
-    "ataco": (13.8697, -89.8467, 20_000),
-    "suchitoto": (13.9356, -89.0272, 15_000),
-    "el-tunco": (13.4917, -89.3222, 20_000),
-    "san-miguel": (13.4833, -88.1833, 20_000),
-}
+# Las zonas salen del nomenclator, que es la misma lista que usa la capa
+# conversacional para resolver "quiero ir a Suchitoto". No es casualidad: una
+# zona que vale la pena precalentar es una zona a la que la gente pide ir, y
+# tener dos listas que se desincronizan seria peor que tener una sola.
+ZONAS = {z.key: (z.lat, z.lon, z.radius_m) for z in ZONES}
 
 
 def lugares_de_zona(db, lat: float, lon: float, radio_m: int, tope: int) -> list[PlaceHit]:
