@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { motion } from "motion/react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faRoute, faTriangleExclamation } from "@fortawesome/free-solid-svg-icons";
+import {
+  faArrowTurnUp,
+  faRoute,
+  faTriangleExclamation,
+} from "@fortawesome/free-solid-svg-icons";
 
 export type Fase = "quieto" | "leyendo" | "eligiendo" | "midiendo" | "listo";
 
@@ -13,19 +17,31 @@ const PASOS: { fase: Fase; texto: string }[] = [
   { fase: "midiendo", texto: "Midiendo las rutas" },
 ];
 
+/*
+  Cada ejemplo enseña una capacidad distinta, no tres variantes de la misma.
+  Los tres anteriores eran "N dias en [zona turistica] + preferencia", asi que
+  quien los leia se llevaba una sola idea de lo que puede pedir.
+
+  Entre los tres cubren las cuatro cosas que el subtitulo pide: cuantos dias,
+  el modo, el horario y de donde se sale. El tercero ademas nombra un municipio
+  y no una zona turistica, porque desde el nomenclator se puede decir donde se
+  esta uno quedando y eso no se adivina si nadie lo muestra.
+*/
 const EJEMPLOS = [
   "Tres días por la Ruta de las Flores, odio madrugar",
   "Un día en Suchitoto caminando, sin museos",
-  "Dos días en Santa Ana sin pasarme el día en el carro",
+  "Dos días saliendo desde Santa Tecla, en carro",
 ];
 
 interface Props {
   fase: Fase;
   error: string | null;
+  /** Cuantos lugares tiene el catalogo cargado. Cero mientras no lleguen. */
+  catalogo: number;
   onSubmit: (mensaje: string) => void;
 }
 
-export default function Compositor({ fase, error, onSubmit }: Props) {
+export default function Compositor({ fase, error, catalogo, onSubmit }: Props) {
   const [texto, setTexto] = useState("");
   const trabajando = fase !== "quieto" && fase !== "listo";
 
@@ -53,8 +69,9 @@ export default function Compositor({ fase, error, onSubmit }: Props) {
         que querés hacer.
       </h1>
       <p className="mt-4 max-w-md text-guia sm:mt-5 leading-snug font-light text-tinta-suave">
-        Escribilo como se lo contarías a alguien. El plan sale sobre lugares que
-        existen, con distancias medidas.
+        Escribilo como se lo contarías a alguien. Ayuda que cuentes cuántos
+        días, si vas en carro o a pie, desde qué hora podés salir y dónde te
+        estás quedando.
       </p>
 
       <div className="mt-6 sm:mt-8">
@@ -70,7 +87,7 @@ export default function Compositor({ fase, error, onSubmit }: Props) {
           }}
           disabled={trabajando}
           rows={3}
-          placeholder="Tres días por la Ruta de las Flores, odio madrugar y no quiero pasarme el día en el carro"
+          placeholder="dos días por el occidente, sin madrugar"
           className="w-full resize-none rounded-lg border border-borde-fuerte bg-superficie-alta px-4 py-3.5 text-cuerpo leading-relaxed text-tinta transition-colors placeholder:text-tinta-tenue focus:border-acento disabled:opacity-60"
         />
 
@@ -129,18 +146,47 @@ export default function Compositor({ fase, error, onSubmit }: Props) {
           </p>
         ) : (
           !trabajando && (
-            <ul className="mt-6 space-y-1.5">
-              {EJEMPLOS.map((ejemplo) => (
-                <li key={ejemplo}>
-                  <button
-                    onClick={() => setTexto(ejemplo)}
-                    className="text-left text-menudo text-tinta-tenue transition-colors hover:text-tinta"
-                  >
-                    {ejemplo}
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <div className="mt-6">
+              <ul className="space-y-1.5">
+                {EJEMPLOS.map((ejemplo) => (
+                  <li key={ejemplo}>
+                    <button
+                      onClick={() => setTexto(ejemplo)}
+                      className="group flex items-baseline gap-2 text-left text-menudo text-tinta-tenue transition-colors hover:text-tinta"
+                    >
+                      {/*
+                        La flecha no es adorno: sin ella los ejemplos se leen
+                        como texto de parrafo y nadie descubre que se pueden
+                        tocar. Es la unica pista de que son acciones.
+                      */}
+                      <FontAwesomeIcon
+                        icon={faArrowTurnUp}
+                        aria-hidden
+                        className="mt-0.5 size-2.5 shrink-0 rotate-90 text-acento opacity-70 transition-opacity group-hover:opacity-100"
+                      />
+                      <span>{ejemplo}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              {/*
+                Sin la cifra del catalogo: a quien va a viajar no le cambia nada
+                que sean cinco mil o tres mil, y decir "ninguno inventado" le
+                mete una duda que no tenia. Lo que si le falta a esta pantalla
+                es el pais, que hasta ahora solo se deducia del mapa.
+
+                Se muestra solo cuando el catalogo llego de verdad. Afirmar de
+                donde salen los lugares con el backend caido seria sostener algo
+                que no se comprobo, que es justo lo que este proyecto no hace.
+              */}
+              {catalogo > 0 && (
+                <p className="mt-5 text-dato text-tinta-tenue">
+                  Lugares reales de El Salvador, del catálogo abierto de
+                  OpenStreetMap.
+                </p>
+              )}
+            </div>
           )
         )}
       </div>

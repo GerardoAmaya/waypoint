@@ -173,6 +173,7 @@ export default function Home() {
                 <Compositor
                   fase={fase}
                   error={error}
+                  catalogo={field.length}
                   onSubmit={(m) => void armar(m)}
                 />
               </div>
