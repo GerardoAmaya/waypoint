@@ -11,6 +11,9 @@ ignore = [
     # El import de app.models en env.py registra las tablas en Base.metadata
     # aunque el nombre no se use.
     "E402",
+    # str + Enum se mantiene a proposito: hace que el valor se serialice como
+    # cadena en JSON sin conversion explicita.
+    "UP042",
 ]
 
 [lint.per-file-ignores]

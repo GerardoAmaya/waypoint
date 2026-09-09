@@ -36,8 +36,15 @@ def engine():
 
 @pytest.fixture
 def clean_database(engine):
-    """Deja la base sin tablas antes de cada prueba de migracion."""
+    """Deja la base sin tablas antes de cada prueba de migracion.
+
+    DROP SCHEMA CASCADE borra tambien PostGIS, que vive en public. Al volver a
+    crearla, el tipo geography recibe un OID nuevo, asi que se descarta el pool
+    de conexiones: las que quedaron abiertas tienen el OID anterior cacheado y
+    Postgres falla con "no spatial operator found for st_dwithin".
+    """
     with engine.begin() as connection:
         connection.execute(text("DROP SCHEMA public CASCADE"))
         connection.execute(text("CREATE SCHEMA public"))
+    engine.dispose()
     return engine
