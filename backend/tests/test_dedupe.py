@@ -10,9 +10,9 @@ Corren contra la base de prueba con datos de ejemplo, sin tocar Overpass.
 import uuid
 
 import pytest
+from alembic import command
 from sqlalchemy import text
 
-from alembic import command
 from tests.test_migrations import alembic_config
 
 

@@ -46,10 +46,10 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Lint
-        run: ruff check app tests
+        run: ruff check app tests scripts
 
       - name: Formato
-        run: ruff format --check app tests
+        run: ruff format --check app tests scripts
 
       - name: Migraciones y esquema
         run: pytest tests/ -v

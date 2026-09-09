@@ -18,3 +18,11 @@ ignore = [
 
 [lint.per-file-ignores]
 "alembic/versions/*" = ["E501"]
+
+[lint.isort]
+# Existe una carpeta backend/alembic/ con las migraciones, asi que ruff
+# clasifica "alembic" como codigo propio y lo ordena en el bloque equivocado.
+# Es la libreria de terceros; la carpeta solo comparte el nombre.
+known-third-party = ["alembic", "geoalchemy2"]
+# El codigo propio vive en estos paquetes.
+known-first-party = ["app", "tests", "scripts"]

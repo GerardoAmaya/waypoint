@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.api import places
 from app.core.config import settings
 from app.core.db import engine
 
@@ -18,6 +19,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+app.include_router(places.router)
 
 
 @app.get("/health", tags=["infra"])

@@ -5,10 +5,10 @@ de migracion encontraron dos bugs reales apenas se escribieron, uno de ellos
 destructivo.
 """
 
+from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
 
-from alembic import command
 from tests.conftest import database_url
 
 

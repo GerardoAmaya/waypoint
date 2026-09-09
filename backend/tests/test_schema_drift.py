@@ -5,9 +5,9 @@ que el modelo declara Integer y la migracion BigInteger: la tabla se crea bien
 y la insercion falla en tiempo de ejecucion con "integer out of range".
 """
 
+from alembic import command
 from sqlalchemy import inspect
 
-from alembic import command
 from app import models  # noqa: F401  (registra las tablas en Base.metadata)
 from app.core.db import Base
 from tests.test_migrations import alembic_config
