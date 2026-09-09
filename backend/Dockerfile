@@ -11,7 +11,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 
 WORKDIR /app
 
-COPY requirements.txt requirements-dev.txt ./
+# **Las rutas van desde la raiz del repo, no desde backend/.**
+#
+# Railway construye con la raiz del repo como contexto y no hay forma de
+# cambiarlo desde railway.json. La primera version copiaba "requirements.txt" a
+# secas, que funcionaba con docker compose —que usaba ./backend de contexto— y
+# fallaba en Railway con "requirements-dev.txt: not found".
+#
+# Se alinearon los dos hacia la raiz en vez de dejar cada uno con el suyo: que
+# construya distinto en cada lado convierte "funciona en local" en una frase sin
+# contenido. El .dockerignore de la raiz evita mandar el frontend entero.
+COPY backend/requirements.txt backend/requirements-dev.txt ./
 
 ARG INSTALL_DEV=false
 RUN if [ "$INSTALL_DEV" = "true" ]; then \
@@ -20,7 +30,7 @@ RUN if [ "$INSTALL_DEV" = "true" ]; then \
       pip install -r requirements.txt; \
     fi
 
-COPY . .
+COPY backend/ .
 RUN chmod +x start.sh
 
 EXPOSE 8000

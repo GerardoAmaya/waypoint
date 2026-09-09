@@ -1,0 +1,19 @@
+# El contexto de construccion es la raiz del repo, para que Railway y
+# docker compose construyan exactamente lo mismo. Sin este archivo, eso
+# significaria mandar el frontend entero con sus node_modules al daemon.
+
+.git
+.github
+frontend
+*.md
+!backend/**/*.md
+catalogo.dump
+.env
+.env.*
+
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.venv
+**/venv

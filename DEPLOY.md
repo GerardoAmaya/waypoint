@@ -51,6 +51,13 @@ consultaron.
 Railway lee `railway.json` de la raíz. Construye con el Dockerfile del backend,
 corre `alembic upgrade head` antes de publicar, y comprueba `/health`.
 
+**No hace falta tocar el directorio raíz del servicio.** Railway construye con
+la raíz del repo como contexto, y el `Dockerfile` copia desde ahí
+(`COPY backend/requirements.txt ...`). `docker compose` usa el mismo contexto,
+así que las dos construcciones son idénticas: si funciona en local, funciona
+allá. El `.dockerignore` de la raíz evita mandar el frontend con sus
+`node_modules`.
+
 Las migraciones van como **comando previo al despliegue** y no en el arranque
 del contenedor. Con dos réplicas, migrar al arrancar hace que las dos corran
 Alembic a la vez sobre la misma base; y una migración fallida dentro del

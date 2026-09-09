@@ -19,7 +19,10 @@ services:
 
   api:
     build:
-      context: ./backend
+      # La raiz y no ./backend: el mismo contexto que usa Railway, para que las
+      # dos construcciones sean la misma. Ver el comentario del Dockerfile.
+      context: .
+      dockerfile: backend/Dockerfile
       args:
         INSTALL_DEV: "true"
     env_file: .env
