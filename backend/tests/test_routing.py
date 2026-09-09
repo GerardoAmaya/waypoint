@@ -492,3 +492,45 @@ class TestClienteConPresupuesto:
         assert matriz.stats.estimated == 3 * 2
         km, minutos = matriz.between(lugares[0], lugares[1])
         assert km > 0 and minutos > 0
+
+
+class TestClienteCompartido:
+    def test_es_el_mismo_en_todo_el_proceso(self, monkeypatch):
+        """Un cliente por peticion dejaria el presupuesto de adorno.
+
+        Pacer y DailyQuota viven dentro del cliente. Si cada itinerario
+        construye el suyo, arranca con el presupuesto entero y sin memoria del
+        ritmo, y los dos controles no controlan nada.
+        """
+        from app.core.config import settings
+
+        routing.client_from_settings.cache_clear()
+        monkeypatch.setattr(settings, "ors_api_key", "llave-de-prueba")
+
+        primero = routing.client_from_settings()
+        segundo = routing.client_from_settings()
+
+        assert primero is segundo
+        assert primero.quota is segundo.quota
+        routing.client_from_settings.cache_clear()
+
+    def test_sin_llave_no_hay_cliente(self, monkeypatch):
+        from app.core.config import settings
+
+        routing.client_from_settings.cache_clear()
+        monkeypatch.setattr(settings, "ors_api_key", None)
+        assert routing.client_from_settings() is None
+        routing.client_from_settings.cache_clear()
+
+    def test_el_presupuesto_persiste_entre_llamadas(self, monkeypatch):
+        from app.core.config import settings
+
+        routing.client_from_settings.cache_clear()
+        monkeypatch.setattr(settings, "ors_api_key", "llave-de-prueba")
+        monkeypatch.setattr(settings, "ors_daily_budget", 2)
+
+        cliente = routing.client_from_settings()
+        assert cliente.quota.try_spend() and cliente.quota.try_spend()
+        # Otra "peticion HTTP" pide el cliente de nuevo y encuentra la cuenta.
+        assert routing.client_from_settings().quota.try_spend() is False
+        routing.client_from_settings.cache_clear()

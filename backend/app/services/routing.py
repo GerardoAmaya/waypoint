@@ -25,6 +25,7 @@ import threading
 import time as _time
 import uuid
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import httpx
 
@@ -496,12 +497,20 @@ def persist_edges(
     return len(valores)
 
 
+@lru_cache(maxsize=1)
 def client_from_settings() -> ORSClient | None:
-    """Cliente listo para usar, o None si no hay llave configurada.
+    """Cliente compartido por todo el proceso, o None si no hay llave.
+
+    **Tiene que ser uno solo.** El espaciado entre llamadas y el presupuesto
+    diario viven dentro del cliente, asi que un cliente nuevo por peticion
+    HTTP arranca siempre con el presupuesto entero y sin memoria del ritmo:
+    los dos controles quedarian de adorno en cuanto hubiera mas de un
+    itinerario. Pacer y DailyQuota usan candados, asi que compartirlo entre
+    hilos es seguro.
 
     Devolver None en vez de fallar es deliberado: sin llave el proyecto sigue
-    corriendo con distancias estimadas, que es exactamente lo que necesita
-    alguien que acaba de clonar el repo y todavia no saco cuenta en ORS.
+    corriendo con distancias estimadas, que es lo que necesita alguien que
+    acaba de clonar el repo y todavia no saco cuenta en ORS.
     """
     from app.core.config import settings
 
