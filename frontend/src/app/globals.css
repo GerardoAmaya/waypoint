@@ -1,9 +1,3 @@
-/*
-  Las familias se cargan por la hoja de Google Fonts y no declarandolas a mano:
-  las URLs de gstatic llevan un hash de version que no se adivina ni sobrevive a
-  una actualizacion.
-*/
-@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,200..800&family=DM+Mono:wght@400;500&display=swap");
 @import "tailwindcss";
 
 /*
@@ -39,6 +33,7 @@
   --color-tinta-suave: #5b6570;
   --color-tinta-tenue: #8b949e;
 
+  /* Las pide layout.tsx con <link>; ver el comentario de ahi. */
   --font-sans: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "DM Mono", ui-monospace, "SF Mono", monospace;
 

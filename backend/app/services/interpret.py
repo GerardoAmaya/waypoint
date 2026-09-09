@@ -70,6 +70,18 @@ NUNCA fuerces algo dentro de una categoria porque se parece. "tranquilo" no \
 es "nature". Si dudas entre un campo y "unmapped", elegi "unmapped": que la \
 persona vea que no lo tomaste en cuenta es mejor que que crea que si.
 
+**Lo que SI representaste no va en "unmapped".** Si tradujiste "odio \
+madrugar" a earliest_start, ya lo tomaste en cuenta y no queda nada sin \
+representar: repetirlo en "unmapped" le dice a la persona que lo ignoraste \
+cuando en realidad lo aplicaste. Antes de poner algo en "unmapped", revisa si \
+alguno de los campos de arriba lo cubre.
+
+Ejemplos de lo que va en "unmapped": "algo tranquilo", "romantico", \
+"presupuesto bajo", "vamos con ninos", "que no llueva".
+Ejemplos de lo que NO va: "odio madrugar" (es earliest_start), "sin museos" \
+(es avoided_categories), "poco carro" (es max_travel_km_per_day), "tres dias" \
+(es days).
+
 No inventes nombres de lugares ni los pongas en "area" si la persona no los \
 menciono."""
 

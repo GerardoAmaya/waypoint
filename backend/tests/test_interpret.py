@@ -299,3 +299,32 @@ class TestRevision:
 
         assert not cambio.ok
         assert falso.llamadas == []
+
+
+class TestLoAplicadoNoSeReportaComoIntraducible:
+    """El modelo llegó a poner "odio madrugar" en unmapped Y aplicarlo.
+
+    El itinerario arrancaba a las 10:00 —o sea que si lo tradujo— y el panel
+    decia "no supe como usar esto: no le gusta madrugar". Decirle a alguien que
+    ignoraste lo que en realidad aplicaste es peor que no decir nada.
+    """
+
+    def test_el_prompt_lo_prohibe_con_ejemplos(self):
+        """No se puede testear al modelo sin llamarlo; si se puede testear que
+        la instruccion siga estando y con casos concretos."""
+        from app.services.interpret import SYSTEM_PROMPT
+
+        assert "no va en" in SYSTEM_PROMPT or "NO va" in SYSTEM_PROMPT
+        assert "odio madrugar" in SYSTEM_PROMPT
+        assert "earliest_start" in SYSTEM_PROMPT
+
+    def test_lo_que_el_modelo_mande_igual_viaja_tal_cual(self):
+        """La capa no filtra: si el modelo insiste, se muestra.
+
+        Adivinar cual de los unmapped "en realidad si se aplico" seria la clase
+        de correccion silenciosa que este proyecto no hace.
+        """
+        payload = {**BASE, "unmapped": ["no le gusta madrugar"]}
+        resultado = interpret(None, "odio madrugar", modelo(payload))
+
+        assert resultado.unmapped == ["no le gusta madrugar"]

@@ -25,7 +25,7 @@ export default function Linea({ day, advice, violations }: Props) {
 
   return (
     <div>
-      <div className="mb-5 flex items-baseline gap-3 border-b border-niebla-honda pb-3">
+      <div className="mb-5 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-niebla-honda pb-3">
         <span className="dato text-dato text-tinta-suave">
           {hora(day.start)}–{hora(day.end)}
         </span>
@@ -47,29 +47,36 @@ export default function Linea({ day, advice, violations }: Props) {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.28, delay: indice * 0.045 }}
-              className="relative grid grid-cols-[3.25rem_1fr] gap-x-4 pb-6 last:pb-0"
+              className="grid grid-cols-[3.5rem_0.75rem_1fr] gap-x-3 pb-6 last:pb-0"
             >
-              {/* El hilo une las paradas del dia y se corta en la ultima. */}
-              {indice < day.stops.length - 1 && (
-                <span
-                  aria-hidden
-                  className="absolute left-[3.9rem] top-6 bottom-0 w-px bg-niebla-honda"
-                />
-              )}
-
+              {/*
+                El punto tiene columna propia. La primera version lo colocaba
+                con un desplazamiento negativo sobre la columna de la hora y le
+                tapaba el ultimo digito: "10:00" se leia "10:0".
+              */}
               <span className="dato pt-0.5 text-right text-menudo text-tinta-suave">
                 {hora(parada.arrival)}
               </span>
 
-              <div className="relative">
+              <span className="relative flex justify-center pt-2">
                 <span
                   aria-hidden
-                  className="absolute -left-[1.35rem] top-1.5 size-2.5 rounded-full ring-4 ring-niebla"
+                  className="size-2.5 shrink-0 rounded-full"
                   style={{
                     background:
                       CATEGORY_COLOR[parada.place.category] ?? PALETA.anil,
                   }}
                 />
+                {/* El hilo une las paradas del dia y se corta en la ultima. */}
+                {indice < day.stops.length - 1 && (
+                  <span
+                    aria-hidden
+                    className="absolute top-5 bottom-[-1.5rem] w-px bg-niebla-honda"
+                  />
+                )}
+              </span>
+
+              <div>
                 <p className="text-cuerpo font-medium leading-snug text-tinta">
                   {parada.place.name}
                 </p>

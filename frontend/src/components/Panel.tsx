@@ -96,14 +96,19 @@ export default function Panel({
                   activo ? "text-niebla" : "text-tinta-suave hover:text-tinta"
                 }`}
               >
+                {/*
+                  z-0 y no -z-10: con indice negativo la pildora se va detras
+                  del fondo del panel y queda texto niebla sobre panel niebla,
+                  que es invisible. El dia activo desaparecia de las pestanas.
+                */}
                 {activo && (
                   <motion.span
                     layoutId="dia-activo"
-                    className="absolute inset-0 -z-10 rounded bg-anil"
+                    className="absolute inset-0 z-0 rounded bg-anil"
                     transition={{ type: "spring", stiffness: 380, damping: 32 }}
                   />
                 )}
-                Día {d.number}
+                <span className="relative z-10">Día {d.number}</span>
               </button>
             );
           })}
