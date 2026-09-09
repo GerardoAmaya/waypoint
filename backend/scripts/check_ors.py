@@ -5,10 +5,13 @@ red y gasta cupo. Se corre a mano una vez y su salida va al README.
 
     python -m scripts.check_ors
 
-Mide San Salvador - Santa Ana, que son unos 55 km en linea recta y algo mas de
-sesenta por carretera. Si el resultado se parece a la distancia geodesica, o
-peor, si da un numero enorme, lo mas probable es que las coordenadas se hayan
-mandado invertidas.
+Mide San Salvador - Santa Ana: 49.8 km en linea recta, 62.6 por carretera en
+carro y 68.9 a pie, medido el 2026-09-09. Si el resultado se parece a la
+distancia geodesica, o peor, si da un numero enorme, lo mas probable es que
+las coordenadas se hayan mandado invertidas.
+
+Ojo con el cupo: el endpoint de matriz da 50 peticiones al dia y este guion
+gasta 3.
 """
 
 from __future__ import annotations
