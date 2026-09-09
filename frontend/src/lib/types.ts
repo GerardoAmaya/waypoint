@@ -133,7 +133,8 @@ export interface Constraints {
   meal_minutes: number;
   /** Minutos por categoria cuando se piden: "dos horas en el parque". */
   category_minutes: Partial<Record<Category, number>>;
-  max_stops_per_day: number;
+  /** null es "no lo dijo": el día se llena hasta la hora pedida. */
+  max_stops_per_day: number | null;
   min_quality: number;
   /**
    * El punto de partida y si se vuelve a el.

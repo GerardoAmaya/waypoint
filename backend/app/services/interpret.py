@@ -88,8 +88,11 @@ rapido" o "no quiero perder tiempo comiendo" es cerca de 40. Solo si lo dice.
 tiempo quiere pasar en un tipo de lugar. "quiero pasar dos horas en el parque" \
 es {"nature": 120}; "los museos rapido" es {"culture": 40}. Las claves son las \
 mismas seis categorias. Si no dice ningun tiempo, dejalo vacio.
-- "max_stops_per_day": entero de 1 a 12. Por defecto 5. Son los lugares que \
-quiere visitar; el sitio de donde sale no cuenta.
+- "max_stops_per_day": entero de 1 a 12, o null. Son los lugares que quiere \
+visitar; el sitio de donde sale no cuenta. **Ponlo SOLO si dice un numero o \
+una cantidad**: "tres paradas", "pocos lugares" es 3, "un dia bien cargado" es \
+8. Si no habla de cuantos lugares, null: el itinerario se llena hasta la hora \
+que pidio, y un numero inventado se lo acortaria.
 - "start_place": string. El lugar concreto de donde arranca el dia, tal como lo \
 nombro: "Pizza Hut La Gran Via", "el Hotel Barcelo", "mi casa en Mejicanos". Es \
 de donde SALE, no lo que quiere visitar. Si no dice de donde sale, null.
@@ -477,8 +480,12 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             must_include_categories=exigidas,
             include_meals=bool(datos.get("include_meals", True)),
             meal_minutes=_clamp(datos.get("meal_minutes"), 20, 240, 90, notes, "meal_minutes"),
-            max_stops_per_day=_clamp(
-                datos.get("max_stops_per_day"), 1, 12, 5, notes, "max_stops_per_day"
+            # Sin numero se deja en None y manda el reloj. _clamp necesita un
+            # valor por defecto, asi que la ausencia se resuelve antes.
+            max_stops_per_day=(
+                _clamp(datos.get("max_stops_per_day"), 1, 12, 5, notes, "max_stops_per_day")
+                if datos.get("max_stops_per_day") is not None
+                else None
             ),
             day_modes=_day_modes(datos.get("day_modes"), notes),
             category_minutes=_category_minutes(datos.get("category_minutes"), notes),

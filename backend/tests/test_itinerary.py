@@ -27,6 +27,8 @@ from app.services.itinerary import (
     Itinerary,
     Stop,
     _insert_meals,
+    _meals_that_fit,
+    _outdoor_after_dusk,
     _route_km,
     _sequence_end,
     _trim_to_budget,
@@ -616,13 +618,22 @@ class TestReservaDeCupos:
         assert len(dias[0]) == 4, "un cupo queda para el almuerzo"
 
     def test_un_dia_largo_reserva_para_las_dos_comidas(self):
-        candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(14)]
+        """Con reloj de sobra, lo que decide el cupo es la reserva.
+
+        La hora de cierre va holgada y las paradas son cortas a proposito:
+        desde que el dia se llena por horario hay dos limites, y este test
+        mide el de la reserva. Con paradas de hora y media, ocho no caben ni
+        en un dia de quince horas y el que cortaria seria el reloj.
+        """
+        candidatos = [
+            lugar(f"P{i}", 13.700 + i * 0.004, -89.220, Category.viewpoint) for i in range(14)
+        ]
         restricciones = Constraints(
             days=1,
             center_lat=13.70,
             center_lon=-89.22,
             max_stops_per_day=10,
-            latest_end=time(21, 0),
+            latest_end=time(23, 59),
             include_meals=True,
             max_travel_km_per_day=120,
         )
@@ -632,8 +643,12 @@ class TestReservaDeCupos:
         assert len(dias[0]) == 8, "dos cupos quedan para almuerzo y cena"
 
     def test_sin_tiempo_hasta_la_cena_no_se_reserva_para_ella(self):
-        """Un dia largo pero que cierra temprano tampoco llega a cenar."""
-        candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(14)]
+        """Un dia largo pero que cierra temprano tampoco llega a cenar.
+
+        Se mide sobre _meals_that_fit y no sobre el dia armado porque con la
+        hora de cierre temprana el reloj corta antes que la reserva: el dia
+        saldria corto por otra razon y el test no probaria lo que dice.
+        """
         restricciones = Constraints(
             days=1,
             center_lat=13.70,
@@ -641,12 +656,24 @@ class TestReservaDeCupos:
             max_stops_per_day=10,
             latest_end=time(16, 0),
             include_meals=True,
-            max_travel_km_per_day=120,
         )
 
-        dias = build_days(candidatos, restricciones, meal_options=4)
+        assert _meals_that_fit(restricciones) == 1
 
-        assert len(dias[0]) == 9
+    def test_sin_numero_pedido_se_reserva_contra_la_barrera(self):
+        """Sin tope pedido el reloj corta antes que la barrera casi siempre,
+        asi que la reserva no le quita nada; pero el dia de paradas cortas que
+        llega a las doce tiene que poder comer igual."""
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            latest_end=time(23, 0),
+            include_meals=True,
+        )
+
+        assert restricciones.max_stops_per_day is None
+        assert _meals_that_fit(restricciones) == 2
 
     def test_con_un_solo_restaurante_se_reserva_uno(self):
         candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(8)]
@@ -1885,3 +1912,132 @@ class TestElAnclaNoSeComeElCupoDeLaComida:
 
         assert "No queda parada libre" in mensajes
         assert "horario" not in mensajes
+
+
+class TestElDiaSeLlenaHastaSuHora:
+    """El largo del dia lo decide el horario pedido, no un contador.
+
+    Con un tope de cinco puesto de oficio, un dia de diez de la manana a once
+    de la noche terminaba a las cuatro de la tarde: siete horas sin usar, y
+    sin forma de llegar nunca a la hora de cenar.
+    """
+
+    def _candidatos(self, cuantos=12):
+        return [
+            lugar(f"P{i}", 13.700 + i * 0.006, -89.220, Category.viewpoint, 0.6)
+            for i in range(cuantos)
+        ]
+
+    def _restricciones(self, **extra):
+        base = dict(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(10, 0),
+            latest_end=time(20, 0),
+            include_meals=False,
+            max_travel_km_per_day=120,
+        )
+        base.update(extra)
+        return Constraints(**base)
+
+    def test_sin_tope_pedido_el_dia_pasa_de_cinco_paradas(self):
+        dias = build_days(self._candidatos(), self._restricciones())
+
+        assert len(dias[0]) > 5
+
+    def test_el_tope_pedido_se_respeta(self):
+        """Que mande el reloj no significa ignorar lo que la persona pidio."""
+        dias = build_days(self._candidatos(), self._restricciones(max_stops_per_day=3))
+
+        assert len(dias[0]) == 3
+
+    def test_una_ventana_corta_da_un_dia_corto(self):
+        """La otra cara: si el reloj manda, cerrar temprano acorta el dia."""
+        largo = build_days(self._candidatos(), self._restricciones())
+        corto = build_days(self._candidatos(), self._restricciones(latest_end=time(13, 0)))
+
+        assert len(corto[0]) < len(largo[0])
+
+    def test_el_dia_no_se_pasa_de_la_hora_pedida(self):
+        dias = build_days(self._candidatos(), self._restricciones())
+        secuencia = [(p, None) for p in dias[0]]
+        dia = schedule_day(1, secuencia, self._restricciones())
+
+        assert dia.end is not None and dia.end <= time(20, 0)
+
+    def test_un_dia_largo_llega_a_cenar(self):
+        """Lo que el tope de cinco hacia imposible.
+
+        Con paradas de hora y media desde las diez, cinco cupos terminan a las
+        cinco y media: la franja de la cena empieza a las seis y no se llegaba
+        nunca, dijera lo que dijera el usuario.
+        """
+        candidatos = self._candidatos()
+        comidas = [
+            lugar("Comedor", 13.7005, -89.2205, Category.food, 0.6),
+            lugar("Cena", 13.7405, -89.2205, Category.food, 0.6),
+        ]
+        restricciones = self._restricciones(include_meals=True, latest_end=time(22, 0))
+
+        dias = build_days(candidatos, restricciones, meal_options=len(comidas))
+        secuencia = _insert_meals(dias[0], comidas, restricciones)
+
+        assert "dinner" in [c for _, c in secuencia if c]
+
+
+class TestNadaAlAireLibreDeNoche:
+    """Un mirador a las siete de la tarde es una cuesta a oscuras.
+
+    Mientras los dias terminaban a las cuatro no se podia llegar a esto. Al
+    llenarlos por horario aparecieron, entre ellas un cerro a las 19:22.
+    """
+
+    def test_detecta_la_parada_que_cae_de_noche(self):
+        mirador = lugar("Mirador", 13.7005, -89.22, Category.viewpoint)
+        secuencia = [
+            (lugar("Museo", 13.70, -89.22, Category.culture), None),
+            (mirador, None),
+        ]
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(18, 0)
+        )
+
+        assert _outdoor_after_dusk(secuencia, restricciones, EstimatedTravel()) is mirador
+
+    def test_un_museo_a_esa_hora_no_es_asunto_suyo(self):
+        """Eso es horario de apertura, que el catalogo no tiene fiable."""
+        secuencia = [
+            (lugar("Museo", 13.70, -89.22, Category.culture), None),
+            (lugar("Otro museo", 13.7005, -89.22, Category.culture), None),
+        ]
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(18, 0)
+        )
+
+        assert _outdoor_after_dusk(secuencia, restricciones, EstimatedTravel()) is None
+
+    def test_el_dia_armado_no_deja_ninguna(self):
+        candidatos = [
+            lugar(f"P{i}", 13.700 + i * 0.004, -89.220, Category.viewpoint, 0.6)
+            for i in range(12)
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(14, 0),
+            latest_end=time(23, 0),
+            include_meals=False,
+            max_travel_km_per_day=120,
+        )
+
+        itinerario = assemble([], candidatos, restricciones)
+        tarde = [
+            s
+            for d in itinerario.days
+            for s in d.stops
+            if s.place.category in ("nature", "viewpoint") and s.arrival >= time(18, 15)
+        ]
+
+        assert tarde == []

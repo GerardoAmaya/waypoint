@@ -130,7 +130,7 @@ export default function Compositor({ fase, error, onSubmit }: Props) {
         segunda linea tocando la primera.
       */}
       <h1 className="mt-3 text-obra leading-[1.02] font-light tracking-tight text-balance text-tinta">
-        Recomendaciones de lugares en El Salvador
+        Explorá El Salvador
       </h1>
       {/*
         Sin medida propia: la entradilla ocupa la columna entera.
@@ -152,7 +152,7 @@ export default function Compositor({ fase, error, onSubmit }: Props) {
         jerarquia se sostiene, asi que ahi se queda grande.
       */}
       <p className="mt-4 text-cuerpo leading-relaxed font-light text-pretty text-tinta-suave sm:mt-5 sm:text-guia sm:leading-snug">
-        Te armamos la mejor recomendación de lugares a visitar según tus preferencias. Número de días a planificar, tu lugar de partida (hotel o lugar de origen), si te transportas en carro o caminando, y si querés incluir comidas. Nosotros nos encargamos de buscar los mejores lugares para vos y armar un itinerario completo.
+          Descubrí los mejores lugares según tus preferencias y te armamos el recorrido ideal. Decinos cuántos días tenés, dónde comenzás, cómo te transportás y si querés incluir comidas. ¡Nosotros nos encargamos del resto!
       </p>
 
       <div className="mt-6 sm:mt-8">

@@ -182,6 +182,10 @@ def _check_chronology(dia, reporte: Report) -> None:
 
 
 def _check_stop_count(dia, constraints: Constraints, reporte: Report) -> None:
+    # Sin numero pedido no hay nada que comprobar: el largo del dia lo deciden
+    # el horario y los kilometros, y los dos tienen su propia comprobacion.
+    if constraints.max_stops_per_day is None:
+        return
     if len(dia.stops) > constraints.max_stops_per_day:
         reporte.add(
             "max_stops_per_day",

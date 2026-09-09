@@ -120,6 +120,30 @@ DEFAULT_APPEAL = 0.25
 # Debajo de este atractivo un lugar no entra al itinerario aunque este cerca.
 MIN_APPEAL = 0.45
 
+# Tope de paradas cuando el usuario no pidio ninguno. No es una preferencia,
+# es una barrera: doce paradas ya no es un dia, y sin un techo cualquier error
+# de medida podria convertir un dia en una lista interminable.
+MAX_STOPS_HARD_CAP = 12
+
+# A partir de aca ya no hay luz. En El Salvador el sol se pone entre las 17:50
+# y las 18:30 durante todo el ano —esta a trece grados de latitud, asi que el
+# dia casi no cambia de largo— y por eso esto puede ser una constante y no una
+# cuenta con la fecha.
+#
+# **Solo aplica a lo que se visita al aire libre.** Un museo a las siete de la
+# tarde es cuestion de horarios de apertura, que el catalogo no tiene fiables;
+# un mirador a las siete de la tarde es una cuesta a oscuras, y eso no depende
+# de ningun horario.
+#
+# Hizo falta al llenar los dias por reloj: mientras terminaban a las cuatro de
+# la tarde no habia forma de llegar a esto. Con dias que llegan a la noche
+# aparecieron cinco de 130 paradas al aire libre empezando de noche, entre
+# ellas un cerro a las 19:22.
+DUSK = time(18, 15)
+
+# Lo que no tiene sentido visitar sin luz.
+OUTDOOR_CATEGORIES = {Category.nature.value, Category.viewpoint.value}
+
 LUNCH_WINDOW = (time(11, 30), time(14, 30))
 DINNER_WINDOW = (time(18, 0), time(21, 0))
 
@@ -131,6 +155,55 @@ TYPICAL_STOP_MINUTES = 90
 
 def _as_minutes(momento: time) -> int:
     return momento.hour * 60 + momento.minute
+
+
+# Kilometros que se le guardan a cada comida, como fraccion del presupuesto
+# del dia. **Es una reserva de presupuesto, no de cupos**, y son cosas
+# distintas: el cupo se lo quita a un destino, la reserva solo frena el llenado
+# un poco antes para que el desvio al restaurante quepa.
+#
+# Hizo falta al llenar los dias por horario: antes el dia se quedaba corto y
+# sobraban kilometros, asi que la comida entraba sola. Llenando, el dia gastaba
+# el presupuesto entero en destinos y el restaurante ya no cabia: los dias con
+# "llevá comida" pasaron de 31% a 68% en el arnes.
+#
+# Fraccion y no kilometros fijos porque un dia a pie tiene ocho kilometros y
+# uno en carro veinticinco: tres kilometros de reserva son un desvio razonable
+# en carro y un tercio del dia caminando.
+# El valor sale de barrer sobre los 26 casos:
+#
+#     share   paradas   lleva comida
+#      0.00     316        27/61
+#      0.06     316        21/61
+#      0.09     317        18/61
+#      0.12     309        18/61
+#      0.15     303        17/61
+#      0.20     294        13/61
+#
+# 0.09 domina a 0.12: mismas comidas resueltas y ocho paradas mas. Por encima
+# se empiezan a comprar comidas con destinos, y a 0.20 el dia ya renuncia a
+# veintitres paradas para asegurar cinco comidas mas.
+MEAL_KM_SHARE = 0.09
+
+
+def _meals_expected(constraints: Constraints) -> int:
+    """Cuantas comidas va a intentar colocar el dia.
+
+    No es lo mismo que _meals_that_fit, que reparte CUPOS de parada y solo
+    tiene sentido con un tope pedido. Esto dice cuantas comidas hay que tener
+    en cuenta al reservar tiempo y kilometros, que hace falta siempre.
+    """
+    if not constraints.include_meals:
+        return 0
+
+    esperadas = 0
+    if _as_minutes(constraints.latest_end) >= _as_minutes(LUNCH_WINDOW[0]) and _as_minutes(
+        constraints.earliest_start
+    ) <= _as_minutes(LUNCH_WINDOW[1]):
+        esperadas += 1
+    if _as_minutes(constraints.latest_end) >= _as_minutes(DINNER_WINDOW[0]):
+        esperadas += 1
+    return esperadas
 
 
 def _meals_that_fit(constraints: Constraints) -> int:
@@ -148,9 +221,13 @@ def _meals_that_fit(constraints: Constraints) -> int:
     if not constraints.include_meals:
         return 0
 
+    # **Se reserva contra el tope que este mandando**, sea el que pidio la
+    # persona o la barrera interna. Sin numero pedido el reloj corta antes que
+    # el tope casi siempre, asi que la reserva no le quita nada a nadie; pero
+    # el caso en que no —un dia de paradas cortas que llega a las doce— se
+    # quedaba sin comer, que es el mismo agujero que ya tenia el ancla.
     fin_estimado = (
-        _as_minutes(constraints.earliest_start)
-        + constraints.max_stops_per_day * TYPICAL_STOP_MINUTES
+        _as_minutes(constraints.earliest_start) + constraints.stops_cap * TYPICAL_STOP_MINUTES
     )
     llega_a_la_cena = fin_estimado >= _as_minutes(DINNER_WINDOW[0]) and _as_minutes(
         constraints.latest_end
@@ -239,7 +316,15 @@ class Constraints:
     # resolver el nombre y fijar el lugar en el plan.
     category_minutes: dict[Category, int] = field(default_factory=dict)
 
-    max_stops_per_day: int = 5
+    # **Cuantos lugares quiere visitar por dia, cuando lo dice.**
+    #
+    # None no es "cinco por defecto": es "no lo dijo", y las dos cosas llevan a
+    # itinerarios distintos. Con un cinco puesto de oficio, un dia de diez de
+    # la manana a once de la noche terminaba a las cuatro de la tarde con
+    # siete horas sin usar, porque el largo del dia lo decidia un contador y
+    # no el horario que la persona habia pedido. Sin numero, mandan el reloj y
+    # los kilometros, que son los limites que si vienen de ella.
+    max_stops_per_day: int | None = None
     min_quality: float = 0.0
 
     # De donde sale el dia: la casa, el hotel, la pizzeria donde se almuerza.
@@ -254,6 +339,17 @@ class Constraints:
     # vale para todos los dias, y quien solo parte de un sitio lo hace una vez,
     # el primer dia.
     return_to_start: bool = False
+
+    @property
+    def stops_cap(self) -> int:
+        """El techo de paradas que el motor hace cumplir.
+
+        El numero que pidio la persona, o la barrera si no pidio ninguno. Todo
+        el motor cuenta contra esto; validate() en cambio solo reporta cuando
+        habia un numero pedido, porque una barrera interna no es algo que
+        nadie haya incumplido.
+        """
+        return self.max_stops_per_day or MAX_STOPS_HARD_CAP
 
     def anchors_day(self, numero: int) -> bool:
         """Si el dia `numero` arranca en el punto de partida."""
@@ -511,7 +607,25 @@ def _two_opt(ruta: list[PlaceHit], travel: TravelProvider | None = None) -> list
 # recoge casi toda la mejora disponible, ningun dia se pasa de su presupuesto
 # (el peor queda en el 99%, igual que antes) y el atractivo medio de las
 # paradas no baja: 0.699 contra 0.694.
-REPEAT_PENALTY_KM = 12.0
+#
+# **Vuelto a barrer al llenar los dias por horario, y el 12 ya no valia.** Un
+# dia de cinco paradas casi no tiene sitio para una racha de tres; uno de
+# ocho, si. Con la misma penalizacion de antes las rachas subieron del 21% al
+# 38% de los dias, no porque el criterio empeorara sino porque hay mas dia
+# donde repetirse. El barrido nuevo, con la reserva de comida ya puesta:
+#
+#     km   cumple   paradas  lleva comida  cats/dia  racha3+
+#     12   25/26      317        18/61       3.24      38%
+#     18   25/26      309        17/61       3.24      33%
+#     24   25/26      306        16/61       3.24      31%
+#     30   25/26      305        16/61       3.22      31%
+#     40   25/26      305        16/61       3.22      31%
+#
+# En 24 esta la rodilla: se recupera casi toda la regresion de rachas por once
+# paradas de 317, y de ahi en adelante no compra nada. Las categorias por dia
+# no se mueven en todo el barrido, que es la senal de que lo que cambio fue el
+# largo del dia y no el criterio.
+REPEAT_PENALTY_KM = 24.0
 
 
 # Descuento para una categoria que el usuario exigio y todavia no aparece.
@@ -582,19 +696,66 @@ def _fits_travel_budget(
     travel: TravelProvider | None = None,
     numero: int = 1,
     ancla: PlaceHit | None = None,
+    reserva_km: float = 0.0,
 ) -> bool:
     """Comprueba si agregar una parada mantiene el dia dentro del limite.
 
     Cuenta tambien el regreso al punto de partida cuando el dia vuelve: sin
     eso, el dia se llena hasta el tope y el viaje de vuelta lo saca del
-    presupuesto despues, cuando ya no hay nada que recortar.
+    presupuesto despues, cuando ya no hay nada que recortar. La reserva de las
+    comidas es lo mismo un paso mas alla: el desvio al restaurante tampoco
+    aparece de la nada.
     """
     medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
     tentativa = _pinned_order(ancla, [*ruta, nueva], medidor)
     total = _route_km(tentativa, medidor) + _closing_km(
         tentativa, numero, constraints, medidor
     )
-    return total <= constraints.budget_for(numero)
+    return total <= constraints.budget_for(numero) - reserva_km
+
+
+def _fits_the_clock(
+    ruta: list[PlaceHit],
+    nueva: PlaceHit,
+    constraints: Constraints,
+    travel: TravelProvider | None = None,
+    numero: int = 1,
+    ancla: PlaceHit | None = None,
+    reservados: int = 0,
+) -> bool:
+    """Comprueba si agregar una parada deja el dia dentro de su horario.
+
+    Cuenta lo mismo que contara el dia terminado: el recorrido con la parada
+    nueva, el regreso al punto de partida si lo hay, y el rato de las comidas
+    que todavia no estan puestas pero que se van a poner. Sin esa ultima
+    parte, un dia se llenaba hasta el limite del reloj y despues el almuerzo
+    lo pasaba de largo, que es el mismo error que _fits_travel_budget ya
+    corregia para el regreso.
+
+    No mira la espera de las franjas de comida a proposito: esperar a que
+    abran adelanta el reloj, y contarlo aca haria parecer imposibles dias que
+    se resuelven solos cuando la comida cae en su hora.
+    """
+    medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
+    tentativa = _pinned_order(ancla, [*ruta, nueva], medidor)
+    secuencia = [(lugar, None) for lugar in tentativa]
+
+    # Nada al aire libre despues de que oscurece. Se mira sobre el orden
+    # tentativo, que es el mismo que va a salir: _pinned_order es determinista.
+    limite_luz = _as_minutes(DUSK)
+    for lugar, hora in zip(
+        tentativa, _arrival_times(secuencia, constraints, medidor), strict=False
+    ):
+        if lugar.category in OUTDOOR_CATEGORIES and _as_minutes(hora) >= limite_luz:
+            return False
+
+    minutos = _sequence_minutes(secuencia, constraints, medidor)
+    if constraints.return_to_start and constraints.anchors_day(numero) and ancla is not None:
+        if tentativa[-1].id != ancla.id:
+            minutos += medidor.between(tentativa[-1], ancla)[1]
+    minutos += reservados * constraints.meal_minutes
+
+    return minutos <= _as_minutes(constraints.latest_end)
 
 
 def build_days(
@@ -681,9 +842,15 @@ def build_days(
         # El ancla no gasta cupo: quien pide tres paradas habla de lugares
         # que va a visitar, no del sitio de donde sale. Descontarle una parada
         # por decir de donde parte le daria menos de lo que pidio.
-        cupo = max(constraints.max_stops_per_day - reservados, 1) + (
-            1 if ancla is not None else 0
-        )
+        cupo = max(constraints.stops_cap - reservados, 1) + (1 if ancla is not None else 0)
+
+        # Lo que se le guarda a las comidas en tiempo y en kilometros. Es
+        # independiente de los cupos: aunque no se reserve ninguna parada, el
+        # rato de comer y el desvio al restaurante ocurren igual.
+        esperadas = min(_meals_expected(constraints), max(0, meal_options))
+        if ancla is not None and ancla.category == Category.food.value:
+            esperadas = max(0, esperadas - 1)
+        reserva_km = esperadas * MEAL_KM_SHARE * constraints.budget_for(numero)
 
         while len(dia) < cupo:
             # Se reordena en cada vuelta porque el coste depende de lo que
@@ -697,11 +864,23 @@ def build_days(
             )
             agregado = False
             for candidato in cercanos[:15]:
-                if _fits_travel_budget(dia, candidato, constraints, medidor, numero, ancla):
-                    dia.append(candidato)
-                    disponibles.remove(candidato)
-                    agregado = True
-                    break
+                if not _fits_travel_budget(
+                    dia, candidato, constraints, medidor, numero, ancla, reserva_km
+                ):
+                    continue
+                # **El horario es un limite de llenado y no solo de recorte.**
+                # Antes solo se comprobaba despues, en _trim_to_budget, que
+                # quita paradas: o sea que el reloj podia acortar el dia pero
+                # nunca alargarlo. Mirandolo aca, el dia crece mientras quepa
+                # y para cuando ya no.
+                if not _fits_the_clock(
+                    dia, candidato, constraints, medidor, numero, ancla, esperadas
+                ):
+                    continue
+                dia.append(candidato)
+                disponibles.remove(candidato)
+                agregado = True
+                break
             if not agregado:
                 break
 
@@ -863,7 +1042,7 @@ def _best_meal_insertion(
     # aunque el restaurante estuviera al lado y dentro del presupuesto.
     if (
         _visit_count((lugar for lugar, _ in secuencia), numero, constraints)
-        >= constraints.max_stops_per_day
+        >= constraints.stops_cap
     ):
         return secuencia, None, 0.0
 
@@ -1087,7 +1266,14 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
         # el mismo decidio no aplicarle.
         visitas = _visit_count((parada.place for parada in dia.stops), dia.number, constraints)
 
-        if visitas > constraints.max_stops_per_day:
+        # Solo se reporta cuando la persona pidio un numero. El tope interno
+        # que usa el motor cuando nadie pidio nada es una barrera suya, y
+        # reportarla como restriccion incumplida seria acusar al usuario de
+        # romper una regla que no puso.
+        if (
+            constraints.max_stops_per_day is not None
+            and visitas > constraints.max_stops_per_day
+        ):
             violaciones.append(
                 Violation(
                     "max_stops_per_day",
@@ -1214,13 +1400,17 @@ def _meal_advice(
     # del presupuesto, y lo que faltaba era una parada. Ademas la salida es
     # distinta: aca se sube el tope de paradas, alla se lleva comida.
     visitas = _visit_count((p.place for p in dia.stops), dia.number, constraints)
-    if visitas >= constraints.max_stops_per_day:
+    if visitas >= constraints.stops_cap:
+        pedido = constraints.max_stops_per_day
+        salida = (
+            f"pediste {pedido}. Subí el límite de paradas o llevá {nombre}"
+            if pedido is not None
+            else f"es lo más que arma en un día. Llevá {nombre}"
+        )
         return Advice(
             kind,
             dia.number,
-            f"No queda parada libre para {nombre}: el día ya tiene {visitas} y "
-            f"pediste {constraints.max_stops_per_day}. Subí el límite de paradas "
-            f"o llevá {nombre}",
+            f"No queda parada libre para {nombre}: el día ya tiene {visitas} y {salida}",
         )
 
     candidatos = _meal_candidates([p.place for p in dia.stops], comidas, travel)
@@ -1278,20 +1468,49 @@ def _day_travel_km(
     )
 
 
+def _sequence_minutes(
+    secuencia: list[tuple[PlaceHit, str | None]],
+    constraints: Constraints,
+    travel: TravelProvider,
+) -> int:
+    """En que minuto del dia termina la secuencia, contado desde medianoche.
+
+    **En minutos y no en `time` porque `time` da la vuelta al reloj.** Un dia
+    que se pasa de las doce de la noche volvia a empezar en cero y parecia
+    terminar de madrugada, o sea antes que uno corto: justo donde se comprueba
+    latest_end, la comprobacion decia que si. Mientras los dias eran de cinco
+    paradas no se llegaba nunca; llenandolos por horario, si.
+    """
+    minutos = _as_minutes(constraints.earliest_start)
+    for indice, (lugar, comida) in enumerate(secuencia):
+        if indice:
+            minutos += travel.between(secuencia[indice - 1][0], lugar)[1]
+        if comida == "lunch":
+            minutos = max(minutos, _as_minutes(LUNCH_WINDOW[0]))
+        elif comida == "dinner":
+            minutos = max(minutos, _as_minutes(DINNER_WINDOW[0]))
+        minutos += _stop_minutes(lugar, comida, constraints)
+    return minutos
+
+
 def _sequence_end(
     secuencia: list[tuple[PlaceHit, str | None]],
     constraints: Constraints,
     travel: TravelProvider,
 ) -> time | None:
-    """Hora a la que termina la ultima parada de la secuencia."""
+    """Hora a la que termina la ultima parada de la secuencia.
+
+    La etiqueta de la ultima parada cuenta: un dia que termina cenando dura lo
+    que dura la cena.
+    """
     if not secuencia:
         return None
-    horas = _arrival_times(secuencia, constraints, travel)
-    # La etiqueta de la ultima parada no se descarta: un dia que termina
-    # cenando dura lo que dura la cena, y con la duracion de la categoria se
-    # calculaba media hora de menos justo donde se comprueba latest_end.
-    ultimo, comida = secuencia[-1]
-    return _add_minutes(horas[-1], _stop_minutes(ultimo, comida, constraints))
+    total = _sequence_minutes(secuencia, constraints, travel)
+    # Un dia que se pasa de la medianoche no termina temprano: se satura, para
+    # que quien lo compare con una hora limite lo vea largo y no corto.
+    if total >= 24 * 60:
+        return time(23, 59)
+    return time(total // 60, total % 60)
 
 
 def _fits_the_day(
@@ -1312,8 +1531,32 @@ def _fits_the_day(
     if km > constraints.budget_for(numero):
         return False
 
-    fin = _sequence_end(secuencia, constraints, travel)
-    return fin is None or fin <= constraints.latest_end
+    if not secuencia:
+        return True
+    return _sequence_minutes(secuencia, constraints, travel) <= _as_minutes(
+        constraints.latest_end
+    )
+
+
+def _outdoor_after_dusk(
+    secuencia: list[tuple[PlaceHit, str | None]],
+    constraints: Constraints,
+    travel: TravelProvider,
+) -> PlaceHit | None:
+    """La primera parada al aire libre que caeria ya de noche, si hay alguna.
+
+    Se comprueba aca ademas de al llenar el dia porque entre una cosa y la
+    otra el orden cambia: _pinned_order optimiza el recorrido y la comida se
+    intercala, y las dos cosas mueven las horas. Mirandolo solo al llenar
+    quedaban cuatro de cinco.
+    """
+    limite = _as_minutes(DUSK)
+    for (lugar, _), hora in zip(
+        secuencia, _arrival_times(secuencia, constraints, travel), strict=False
+    ):
+        if lugar.category in OUTDOOR_CATEGORIES and _as_minutes(hora) >= limite:
+            return lugar
+    return None
 
 
 def _trim_to_budget(
@@ -1353,6 +1596,15 @@ def _trim_to_budget(
             medidor,
             numero,
         )
+        # **La parada de noche se quita por su nombre y no por su costo.** El
+        # recorte de kilometros elige la que mas traslado suma, que casi nunca
+        # es la que cae tarde: buscando por ahi, el dia perdia otras paradas
+        # antes de arreglar la unica que estaba mal.
+        nocturna = _outdoor_after_dusk(secuencia, constraints, medidor)
+        if nocturna is not None and nocturna is not ancla:
+            restantes.remove(nocturna)
+            continue
+
         if _fits_the_day(secuencia, constraints, medidor, numero):
             return secuencia
 

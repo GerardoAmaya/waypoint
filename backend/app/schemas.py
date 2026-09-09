@@ -120,7 +120,10 @@ class ItineraryRequest(BaseModel):
     category_minutes: dict[Category, Annotated[int, Field(ge=10, le=480)]] = Field(
         default_factory=dict
     )
-    max_stops_per_day: int = Field(default=5, ge=1, le=12)
+    # None es "no lo dijo", no "cinco": sin numero pedido, el largo del dia lo
+    # deciden el horario y los kilometros, que son limites que si vienen de la
+    # persona. Ver Constraints.max_stops_per_day.
+    max_stops_per_day: int | None = Field(default=None, ge=1, le=12)
     min_quality: float = Field(default=0.0, ge=0.0, le=1.0)
 
     # De donde sale el dia, por identificador del catalogo y no por
