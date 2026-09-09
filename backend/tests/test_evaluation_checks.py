@@ -228,3 +228,39 @@ class TestCorpusDeCasos:
         from scripts.evaluation.cases import CASES
 
         assert any(c.zone == zona_dificil for c in CASES)
+
+
+class TestDurasYRecomendaciones:
+    """Un limite incumplido y un consejo no son la misma clase de cosa.
+
+    Con los dos en el mismo porcentaje, la mitad de los "fallos" eran zonas
+    rurales sin restaurante cerca y el numero dejaba de significar algo.
+    """
+
+    def test_una_comida_que_falta_no_hace_fallar_el_caso(self):
+        d = Day(number=1)
+        d.stops.append(parada(lugar("A"), time(9, 0), time(13, 0), km=0.0))
+
+        reporte = check_all(itinerario(d), restricciones(include_meals=True))
+
+        assert reporte.soft, "tiene que registrarse"
+        assert reporte.passed, "pero no cuenta como limite incumplido"
+
+    def test_un_limite_duro_si_hace_fallar_el_caso(self):
+        reporte = check_all(itinerario(dia_limpio()), restricciones(max_stops_per_day=1))
+
+        assert reporte.hard
+        assert not reporte.passed
+
+    def test_los_dos_conviven_sin_mezclarse(self):
+        d = Day(number=1)
+        d.stops.append(parada(lugar("A"), time(9, 0), time(11, 0), km=0.0))
+        d.stops.append(parada(lugar("B"), time(11, 10), time(13, 0), km=50.0))
+
+        reporte = check_all(
+            itinerario(d),
+            restricciones(include_meals=True, max_travel_km_per_day=10),
+        )
+
+        assert {f.check for f in reporte.hard} == {"max_travel_km_per_day"}
+        assert {f.check for f in reporte.soft} == {"include_meals"}

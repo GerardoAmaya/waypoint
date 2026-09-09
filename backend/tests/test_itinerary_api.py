@@ -183,3 +183,23 @@ class TestOrigenDeLasDistancias:
         assert _to_travel_source(MatrixStats(estimated=6)).source == "estimated"
         assert _to_travel_source(MatrixStats(fetched=4, estimated=2)).source == "mixed"
         assert _to_travel_source(MatrixStats(cached=6)).source == "real"
+
+
+class TestConsejos:
+    def test_la_respuesta_trae_los_consejos_aparte(self, cliente):
+        """El viajero ve por que no hubo almuerzo y que puede hacer."""
+        cuerpo = cliente.post(
+            "/itinerary",
+            json={**SAN_SALVADOR, "real_routes": False, "max_travel_km_per_day": 1},
+        ).json()
+
+        assert "advice" in cuerpo
+        assert isinstance(cuerpo["advice"], list)
+
+    def test_un_dia_sin_almuerzo_ya_no_es_violacion(self, cliente):
+        cuerpo = cliente.post(
+            "/itinerary",
+            json={**SAN_SALVADOR, "real_routes": False, "max_travel_km_per_day": 1},
+        ).json()
+
+        assert not any(v["constraint"] == "include_meals" for v in cuerpo["violations"])

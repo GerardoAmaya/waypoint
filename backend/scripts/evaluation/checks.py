@@ -33,13 +33,30 @@ class Failure:
     detail: str
 
 
+# Comprobaciones que NO son limites que el usuario puso. Que el comedor mas
+# cercano quede fuera del presupuesto de traslado no es romper una regla, y la
+# solucion del mundo real es llevar almuerzo. Mezclarlas con las duras hacia
+# que el porcentaje de cumplimiento no significara nada: la mitad de los
+# "fallos" eran zonas rurales sin restaurante cerca.
+SOFT_CHECKS = frozenset({"include_meals"})
+
+
 @dataclass
 class Report:
     failures: list[Failure] = field(default_factory=list)
 
     @property
+    def hard(self) -> list[Failure]:
+        return [f for f in self.failures if f.check not in SOFT_CHECKS]
+
+    @property
+    def soft(self) -> list[Failure]:
+        return [f for f in self.failures if f.check in SOFT_CHECKS]
+
+    @property
     def passed(self) -> bool:
-        return not self.failures
+        """Cumple todos los limites duros. Los consejos no cuentan."""
+        return not self.hard
 
     def add(self, check: str, day: int | None, detail: str) -> None:
         self.failures.append(Failure(check, day, detail))

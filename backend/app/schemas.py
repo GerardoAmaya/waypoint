@@ -120,6 +120,19 @@ class ViolationOut(BaseModel):
     detail: str
 
 
+class AdviceOut(BaseModel):
+    """Algo que el viajero deberia saber, que no es un limite incumplido.
+
+    Separado de las violaciones a proposito. Que el comedor mas cercano quede
+    fuera del presupuesto de traslado no es romper una regla que el usuario
+    puso, y la solucion del mundo real es llevar comida.
+    """
+
+    kind: str
+    day: int | None = None
+    detail: str
+
+
 class TravelSourceOut(BaseModel):
     """De donde salieron las distancias de este itinerario.
 
@@ -145,6 +158,7 @@ class TravelSourceOut(BaseModel):
 class ItineraryOut(BaseModel):
     days: list[DayOut]
     violations: list[ViolationOut] = Field(default_factory=list)
+    advice: list[AdviceOut] = Field(default_factory=list)
     satisfies_all_constraints: bool
     total_stops: int
     unused_candidates: int

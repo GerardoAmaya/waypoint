@@ -617,86 +617,42 @@ class TestReservaDeCupos:
         assert len(dias[0]) <= 4
 
 
-class TestComidaQueFalta:
-    """Pedir comida y no recibirla tiene que verse.
+class TestComidaQueFaltaYaNoEsViolacion:
+    """La comida que falta se movio de violations a advice.
 
-    Pasa donde el catalogo no tiene restaurantes: dentro de un parque
-    nacional, por ejemplo. Enterarse a la una de la tarde no es opcion.
+    Una violacion es "rompi un limite que pusiste". Que el comedor mas cercano
+    quede fuera del presupuesto no es romper una regla, y mezclarlos hacia que
+    "cumple todas las restricciones" no significara nada.
     """
 
-    def _dia(self, stops, restricciones):
+    def _itinerario(self, stops):
         dia = Day(number=1)
         dia.stops.extend(stops)
         return Itinerary(days=[dia])
 
-    def test_reporta_el_almuerzo_que_no_se_pudo_dar(self):
+    def test_validate_ya_no_reclama_el_almuerzo(self):
         restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
         stops = [
             Stop(lugar("A", 13.70, -89.22), time(9, 0), time(10, 30)),
             Stop(lugar("B", 13.705, -89.22), time(10, 40), time(12, 40), 10, 1.0),
         ]
-        violaciones = validate(self._dia(stops, restricciones), restricciones)
 
-        assert any(v.constraint == "include_meals" for v in violaciones)
-
-    def test_un_dia_que_termina_antes_del_almuerzo_no_reporta_nada(self):
-        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
-        stops = [
-            Stop(lugar("A", 13.70, -89.22), time(9, 0), time(10, 0)),
-            Stop(lugar("B", 13.705, -89.22), time(10, 10), time(11, 0), 10, 1.0),
-        ]
-        violaciones = validate(self._dia(stops, restricciones), restricciones)
+        violaciones = validate(self._itinerario(stops), restricciones)
 
         assert not any(v.constraint == "include_meals" for v in violaciones)
 
-    def test_con_almuerzo_puesto_no_reporta_nada(self):
-        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
-        stops = [
-            Stop(lugar("A", 13.70, -89.22), time(9, 0), time(11, 30)),
-            Stop(
-                lugar("Comedor", 13.702, -89.221, Category.food),
-                time(11, 40),
-                time(12, 40),
-                10,
-                1.0,
-                meal="lunch",
-            ),
-        ]
-        violaciones = validate(self._dia(stops, restricciones), restricciones)
-
-        assert not any(v.constraint == "include_meals" for v in violaciones)
-
-    def test_si_no_se_pidieron_comidas_no_se_reclaman(self):
+    def test_los_limites_duros_se_siguen_reportando(self):
         restricciones = Constraints(
-            days=1, center_lat=13.70, center_lon=-89.22, include_meals=False
+            days=1, center_lat=13.70, center_lon=-89.22, max_stops_per_day=1
         )
         stops = [
-            Stop(lugar("A", 13.70, -89.22), time(9, 0), time(13, 0)),
+            Stop(lugar("A", 13.70, -89.22), time(9, 0), time(10, 30)),
+            Stop(lugar("B", 13.705, -89.22), time(10, 40), time(12, 40), 10, 1.0),
         ]
-        violaciones = validate(self._dia(stops, restricciones), restricciones)
 
-        assert not any(v.constraint == "include_meals" for v in violaciones)
+        violaciones = validate(self._itinerario(stops), restricciones)
 
-    def test_el_almuerzo_entra_aunque_ninguna_llegada_lo_dispare(self):
-        """El caso real del Parque El Imposible.
-
-        Las tres llegadas del dia caian antes de las 11:30 pero la ultima
-        parada duraba hora y media, asi que el dia cruzaba el almuerzo entero
-        sin evaluarlo ni una vez.
-        """
-        from app.services.itinerary import _insert_meals
-
-        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
-        ruta = [
-            lugar("A", 13.700, -89.220),
-            lugar("B", 13.702, -89.222),
-            lugar("C", 13.704, -89.224),
-        ]
-        comidas = [lugar("Comedor", 13.703, -89.223, Category.food)]
-
-        secuencia = _insert_meals(ruta, comidas, restricciones)
-
-        assert any(comida == "lunch" for _, comida in secuencia)
+        assert any(v.constraint == "max_stops_per_day" for v in violaciones)
 
 
 class TestLimitesDurosQueNoSeHacianCumplir:
@@ -935,69 +891,121 @@ class TestSeleccionDeRestaurantes:
         assert _meal_candidates([], comidas, EstimatedTravel()) == []
 
 
-class TestElDiaSeAchicaParaComer:
-    """El fallo que la evaluacion tardo dos intentos en localizar.
+class TestElDiaNoSeAchicaPorUnaComida:
+    """Se intento achicarlo y estaba mal.
 
-    _insert_meals no lograba meter el restaurante por presupuesto y devolvia
-    el dia sin el. Ese dia cabia de sobra, asi que _trim_to_budget lo daba por
-    bueno y nunca intentaba achicarlo para hacerle lugar.
+    Alguien pide cinco paradas y un almuerzo; devolverle cuatro destinos a
+    cambio de un comedor es decidir por el. Llevar comida es una solucion del
+    mundo real, saltarse un volcan no lo es.
     """
 
     def _restricciones(self, **extra):
-        base = dict(
-            days=1,
-            center_lat=13.70,
-            center_lon=-89.22,
-            max_travel_km_per_day=12,
-        )
+        base = dict(days=1, center_lat=13.70, center_lon=-89.22, max_travel_km_per_day=12)
         base.update(extra)
         return Constraints(**base)
 
-    def test_recorta_destinos_para_que_entre_el_almuerzo(self):
+    def test_conserva_los_destinos_aunque_no_entre_el_almuerzo(self):
         from app.services.itinerary import _trim_to_budget
-
-        # Cuatro destinos en fila que ya consumen casi todo el presupuesto.
-        destinos = [
-            lugar(f"D{i}", 13.700 + i * 0.020, -89.220, Category.nature) for i in range(4)
-        ]
-        comidas = [lugar("Comedor", 13.712, -89.235, Category.food)]
-
-        secuencia = _trim_to_budget(destinos, comidas, self._restricciones())
-
-        assert any(comida == "lunch" for _, comida in secuencia)
-
-    def test_no_achica_el_dia_si_la_comida_es_imposible(self):
-        """Con el restaurante a cuarenta kilometros, no hay recorte que ayude.
-
-        Quedarse sin comer ya es malo; quedarse ademas con una sola parada
-        seria peor. Se devuelve el dia mas completo de los que cabian.
-        """
-        from app.services.itinerary import _day_travel_km, _trim_to_budget
 
         destinos = [
             lugar(f"D{i}", 13.700 + i * 0.010, -89.220, Category.nature) for i in range(3)
         ]
         lejisimos = [lugar("Lejisimos", 14.100, -89.700, Category.food)]
-        restricciones = self._restricciones()
 
-        secuencia = _trim_to_budget(destinos, lejisimos, restricciones)
+        secuencia = _trim_to_budget(destinos, lejisimos, self._restricciones())
 
-        assert len(secuencia) >= 2, "no se achica hasta una parada por nada"
-        assert (
-            _day_travel_km(secuencia, restricciones.mode)
-            <= restricciones.max_travel_km_per_day
-        )
+        assert len(secuencia) == 3
+        assert not any(comida for _, comida in secuencia)
 
-    def test_un_dia_que_termina_antes_del_almuerzo_no_se_achica(self):
-        """Sin esta guarda el bucle recortaria buscando meter una comida
-        que ese dia no necesita."""
+    def test_si_el_almuerzo_entra_sin_sacrificar_nada_entra(self):
         from app.services.itinerary import _trim_to_budget
 
-        destinos = [lugar("Corto", 13.700, -89.220, Category.viewpoint)]
-        comidas = [lugar("Lejisimos", 14.100, -89.700, Category.food)]
+        destinos = [
+            lugar(f"D{i}", 13.700 + i * 0.004, -89.220, Category.nature) for i in range(3)
+        ]
+        comidas = [lugar("Comedor", 13.705, -89.221, Category.food)]
 
-        secuencia = _trim_to_budget(
-            destinos, comidas, self._restricciones(latest_end=time(11, 0))
+        secuencia = _trim_to_budget(destinos, comidas, self._restricciones())
+
+        assert any(comida == "lunch" for _, comida in secuencia)
+        assert len([p for p, c in secuencia if c is None]) == 3
+
+
+class TestConsejoDeLlevarAlmuerzo:
+    """El aviso tiene que llevar el numero y decir la causa verdadera.
+
+    "no hay donde comer" era falso en casi todos los casos: Santa Ana tiene
+    trescientos lugares de comida. Lo que no habia era uno que entrara en el
+    presupuesto de kilometros.
+    """
+
+    def _itinerario(self, stops):
+        d = Day(number=1)
+        d.stops.extend(stops)
+        return Itinerary(days=[d])
+
+    def test_dice_cuanto_habria_costado(self):
+        from app.services.itinerary import advise
+
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, max_travel_km_per_day=10
         )
+        segunda = lugar("B", 13.710, -89.220, Category.nature)
+        stops = [
+            Stop(lugar("A", 13.700, -89.220, Category.nature), time(9, 0), time(10, 45)),
+            Stop(segunda, time(11, 0), time(12, 45), 5, 2.0),
+        ]
+        comidas = [lugar("Comedor Lejano", 13.900, -89.500, Category.food)]
 
-        assert len(secuencia) == 1
+        consejos = advise(self._itinerario(stops), restricciones, comidas)
+
+        assert len(consejos) == 1
+        assert consejos[0].kind == "bring_lunch"
+        assert "Comedor Lejano" in consejos[0].detail
+        assert "km" in consejos[0].detail
+
+    def test_sin_restaurantes_lo_dice_asi(self):
+        from app.services.itinerary import advise
+
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+        stops = [Stop(lugar("A", 13.700, -89.220, Category.nature), time(9, 0), time(13, 0))]
+
+        consejos = advise(self._itinerario(stops), restricciones, [])
+
+        assert "no hay ningún lugar para comer" in consejos[0].detail
+
+    def test_con_almuerzo_puesto_no_aconseja_nada(self):
+        from app.services.itinerary import advise
+
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+        stops = [
+            Stop(lugar("A", 13.700, -89.220), time(9, 0), time(11, 30)),
+            Stop(
+                lugar("Comedor", 13.702, -89.221, Category.food),
+                time(11, 40),
+                time(12, 40),
+                10,
+                1.0,
+                meal="lunch",
+            ),
+        ]
+
+        assert advise(self._itinerario(stops), restricciones, []) == []
+
+    def test_sin_comidas_pedidas_no_aconseja_nada(self):
+        from app.services.itinerary import advise
+
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, include_meals=False
+        )
+        stops = [Stop(lugar("A", 13.700, -89.220, Category.nature), time(9, 0), time(13, 0))]
+
+        assert advise(self._itinerario(stops), restricciones, []) == []
+
+    def test_un_dia_corto_no_recibe_consejo(self):
+        from app.services.itinerary import advise
+
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+        stops = [Stop(lugar("A", 13.700, -89.220), time(9, 0), time(10, 30))]
+
+        assert advise(self._itinerario(stops), restricciones, []) == []

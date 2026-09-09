@@ -30,7 +30,7 @@ from app.models import Place
 from app.services.geo import EstimatedTravel
 from app.services.itinerary import Itinerary, plan, plan_with_routing
 from scripts.evaluation.cases import CASES
-from scripts.evaluation.checks import check_all
+from scripts.evaluation.checks import SOFT_CHECKS, check_all
 
 
 def catalog_ids(db) -> set:
@@ -103,6 +103,7 @@ def main() -> int:
 
     fallos_por_check: Counter[str] = Counter()
     cumplidos = 0
+    recomendaciones = 0
     marginales: list[float] = []
     total_paradas = 0
     inventados = 0
@@ -127,18 +128,22 @@ def main() -> int:
                 fallos_por_check[fallo.check] += 1
                 if fallo.check == "invented_place":
                     inventados += 1
+            recomendaciones += len(reporte.soft)
 
             if reporte.passed:
                 cumplidos += 1
-                print(f"  ok    {caso.name}")
+                marca = "ok   " if not reporte.soft else "ok  ~"
+                print(f"  {marca} {caso.name}")
             else:
-                resumen = ", ".join(sorted({f.check for f in reporte.failures}))
+                resumen = ", ".join(sorted({f.check for f in reporte.hard}))
                 print(f"  FALLA {caso.name:<26} {resumen}")
-                if args.verbose:
-                    print(f"        ({caso.why})")
-                    for fallo in reporte.failures:
-                        dia = f"dia {fallo.day}" if fallo.day else "itinerario"
-                        print(f"        - [{dia}] {fallo.detail}")
+
+            if args.verbose and reporte.failures:
+                print(f"        ({caso.why})")
+                for fallo in reporte.failures:
+                    dia = f"dia {fallo.day}" if fallo.day else "itinerario"
+                    tipo = "consejo" if fallo.check in SOFT_CHECKS else "limite"
+                    print(f"        - [{tipo} {dia}] {fallo.detail}")
 
     print(f"\n{'=' * 60}")
     print(

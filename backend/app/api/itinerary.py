@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.schemas import (
+    AdviceOut,
     DayOut,
     ItineraryOut,
     ItineraryRequest,
@@ -111,6 +112,7 @@ def _to_out(itinerario: motor.Itinerary, stats) -> ItineraryOut:
             ViolationOut(constraint=v.constraint, day=v.day, detail=v.detail)
             for v in itinerario.violations
         ],
+        advice=[AdviceOut(kind=c.kind, day=c.day, detail=c.detail) for c in itinerario.advice],
         satisfies_all_constraints=itinerario.satisfies_all_constraints,
         total_stops=itinerario.total_stops,
         unused_candidates=itinerario.unused_candidates,

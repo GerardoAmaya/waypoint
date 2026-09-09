@@ -212,9 +212,30 @@ class Violation:
 
 
 @dataclass
+class Advice:
+    """Algo que el viajero deberia saber, que no es un limite incumplido.
+
+    **No es lo mismo que una violacion y mezclarlos empeora las dos cosas.**
+    Una violacion es "rompi un limite que pusiste": el dia se paso de los
+    kilometros, empezo antes de la hora. Un consejo es "no pude darte algo
+    que querias, esto es por que, y esto podes hacer".
+
+    El almuerzo es el caso claro. Que el comedor mas cercano quede fuera del
+    presupuesto de traslado no es romper una regla, y la solucion del mundo
+    real es llevar comida, no saltarse un volcan. Con los dos en la misma
+    bolsa, "cumple todas las restricciones" deja de significar nada.
+    """
+
+    kind: str
+    day: int | None
+    detail: str
+
+
+@dataclass
 class Itinerary:
     days: list[Day]
     violations: list[Violation] = field(default_factory=list)
+    advice: list[Advice] = field(default_factory=list)
     unused_candidates: int = 0
 
     @property
@@ -508,7 +529,8 @@ def _best_meal_insertion(
     ventana: tuple[time, time],
     constraints: Constraints,
     travel: TravelProvider,
-) -> tuple[list[tuple[PlaceHit, str | None]], PlaceHit | None]:
+    enforce_budget: bool = True,
+) -> tuple[list[tuple[PlaceHit, str | None]], PlaceHit | None, float]:
     """Mete la comida donde menos kilometros cueste, entre las posiciones que dan la hora.
 
     **El costo del regreso tiene que entrar en la cuenta.** Elegir el
@@ -532,7 +554,7 @@ def _best_meal_insertion(
     # termina con seis paradas y el limite era cinco. Una restriccion dura no
     # se puede predecir, se hace cumplir donde se puede garantizar.
     if len(secuencia) >= constraints.max_stops_per_day:
-        return secuencia, None
+        return secuencia, None, 0.0
 
     base_km = _sequence_km(secuencia, travel)
     limite_temprano = _add_minutes(ventana[0], -MEAL_EARLY_TOLERANCE_MINUTES)
@@ -557,7 +579,7 @@ def _best_meal_insertion(
                 continue
 
             total = _sequence_km(tentativa, travel)
-            if total > constraints.max_travel_km_per_day:
+            if enforce_budget and total > constraints.max_travel_km_per_day:
                 continue
 
             costo = total - base_km
@@ -565,8 +587,8 @@ def _best_meal_insertion(
                 mejor = (costo, tentativa, comida)
 
     if mejor is None:
-        return secuencia, None
-    return mejor[1], mejor[2]
+        return secuencia, None, 0.0
+    return mejor[1], mejor[2], mejor[0]
 
 
 def _insert_meals(
@@ -589,14 +611,14 @@ def _insert_meals(
     medidor = _travel_or_estimate(travel, constraints.mode)
     disponibles = list(comidas)
 
-    secuencia, almuerzo = _best_meal_insertion(
+    secuencia, almuerzo, _ = _best_meal_insertion(
         secuencia, disponibles, "lunch", LUNCH_WINDOW, constraints, medidor
     )
     if almuerzo is not None:
         disponibles.remove(almuerzo)
 
     if disponibles:
-        secuencia, _ = _best_meal_insertion(
+        secuencia, _, _ = _best_meal_insertion(
             secuencia, disponibles, "dinner", DINNER_WINDOW, constraints, medidor
         )
 
@@ -703,21 +725,8 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
                 )
             )
 
-        # Pedir comidas y no recibir ninguna es un incumplimiento, no un
-        # detalle. Suele pasar donde el catalogo no tiene restaurantes: dentro
-        # de un parque nacional, por ejemplo. El usuario tiene que enterarse
-        # para llevar almuerzo, no descubrirlo a la una de la tarde.
-        if constraints.include_meals and dia.start and dia.end:
-            cruza_almuerzo = dia.start <= LUNCH_WINDOW[1] and dia.end >= LUNCH_WINDOW[0]
-            if cruza_almuerzo and not any(p.meal == "lunch" for p in dia.stops):
-                violaciones.append(
-                    Violation(
-                        "include_meals",
-                        dia.number,
-                        "el dia cruza la hora de almuerzo y no hay ningun lugar "
-                        "para comer en la zona",
-                    )
-                )
+        # La comida que falta ya no se reporta aqui: es un consejo y no una
+        # violacion. Ver advise().
 
         evitadas = {c.value for c in constraints.avoided_categories}
         for parada in dia.stops:
@@ -742,6 +751,85 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
         )
 
     return violaciones
+
+
+def advise(
+    itinerario: Itinerary,
+    constraints: Constraints,
+    comidas: list[PlaceHit],
+    travel: TravelProvider | None = None,
+) -> list[Advice]:
+    """Lo que el viajero deberia saber y no es un limite incumplido.
+
+    Hoy son las comidas. **El aviso lleva el numero**, porque "no hay donde
+    comer" era falso en casi todos los casos: Santa Ana tiene trescientos
+    lugares de comida, lo que no habia era uno que entrara en el presupuesto
+    de kilometros. Decir la causa equivocada es peor que no decir nada, y
+    "llevá almuerzo, el comedor mas cercano suma 14 km sobre tu limite de 25"
+    es accionable donde "no hay donde comer" no lo es.
+    """
+    medidor = _travel_or_estimate(travel, constraints.mode)
+    consejos: list[Advice] = []
+
+    if not constraints.include_meals:
+        return consejos
+
+    for dia in itinerario.days:
+        if not dia.stops or not dia.start or not dia.end:
+            continue
+
+        cruza_almuerzo = dia.start <= LUNCH_WINDOW[1] and dia.end >= LUNCH_WINDOW[0]
+        if not cruza_almuerzo or any(p.meal == "lunch" for p in dia.stops):
+            continue
+
+        consejos.append(_lunch_advice(dia, constraints, comidas, medidor))
+
+    return consejos
+
+
+def _lunch_advice(
+    dia: Day, constraints: Constraints, comidas: list[PlaceHit], travel: TravelProvider
+) -> Advice:
+    """Por que no hubo almuerzo, con el numero que lo explica."""
+    if not comidas:
+        return Advice(
+            "bring_lunch",
+            dia.number,
+            "no hay ningún lugar para comer registrado en esta zona: llevá almuerzo",
+        )
+
+    secuencia = [(p.place, p.meal) for p in dia.stops]
+    candidatos = _meal_candidates([p.place for p in dia.stops], comidas, travel)
+
+    # Se busca la mejor insercion SIN respetar el presupuesto, justamente para
+    # poder decir cuanto se habria pasado.
+    _, comida, costo = _best_meal_insertion(
+        secuencia,
+        candidatos,
+        "lunch",
+        LUNCH_WINDOW,
+        constraints,
+        travel,
+        enforce_budget=False,
+    )
+
+    if comida is None:
+        return Advice(
+            "bring_lunch",
+            dia.number,
+            "ningún lugar para comer cae dentro del horario de almuerzo de este "
+            "día: llevá almuerzo",
+        )
+
+    total = dia.travel_km + costo
+    return Advice(
+        "bring_lunch",
+        dia.number,
+        f"el lugar para comer más conveniente es {comida.name}, que agrega "
+        f"{costo:.1f} km y dejaría el día en {total:.1f} km, sobre tu límite de "
+        f"{constraints.max_travel_km_per_day:.0f}. Llevá almuerzo, o subí el "
+        f"límite de traslado a {total:.0f} km",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -812,50 +900,22 @@ def _trim_to_budget(
     Se descarta la parada que mas traslado aporta, no la ultima, porque la
     culpable del exceso suele estar en el medio.
 
-    **Un dia sin comida tambien "cabe", y esa era la trampa.** La version
-    anterior salia del bucle en cuanto la secuencia entraba en el presupuesto.
-    Cuando el restaurante no entraba por kilometros, _insert_meals devolvia el
-    dia sin el, ese dia cabia de sobra, y el bucle lo daba por bueno sin
-    intentar achicarlo para hacerle lugar. Era la causa real de que la mitad
-    de los casos de la evaluacion se quedaran sin almorzar.
-
-    Ahora se sigue recortando mientras falte la comida pedida. Si aun asi no
-    entra —el unico restaurante esta a cuarenta kilometros— se devuelve el dia
-    MAS COMPLETO de los que cabian, no el ultimo recorte. Quedarse sin comida
-    ya es malo; quedarse ademas con una sola parada seria peor.
+    **El dia NO se achica para hacerle lugar a una comida.** Se intento y
+    estaba mal: alguien pide cinco paradas y un almuerzo, y devolverle cuatro
+    destinos a cambio de un comedor es decidir por el. Cuando el restaurante
+    no entra en el presupuesto, el dia queda completo y se emite el consejo de
+    llevar almuerzo, con los kilometros que habria costado. Llevar comida es
+    una solucion del mundo real; saltarse un volcan no lo es.
     """
     medidor = _travel_or_estimate(travel, constraints.mode)
     restantes = list(grupo)
-    mejor_sin_comida: list[tuple[PlaceHit, str | None]] | None = None
-    necesita_comida: bool | None = None
 
     while restantes:
         secuencia = _insert_meals(
             order_by_proximity(restantes, medidor), comidas, constraints, medidor
         )
-        cabe = _fits_the_day(secuencia, constraints, medidor)
-        tiene_comida = any(comida for _, comida in secuencia)
-
-        # **Se decide una sola vez, sobre el dia completo.** Reevaluarlo en
-        # cada vuelta hace que el bucle se enganie solo: al achicar el dia
-        # para hacerle lugar al almuerzo, el dia deja de cruzar la hora de
-        # almorzar, "ya no necesita comida" pasa a ser cierto, y devuelve el
-        # dia recortado sin comer. Que es lo peor de las dos opciones.
-        if necesita_comida is None:
-            necesita_comida = (
-                constraints.include_meals
-                and bool(comidas)
-                and _crosses_lunch(secuencia, constraints, medidor)
-            )
-
-        if cabe and (tiene_comida or not necesita_comida):
+        if _fits_the_day(secuencia, constraints, medidor):
             return secuencia
-
-        # El primero que cabe es el mas completo: se guarda por si la comida
-        # resulta imposible y hay que volver a el.
-        if cabe and mejor_sin_comida is None:
-            mejor_sin_comida = secuencia
-
         if len(restantes) == 1:
             break
 
@@ -873,8 +933,6 @@ def _trim_to_budget(
         )
         restantes.remove(peor)
 
-    if mejor_sin_comida is not None:
-        return mejor_sin_comida
     return _insert_meals(order_by_proximity(restantes, medidor), comidas, constraints, medidor)
 
 
@@ -965,6 +1023,7 @@ def assemble(
         unused_candidates=len(destinos) - sum(len(g) for g in grupos),
     )
     itinerario.violations = validate(itinerario, constraints)
+    itinerario.advice = advise(itinerario, constraints, comidas, medidor)
     return itinerario
 
 
