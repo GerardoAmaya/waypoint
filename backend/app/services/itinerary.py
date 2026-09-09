@@ -311,6 +311,7 @@ def build_days(
     candidatos: list[PlaceHit],
     constraints: Constraints,
     travel: TravelProvider | None = None,
+    meal_options: int = 2,
 ) -> list[list[PlaceHit]]:
     """Reparte los candidatos en dias agrupados geograficamente.
 
@@ -333,9 +334,21 @@ def build_days(
         dia = [semilla]
 
         # Sin comida los cupos son solo para destinos; con comida se reservan
-        # dos lugares para almuerzo y cena.
-        cupo = constraints.max_stops_per_day - (2 if constraints.include_meals else 0)
-        cupo = max(cupo, 1)
+        # hasta dos lugares para almuerzo y cena.
+        #
+        # **La reserva se limita a las comidas que de verdad existen.** Guardar
+        # dos cupos donde el catalogo no tiene ni un restaurante deja el dia en
+        # tres paradas terminando a la una de la tarde, con siete horas de
+        # margen sin usar y sin nada que ocupe el sitio reservado. Pasa dentro
+        # de los parques nacionales, que es justo donde mas hay que caminar.
+        #
+        # La cuenta es del itinerario entero y no de cada dia: build_days arma
+        # todos los grupos antes de que se repartan las comidas. Con tres
+        # restaurantes para cinco dias, los ultimos dias reservan sitio que no
+        # van a llenar. Es una imprecision acotada, a diferencia de la de
+        # reservar contra cero.
+        reservados = min(2, max(0, meal_options)) if constraints.include_meals else 0
+        cupo = max(constraints.max_stops_per_day - reservados, 1)
 
         while len(dia) < cupo:
             cercanos = sorted(
@@ -694,7 +707,7 @@ def assemble(
     """
     medidor = _travel_or_estimate(travel, constraints.mode)
     if grupos is None:
-        grupos = build_days(destinos, constraints, medidor)
+        grupos = build_days(destinos, constraints, medidor, meal_options=len(comidas))
 
     dias: list[Day] = []
     comidas_restantes = list(comidas)
@@ -754,7 +767,7 @@ def plan_with_routing(
     comidas, destinos = select_candidates(db, constraints)
 
     estimado = EstimatedTravel(constraints.mode)
-    grupos = build_days(destinos, constraints, estimado)
+    grupos = build_days(destinos, constraints, estimado, meal_options=len(comidas))
 
     elegidos = [lugar for grupo in grupos for lugar in grupo]
     cercanas: list[PlaceHit] = []

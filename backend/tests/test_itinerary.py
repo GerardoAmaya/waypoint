@@ -371,6 +371,76 @@ class TestFranjasDeComida:
         assert len(nombres) == len(set(nombres))
 
 
+class TestReservaDeCupos:
+    """El sitio reservado para comer solo tiene sentido si hay donde comer.
+
+    El caso real: dentro del Parque El Imposible el catalogo no tiene ni un
+    restaurante, y el dia salia de tres paradas terminando a la una de la
+    tarde porque dos de los cinco cupos quedaban guardados para nada.
+    """
+
+    def test_sin_restaurantes_el_dia_usa_todos_los_cupos(self):
+        candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(8)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=5,
+            include_meals=True,
+            max_travel_km_per_day=60,
+        )
+
+        dias = build_days(candidatos, restricciones, meal_options=0)
+
+        assert len(dias[0]) == 5
+
+    def test_con_restaurantes_se_reserva_el_sitio(self):
+        candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(8)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=5,
+            include_meals=True,
+            max_travel_km_per_day=60,
+        )
+
+        dias = build_days(candidatos, restricciones, meal_options=4)
+
+        assert len(dias[0]) == 3, "dos cupos quedan para almuerzo y cena"
+
+    def test_con_un_solo_restaurante_se_reserva_uno(self):
+        candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(8)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=5,
+            include_meals=True,
+            max_travel_km_per_day=60,
+        )
+
+        dias = build_days(candidatos, restricciones, meal_options=1)
+
+        assert len(dias[0]) == 4
+
+    def test_el_techo_de_paradas_se_respeta_igual(self):
+        """Llenar los cupos libres no es excusa para pasarse del limite."""
+        candidatos = [lugar(f"P{i}", 13.700 + i * 0.004, -89.220) for i in range(20)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=4,
+            include_meals=True,
+            max_travel_km_per_day=200,
+        )
+
+        dias = build_days(candidatos, restricciones, meal_options=0)
+
+        assert len(dias[0]) <= 4
+
+
 class TestComidaQueFalta:
     """Pedir comida y no recibirla tiene que verse.
 
