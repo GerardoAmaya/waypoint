@@ -80,7 +80,9 @@ export class FieldLayer extends L.Layer {
     // a escala de pueblo tienen que seguir siendo fondo, no competencia.
     const zoom = map.getZoom();
     const radio = Math.max(0.6, Math.min(2.2, (zoom - 6) * 0.32));
-    ctx.fillStyle = "rgba(244, 242, 237, 0.22)";
+    // Tinta sobre el mapa claro. Antes eran puntos claros sobre mapa oscuro;
+    // con el mapa natural, un punto claro desaparece sobre cualquier calle.
+    ctx.fillStyle = "rgba(31, 36, 41, 0.34)";
 
     const margen = 8;
     for (const [lat, lon] of this.puntos) {

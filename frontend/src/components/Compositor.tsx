@@ -45,7 +45,7 @@ export default function Compositor({
     return (
       <button
         onClick={onReset}
-        className="rounded-full border border-basalto-borde bg-basalto-alto/90 px-4 py-2 text-menudo text-niebla backdrop-blur transition-colors hover:border-anil-claro"
+        className="rounded-full border border-basalto-borde bg-basalto/92 px-4 py-2 text-menudo text-niebla shadow-lg backdrop-blur transition-colors hover:border-anil-claro"
       >
         Empezar de nuevo
       </button>
@@ -53,7 +53,12 @@ export default function Compositor({
   }
 
   return (
-    <div className="w-full max-w-2xl">
+    /*
+      Una pieza sobre el mapa y no un velo encima. Oscurecer el pais entero para
+      que se lea un titular tapa justo lo que el estado vacio quiere mostrar: que
+      hay material, y donde esta.
+    */
+    <div className="w-full max-w-2xl rounded-xl border border-basalto-borde bg-basalto/94 px-8 py-9 shadow-[0_24px_60px_-12px_rgb(19_26_32_/_0.6)] backdrop-blur-sm">
       <h1 className="text-obra leading-[0.92] font-extralight tracking-tight text-niebla">
         Contame el viaje
         <br />
@@ -78,14 +83,14 @@ export default function Compositor({
           disabled={trabajando}
           rows={3}
           placeholder="tres días por la Ruta de las Flores, odio madrugar y no quiero pasarme el día en el carro"
-          className="w-full resize-none rounded-lg border border-basalto-borde bg-basalto-alto/80 px-4 py-3.5 text-cuerpo leading-relaxed text-niebla backdrop-blur placeholder:text-niebla/30 focus:border-anil-claro disabled:opacity-60"
+          className="w-full resize-none rounded-lg border border-basalto-borde bg-basalto-alto px-4 py-3.5 text-cuerpo leading-relaxed text-niebla placeholder:text-niebla/30 focus:border-anil-claro disabled:opacity-60"
         />
 
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
             onClick={enviar}
             disabled={trabajando || !texto.trim()}
-            className="rounded bg-anil px-5 py-2.5 text-cuerpo text-niebla transition-opacity disabled:opacity-40"
+            className="rounded bg-anil-claro px-5 py-2.5 text-cuerpo text-niebla transition-opacity disabled:opacity-40"
           >
             Armar el itinerario
           </button>

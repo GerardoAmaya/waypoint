@@ -25,7 +25,7 @@ export default function Linea({ day, advice, violations }: Props) {
 
   return (
     <div>
-      <div className="mb-5 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-niebla-honda pb-3">
+      <div className="mb-5 flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-basalto-borde pb-3">
         <span className="dato text-dato text-tinta-suave">
           {hora(day.start)}–{hora(day.end)}
         </span>
@@ -71,7 +71,7 @@ export default function Linea({ day, advice, violations }: Props) {
                 {indice < day.stops.length - 1 && (
                   <span
                     aria-hidden
-                    className="absolute top-5 bottom-[-1.5rem] w-px bg-niebla-honda"
+                    className="absolute top-5 bottom-[-1.5rem] w-px bg-basalto-borde"
                   />
                 )}
               </span>
@@ -105,7 +105,7 @@ export default function Linea({ day, advice, violations }: Props) {
       {rotas.map((v, i) => (
         <p
           key={`v-${i}`}
-          className="mt-4 border-l-2 border-cafe pl-3 text-menudo text-tinta-suave"
+          className="mt-4 border-l-2 border-ocre pl-3 text-menudo text-tinta-suave"
         >
           {v.detail}
         </p>
@@ -119,7 +119,7 @@ export default function Linea({ day, advice, violations }: Props) {
       {delDia.map((a, i) => (
         <p
           key={`a-${i}`}
-          className="mt-4 rounded border border-ocre/30 bg-ocre/5 px-3 py-2 text-menudo leading-relaxed text-tinta-suave"
+          className="mt-4 rounded border border-ocre/40 bg-ocre/10 px-3 py-2 text-menudo leading-relaxed text-tinta-suave"
         >
           {a.detail}
         </p>

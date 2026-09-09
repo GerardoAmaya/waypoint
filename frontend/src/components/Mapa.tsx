@@ -8,31 +8,22 @@ import { FieldLayer } from "./FieldLayer";
 import { CATEGORY_COLOR, PALETA, type Day, type TravelSourceKind } from "@/lib/types";
 
 /**
- * De donde salen las teselas.
+ * OpenStreetMap en sus colores, sin filtros.
  *
- * Por defecto, OpenStreetMap oscurecido por CSS. CARTO pasó a exigir llave en
- * agosto de 2026 y estampa "API KEY REQUIRED" sobre cada tesela sin ella; la
- * llave es gratis y sin cuenta, pero el PLAN.md eligió el stack sin llaves a
- * propósito, y una que haya que pedir es un paso más para quien clone el repo.
+ * Hubo una version oscurecida por CSS y otra con las teselas de CARTO. Las dos
+ * peleaban con el mapa en vez de dejarlo hablar: el filtro sacaba parques verde
+ * oliva y carreteras salmon, y CARTO pasó a exigir llave.
  *
- * Con NEXT_PUBLIC_CARTO_KEY puesta se usa Dark Matter, que se ve mejor que
- * cualquier inversión por filtro. Sin ella el mapa funciona igual.
+ * El mapa natural ya distingue bosque de ciudad, río de carretera y montaña de
+ * llano. Eso es informacion que costaria mucho reconstruir, y taparla para que
+ * combine con una paleta es cambiar dato por decoracion. El color propio del
+ * proyecto va en los pines, el trazo y el panel.
  */
-const LLAVE_CARTO = process.env.NEXT_PUBLIC_CARTO_KEY;
-
-const TESELAS = LLAVE_CARTO
-  ? {
-      url: `https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=${LLAVE_CARTO}`,
-      credito:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      invertir: false,
-    }
-  : {
-      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      credito:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      invertir: true,
-    };
+const TESELAS = {
+  url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  credito:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+};
 
 /** El Salvador entero, que es el encuadre de arranque. */
 const PAIS: L.LatLngBoundsExpression = [
@@ -79,13 +70,6 @@ export default function Mapa({
       attribution: TESELAS.credito,
       maxZoom: 18,
     }).addTo(map);
-
-    // El filtro que oscurece OpenStreetMap se aplica al panel de teselas y no
-    // al mapa entero: invertir el contenedor invertiria tambien los pines y la
-    // ruta, y el anil saldria naranja.
-    if (TESELAS.invertir) {
-      map.getPane("tilePane")?.classList.add("teselas-oscuras");
-    }
 
     L.control.zoom({ position: "bottomright" }).addTo(map);
     capaPlan.current = L.layerGroup().addTo(map);
@@ -140,25 +124,25 @@ export default function Mapa({
         // **El trazo dice como se midio.** Punteado es estimado, solido es
         // medido sobre carretera. No es adorno: es la unica forma de ver, sin
         // leer un numero, que las distancias de este dia son aproximadas.
-        // Un trazo fino en anil sobre un mapa oscuro y cargado se pierde. Se
-        // dibuja dos veces: una linea gruesa oscura por debajo que despeja el
-        // fondo, y la de color encima. Es la misma tecnica que usan las cartas
+        // Sobre un mapa lleno de carreteras, un trazo suelto se confunde con
+        // una mas. Se dibuja dos veces: una linea clara y gruesa por debajo que
+        // despeja el fondo, y el anil encima. Es la tecnica de las cartas
         // nauticas para las derrotas.
         if (activo) {
           L.polyline(coords, {
-            color: PALETA.basalto,
-            weight: 7,
-            opacity: 0.55,
+            color: PALETA.niebla,
+            weight: 8,
+            opacity: 0.85,
             lineCap: "round",
             interactive: false,
           }).addTo(capa);
         }
 
         L.polyline(coords, {
-          color: activo ? PALETA.niebla : PALETA.anilClaro,
-          weight: activo ? 3 : 1.5,
-          opacity: activo ? 0.95 : 0.3,
-          dashArray: travelSource === "real" ? undefined : "2 8",
+          color: PALETA.anil,
+          weight: activo ? 3.5 : 2,
+          opacity: activo ? 1 : 0.35,
+          dashArray: travelSource === "real" ? undefined : "2 9",
           lineCap: "round",
         }).addTo(capa);
       }

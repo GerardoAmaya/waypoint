@@ -46,8 +46,8 @@ export default function Panel({
   };
 
   return (
-    <section className="flex h-full flex-col bg-niebla text-tinta">
-      <header className="border-b border-niebla-honda px-6 pt-6 pb-4">
+    <section className="flex h-full flex-col bg-basalto text-tinta">
+      <header className="border-b border-basalto-borde px-6 pt-6 pb-4">
         <h1 className="text-titulo leading-tight font-semibold tracking-tight">
           {interpretation?.area?.name ?? "Tu itinerario"}
         </h1>
@@ -63,7 +63,7 @@ export default function Panel({
           que dejarlo creer que se tuvo en cuenta.
         */}
         {!!interpretation?.unmapped?.length && (
-          <p className="mt-3 border-l-2 border-anil pl-3 text-menudo leading-relaxed text-tinta-suave">
+          <p className="mt-3 border-l-2 border-anil-claro pl-3 text-menudo leading-relaxed text-tinta-suave">
             No supe cómo usar esto: {interpretation.unmapped.join(", ")}. El resto
             sí está aplicado.
           </p>
@@ -83,7 +83,7 @@ export default function Panel({
       {itinerary.days.length > 1 && (
         <nav
           aria-label="Días del itinerario"
-          className="flex gap-1 border-b border-niebla-honda px-6 py-3"
+          className="flex gap-1 border-b border-basalto-borde px-6 py-3"
         >
           {itinerary.days.map((d) => {
             const activo = d.number === dia.number;
@@ -104,7 +104,7 @@ export default function Panel({
                 {activo && (
                   <motion.span
                     layoutId="dia-activo"
-                    className="absolute inset-0 z-0 rounded bg-anil"
+                    className="absolute inset-0 z-0 rounded bg-anil-claro"
                     transition={{ type: "spring", stiffness: 380, damping: 32 }}
                   />
                 )}
@@ -137,14 +137,14 @@ export default function Panel({
           .map((v, i) => (
             <p
               key={i}
-              className="mt-6 border-l-2 border-cafe pl-3 text-menudo text-tinta-suave"
+              className="mt-6 border-l-2 border-ocre pl-3 text-menudo text-tinta-suave"
             >
               {v.detail}
             </p>
           ))}
       </div>
 
-      <footer className="border-t border-niebla-honda px-6 py-4">
+      <footer className="border-t border-basalto-borde px-6 py-4">
         <label
           htmlFor="revisar"
           className="text-dato text-tinta-tenue"
@@ -161,18 +161,18 @@ export default function Panel({
             }}
             disabled={revising}
             placeholder="menos carro, o sacá el museo"
-            className="min-w-0 flex-1 rounded border border-niebla-honda bg-white px-3 py-2 text-menudo text-tinta placeholder:text-tinta-tenue disabled:opacity-60"
+            className="min-w-0 flex-1 rounded border border-basalto-borde bg-basalto-alto px-3 py-2 text-menudo text-tinta placeholder:text-tinta-tenue focus:border-anil-claro disabled:opacity-60"
           />
           <button
             onClick={() => void enviar()}
             disabled={revising || !cambio.trim()}
-            className="rounded bg-anil px-4 py-2 text-menudo text-niebla transition-opacity disabled:opacity-40"
+            className="rounded bg-anil-claro px-4 py-2 text-menudo text-niebla transition-opacity disabled:opacity-40"
           >
             {revising ? "Rehaciendo" : "Aplicar"}
           </button>
         </div>
         {reviseError && (
-          <p className="mt-2 text-dato leading-relaxed text-cafe">{reviseError}</p>
+          <p className="mt-2 text-dato leading-relaxed text-ocre">{reviseError}</p>
         )}
       </footer>
     </section>

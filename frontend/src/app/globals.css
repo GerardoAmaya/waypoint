@@ -28,10 +28,18 @@
   --color-verde: #3f7a5e;
   --color-ocre: #b8863f;
 
-  /* Tinta sobre el panel claro. Nunca negro puro: sobre niebla vibra. */
-  --color-tinta: #1f2429;
-  --color-tinta-suave: #5b6570;
-  --color-tinta-tenue: #8b949e;
+  /*
+    El panel es oscuro y el mapa claro, al reves de lo que decia el PLAN.md.
+    El principio es el mismo —el contraste separa el territorio del plan— pero
+    con el mapa en sus colores naturales, el panel claro no contrastaba contra
+    nada. Territorio claro y real, plan oscuro.
+  */
+  --color-tinta: #f4f2ed;
+  --color-tinta-suave: #a4adb6;
+  --color-tinta-tenue: #78838d;
+
+  /* Para lo poco que va sobre superficie clara: el campo del mapa. */
+  --color-grafito: #1f2429;
 
   /* Las pide layout.tsx con <link>; ver el comentario de ahi. */
   --font-sans: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
@@ -125,44 +133,33 @@ body {
   Va en el panel de teselas y no en el contenedor: invertir el contenedor
   invertiria tambien los pines y la ruta.
 */
-.teselas-oscuras {
-  /*
-    saturate() casi a cero antes de invertir. Con 0.45 los parques salian verde
-    oliva y las carreteras salmon, y el mapa dejaba de parecerse a basalto: el
-    color del mapa competia con el de los marcadores, que es donde el color
-    tiene que significar algo.
-  */
-  filter: grayscale(1) invert(1) brightness(0.78) contrast(1.08) sepia(0.18)
-    hue-rotate(175deg) saturate(1.6);
-}
-
 /* Leaflet trae su propio aspecto; se lo apaga para que no imponga el suyo. */
 .leaflet-container {
-  background: var(--color-basalto);
+  background: var(--color-niebla-honda);
   font-family: var(--font-sans);
   outline: none;
 }
 
 .leaflet-control-attribution {
-  background: color-mix(in srgb, var(--color-basalto) 82%, transparent);
-  color: var(--color-tinta-tenue);
+  background: color-mix(in srgb, white 82%, transparent);
+  color: #5b6570;
   font-family: var(--font-sans);
   font-size: 10px;
   padding: 2px 6px;
 }
 
 .leaflet-control-attribution a {
-  color: var(--color-tinta-suave);
+  color: var(--color-anil);
 }
 
 .leaflet-control-zoom a {
-  background: var(--color-basalto-alto);
+  background: var(--color-basalto);
   color: var(--color-niebla);
   border-color: var(--color-basalto-borde);
 }
 
 .leaflet-control-zoom a:hover {
-  background: var(--color-basalto-borde);
+  background: var(--color-basalto-alto);
 }
 
 /*
@@ -176,8 +173,8 @@ body {
   height: 26px;
   border-radius: 50%;
   background: var(--pin);
-  border: 2px solid var(--color-basalto);
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.5);
+  border: 2px solid var(--color-niebla);
+  box-shadow: 0 1px 6px rgb(31 36 41 / 0.35);
   animation: caer 520ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   animation-delay: var(--retraso, 0ms);
 }
@@ -245,6 +242,6 @@ body {
   height: 10px;
   border-radius: 50%;
   background: var(--pin);
-  border: 1.5px solid var(--color-basalto);
-  opacity: 0.8;
+  border: 1.5px solid var(--color-niebla);
+  opacity: 0.85;
 }

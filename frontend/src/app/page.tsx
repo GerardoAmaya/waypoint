@@ -135,7 +135,7 @@ export default function Home() {
           className={`pointer-events-none absolute inset-0 z-[1000] flex ${
             conPlan
               ? "items-start justify-end p-4"
-              : "items-center justify-center bg-basalto/55 p-6 backdrop-blur-[2px]"
+              : "items-center justify-center p-6"
           }`}
         >
           <div className="pointer-events-auto">
