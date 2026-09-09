@@ -316,3 +316,153 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
         unmapped=unmapped,
         notes=notes,
     )
+
+
+# --------------------------------------------------------------------------
+# Revision de un dia
+# --------------------------------------------------------------------------
+
+REVISION_PROMPT = """\
+Sos el traductor de un planificador de viajes por El Salvador. La persona ya \
+tiene un itinerario y quiere cambiar UN dia.
+
+Respondes UNICAMENTE con un objeto JSON, sin texto antes ni despues y sin \
+marcas de bloque de codigo.
+
+Cada campo es un CAMBIO. Pone null en todo lo que la persona no pidio tocar. \
+Un valor donde no hubo pedido es un cambio que nadie pidio.
+
+- "earliest_start": "HH:MM" o null. Hora minima de inicio de ese dia.
+- "latest_end": "HH:MM" o null.
+- "max_travel_km_per_day": numero o null. "mucho carro" o "menos manejo" es \
+bajarlo bastante; "no me importa manejar" es subirlo.
+- "max_stops_per_day": entero de 1 a 12, o null. "muy cargado" es bajarlo; \
+"le falta" es subirlo.
+- "preferred_categories": lista de "food", "nature", "culture", "viewpoint", \
+"attraction", "lodging", o null.
+- "avoided_categories": la misma lista, o null.
+- "include_meals": booleano o null.
+- "remove": lista con los nombres de las paradas de ESE dia que la persona \
+quiere sacar, copiados tal cual de la lista que se te da. Lista vacia si no \
+pidio sacar ninguna.
+- "unmapped": lista de strings con lo que entendiste y no pudiste representar.
+
+NUNCA fuerces algo dentro de un campo porque se parece. El presupuesto no \
+existe como campo: si dice que un dia "se ve caro", eso va a "unmapped". \
+Tampoco inventes nombres en "remove": solo los de la lista dada."""
+
+
+@dataclass
+class Revision:
+    """Los cambios pedidos para un dia."""
+
+    changes: dict = field(default_factory=dict)
+    remove: list[str] = field(default_factory=list)
+    unmapped: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+    @property
+    def touches_anything(self) -> bool:
+        return bool(self.changes or self.remove)
+
+
+def _revision_context(paradas: list[str]) -> str:
+    lista = "\n".join(f"- {nombre}" for nombre in paradas)
+    return f"Paradas de ese dia:\n{lista}"
+
+
+def interpret_revision(frase: str, stops: list[str], client=None) -> Revision:
+    """Traduce un pedido de cambio sobre un dia ya armado.
+
+    No toca la base: los nombres a sacar se resuelven contra las paradas que
+    ese dia ya tiene, que es la unica lista donde tiene sentido buscarlos.
+    """
+    frase = (frase or "").strip()
+    if not frase:
+        return Revision(error="hace falta que digas que querés cambiar")
+    if len(frase) > MAX_PHRASE_LENGTH:
+        return Revision(
+            error=f"el pedido es muy largo, el máximo son {MAX_PHRASE_LENGTH} caracteres"
+        )
+
+    if client is None:
+        try:
+            client = _default_client()
+        except InterpretError as exc:
+            return Revision(error=str(exc))
+
+    try:
+        respuesta = client.messages.create(
+            model=settings.planner_model,
+            max_tokens=1024,
+            system=REVISION_PROMPT,
+            messages=[{"role": "user", "content": f"{_revision_context(stops)}\n\n{frase}"}],
+        )
+        texto = "".join(b.text for b in respuesta.content if getattr(b, "type", "") == "text")
+        datos = json.loads(_clean_json(texto))
+    except json.JSONDecodeError:
+        return Revision(error="el modelo no devolvió JSON válido")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("fallo interpretando la revision: %s", exc)
+        return Revision(error="no se pudo interpretar el cambio")
+
+    if not isinstance(datos, dict):
+        return Revision(error="el modelo devolvió algo que no es un objeto")
+
+    notes: list[str] = []
+    cambios: dict = {}
+
+    if datos.get("earliest_start") is not None:
+        cambios["earliest_start"] = _parse_time(
+            datos["earliest_start"], time(9, 0), notes, "earliest_start"
+        )
+    if datos.get("latest_end") is not None:
+        cambios["latest_end"] = _parse_time(
+            datos["latest_end"], time(20, 0), notes, "latest_end"
+        )
+    if datos.get("max_travel_km_per_day") is not None:
+        cambios["max_travel_km_per_day"] = _clamp(
+            datos["max_travel_km_per_day"], 1.0, 500.0, 25.0, notes, "max_travel_km"
+        )
+    if datos.get("max_stops_per_day") is not None:
+        cambios["max_stops_per_day"] = _clamp(
+            datos["max_stops_per_day"], 1, 12, 5, notes, "max_stops_per_day"
+        )
+    if datos.get("preferred_categories") is not None:
+        cambios["preferred_categories"] = _categories(
+            datos["preferred_categories"], notes, "preferred"
+        )
+    if datos.get("avoided_categories") is not None:
+        cambios["avoided_categories"] = _categories(
+            datos["avoided_categories"], notes, "avoided"
+        )
+    if isinstance(datos.get("include_meals"), bool):
+        cambios["include_meals"] = datos["include_meals"]
+
+    # Solo se aceptan nombres que existan en ese dia. Un nombre inventado se
+    # descarta con aviso: sacar "el museo" de un dia que no tiene museo no es
+    # una operacion silenciosa, es un malentendido.
+    conocidos = {n.strip().lower(): n for n in stops}
+    remove: list[str] = []
+    for pedido in _strings(datos.get("remove")):
+        exacto = conocidos.get(pedido.lower())
+        if exacto:
+            remove.append(exacto)
+            continue
+        parecidos = [orig for clave, orig in conocidos.items() if pedido.lower() in clave]
+        if len(parecidos) == 1:
+            remove.append(parecidos[0])
+        else:
+            notes.append(f"no hay ninguna parada llamada {pedido!r} en ese día")
+
+    return Revision(
+        changes=cambios,
+        remove=remove,
+        unmapped=_strings(datos.get("unmapped")),
+        notes=notes,
+    )

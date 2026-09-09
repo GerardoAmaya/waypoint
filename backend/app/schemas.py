@@ -183,3 +183,54 @@ class InterpretationOut(BaseModel):
     constraints: ItineraryRequest | None = None
     unmapped: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+
+class StopRefIn(BaseModel):
+    """Una parada tal como el cliente la recibio.
+
+    Lleva la etiqueta de comida ademas del identificador para que el dia se
+    reconstruya igual. Deducirla de la categoria y la hora acertaria casi
+    siempre, y "casi" en un dia que nadie pidio tocar es un dia que se mueve
+    solo.
+    """
+
+    place_id: uuid.UUID
+    meal: str | None = None
+
+
+class DayStateIn(BaseModel):
+    number: int = Field(ge=1, le=7)
+    stops: list[StopRefIn] = Field(max_length=12)
+
+
+class ReviseRequest(BaseModel):
+    """Pedido de cambio sobre un dia de un itinerario que el cliente ya tiene.
+
+    El itinerario viaja de ida y vuelta en vez de guardarse en el servidor: sin
+    cuentas de usuario, un almacen de sesiones seria estado con caducidad y
+    limpieza para nada. Cada identificador se valida contra el catalogo, asi
+    que no se pueden inyectar lugares que no existan.
+    """
+
+    message: str = Field(min_length=1, max_length=600)
+    day: int = Field(ge=1, le=7)
+    constraints: ItineraryRequest
+    days: list[DayStateIn] = Field(min_length=1, max_length=7)
+
+    @model_validator(mode="after")
+    def _el_dia_existe(self) -> ReviseRequest:
+        if self.day not in {d.number for d in self.days}:
+            raise ValueError(f"el itinerario no tiene un día {self.day}")
+        return self
+
+
+class RevisionOut(BaseModel):
+    """El itinerario revisado y que se entendio del pedido."""
+
+    itinerary: ItineraryOut
+    applied: dict = Field(default_factory=dict)
+    removed: list[str] = Field(default_factory=list)
+    # Paradas que ya no estan en el catalogo y salieron del plan.
+    missing: list[uuid.UUID] = Field(default_factory=list)
+    unmapped: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)

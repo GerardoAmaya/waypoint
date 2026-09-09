@@ -1083,6 +1083,56 @@ def revise_day(
     return RevisionResult(itinerary=itinerario, missing=faltantes)
 
 
+def revise_with_routing(
+    db: Session,
+    constraints: Constraints,
+    state: list[DayState],
+    target: int,
+    *,
+    day_constraints: Constraints | None = None,
+    exclude: set[uuid.UUID] | None = None,
+    client=None,
+) -> RevisionResult:
+    """Revisa un dia con distancias reales de carretera.
+
+    Mismo patron que plan_with_routing: se arma con estimaciones para saber que
+    lugares entran en juego, y despues se mide solo esos. Sin ese primer paso
+    habria que pedir la matriz de todos los candidatos de la zona para rehacer
+    un unico dia.
+    """
+    from app.services.routing import client_from_settings, load_travel_matrix
+
+    estimado = EstimatedTravel(constraints.mode)
+    borrador = revise_day(
+        db,
+        constraints,
+        state,
+        target,
+        day_constraints=day_constraints,
+        exclude=exclude,
+        travel=estimado,
+    )
+
+    lugares = [parada.place for dia in borrador.itinerary.days for parada in dia.stops]
+    matriz = load_travel_matrix(
+        lugares,
+        constraints.mode,
+        db=db,
+        client=client if client is not None else client_from_settings(),
+    )
+
+    final = revise_day(
+        db,
+        constraints,
+        state,
+        target,
+        day_constraints=day_constraints,
+        exclude=exclude,
+        travel=matriz,
+    )
+    return RevisionResult(itinerary=final.itinerary, stats=matriz.stats, missing=final.missing)
+
+
 def used_place_ids(itinerario: Itinerary) -> set[uuid.UUID]:
     return {s.place.id for d in itinerario.days for s in d.stops}
 

@@ -219,3 +219,83 @@ class TestEntradaDelUsuario:
 
         assert not resultado.ok
         assert falso.llamadas == []
+
+
+# --------------------------------------------------------------------------
+# Revision de un dia
+# --------------------------------------------------------------------------
+
+from app.services.interpret import interpret_revision  # noqa: E402
+
+PARADAS = ["Museo Nacional", "Mirador del lago", "Cascada Los Tercios"]
+
+SIN_CAMBIOS = {
+    "earliest_start": None,
+    "latest_end": None,
+    "max_travel_km_per_day": None,
+    "max_stops_per_day": None,
+    "preferred_categories": None,
+    "avoided_categories": None,
+    "include_meals": None,
+    "remove": [],
+    "unmapped": [],
+}
+
+
+class TestRevision:
+    def test_solo_viajan_los_campos_que_cambian(self):
+        """Un valor donde no hubo pedido es un cambio que nadie pidio."""
+        payload = {**SIN_CAMBIOS, "max_travel_km_per_day": 15}
+        cambio = interpret_revision("menos carro", PARADAS, modelo(payload))
+
+        assert cambio.changes == {"max_travel_km_per_day": 15.0}
+        assert cambio.touches_anything
+
+    def test_las_paradas_del_dia_van_en_el_contexto(self):
+        falso = modelo(SIN_CAMBIOS)
+        interpret_revision("sacá el museo", PARADAS, falso)
+
+        contenido = falso.llamadas[0]["messages"][0]["content"]
+        assert "Museo Nacional" in contenido
+        assert "sacá el museo" in contenido
+
+    def test_resuelve_un_nombre_parcial(self):
+        payload = {**SIN_CAMBIOS, "remove": ["Museo Nacional"]}
+        cambio = interpret_revision("sacá el museo", PARADAS, modelo(payload))
+
+        assert cambio.remove == ["Museo Nacional"]
+
+    def test_un_nombre_que_no_esta_en_el_dia_se_avisa(self):
+        """Sacar 'el volcán' de un dia sin volcán es un malentendido, no un no-op."""
+        payload = {**SIN_CAMBIOS, "remove": ["Volcán de Izalco"]}
+        cambio = interpret_revision("sacá el volcán", PARADAS, modelo(payload))
+
+        assert cambio.remove == []
+        assert any("Volcán" in n for n in cambio.notes)
+
+    def test_lo_que_no_se_puede_representar_vuelve(self):
+        payload = {**SIN_CAMBIOS, "unmapped": ["se ve caro"]}
+        cambio = interpret_revision("se ve caro", PARADAS, modelo(payload))
+
+        assert cambio.unmapped == ["se ve caro"]
+        assert not cambio.touches_anything, "sin cambio que aplicar, no se toca el dia"
+
+    def test_recorta_un_valor_fuera_de_rango(self):
+        payload = {**SIN_CAMBIOS, "max_stops_per_day": 40}
+        cambio = interpret_revision("mucho más", PARADAS, modelo(payload))
+
+        assert cambio.changes["max_stops_per_day"] == 12
+        assert cambio.notes
+
+    def test_json_invalido_no_revienta(self):
+        cambio = interpret_revision("x", PARADAS, modelo(None, crudo="no puedo"))
+
+        assert not cambio.ok
+        assert "JSON" in cambio.error
+
+    def test_un_mensaje_vacio_no_llama_al_modelo(self):
+        falso = modelo(SIN_CAMBIOS)
+        cambio = interpret_revision("  ", PARADAS, falso)
+
+        assert not cambio.ok
+        assert falso.llamadas == []

@@ -18,15 +18,23 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterator
+from dataclasses import replace
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.api.itinerary import _to_out
 from app.core.db import SessionLocal
-from app.schemas import AreaOut, InterpretationOut, PlanMessage
+from app.schemas import (
+    AreaOut,
+    InterpretationOut,
+    PlanMessage,
+    ReviseRequest,
+    RevisionOut,
+)
 from app.services import itinerary as motor
-from app.services.interpret import interpret
+from app.services.interpret import interpret, interpret_revision
+from app.services.places import by_ids as places_by_ids
 
 logger = logging.getLogger(__name__)
 
@@ -148,3 +156,81 @@ def plan(peticion: PlanMessage) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _to_constraints(peticion) -> motor.Constraints:
+    return motor.Constraints(
+        days=peticion.days,
+        center_lat=peticion.center_lat,
+        center_lon=peticion.center_lon,
+        radius_m=peticion.radius_m,
+        earliest_start=peticion.earliest_start,
+        latest_end=peticion.latest_end,
+        max_travel_km_per_day=peticion.max_travel_km_per_day,
+        mode=peticion.mode,
+        preferred_categories=list(peticion.preferred_categories),
+        avoided_categories=list(peticion.avoided_categories),
+        include_meals=peticion.include_meals,
+        max_stops_per_day=peticion.max_stops_per_day,
+        min_quality=peticion.min_quality,
+    )
+
+
+@router.post("/revise", response_model=RevisionOut)
+def revise(peticion: ReviseRequest) -> RevisionOut:
+    """Cambia un dia del itinerario dejando los demas como estaban.
+
+    **Devuelve JSON y no eventos, a diferencia de /plan.** Aqui se rehace un
+    solo dia y el momento visual, los pines cayendo sobre el mapa, ya ocurrio.
+    Transmitir la construccion de un dia suelto seria el teatro que el
+    streaming de /plan existe para no hacer.
+    """
+    db = SessionLocal()
+    try:
+        estado = [
+            motor.DayState(
+                number=dia.number,
+                stops=[(parada.place_id, parada.meal) for parada in dia.stops],
+            )
+            for dia in peticion.days
+        ]
+
+        objetivo = next(d for d in estado if d.number == peticion.day)
+        catalogo = places_by_ids(db, [ref for ref, _ in objetivo.stops])
+        nombres = [catalogo[ref].name for ref, _ in objetivo.stops if ref in catalogo]
+
+        cambio = interpret_revision(peticion.message, nombres)
+        if not cambio.ok:
+            raise HTTPException(status_code=422, detail=cambio.error)
+
+        if not cambio.touches_anything:
+            # Sin un cambio que aplicar, rehacer el dia lo moveria por nada.
+            partes = ["no entendí qué cambiar de ese día."]
+            if cambio.unmapped:
+                partes.append(f"No supe qué hacer con: {', '.join(cambio.unmapped)}.")
+            partes.append(
+                "Probá con la hora de inicio, los kilómetros, la cantidad de "
+                "paradas, las categorías, o sacar una parada por su nombre."
+            )
+            raise HTTPException(status_code=422, detail=" ".join(partes))
+
+        base = _to_constraints(peticion.constraints)
+        del_dia = replace(base, **cambio.changes) if cambio.changes else base
+
+        por_nombre = {hit.name: ref for ref, hit in catalogo.items()}
+        excluir = {por_nombre[n] for n in cambio.remove if n in por_nombre}
+
+        resultado = motor.revise_with_routing(
+            db, base, estado, peticion.day, day_constraints=del_dia, exclude=excluir
+        )
+
+        return RevisionOut(
+            itinerary=_to_out(resultado.itinerary, resultado.stats),
+            applied={k: str(v) for k, v in cambio.changes.items()},
+            removed=cambio.remove,
+            missing=resultado.missing,
+            unmapped=cambio.unmapped,
+            notes=cambio.notes,
+        )
+    finally:
+        db.close()
