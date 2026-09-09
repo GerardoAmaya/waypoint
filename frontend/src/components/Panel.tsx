@@ -6,10 +6,13 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowRight,
   faCheck,
+  faChevronDown,
   faCopy,
+  faPenToSquare,
   faTriangleExclamation,
 } from "@fortawesome/free-solid-svg-icons";
 
+import Asa from "./Asa";
 import FotoZona from "./FotoZona";
 import Linea from "./Linea";
 import { itinerarioComoTexto } from "@/lib/texto";
@@ -25,6 +28,8 @@ interface Props {
   reviseError: string | null;
   selectedStop: string | null;
   onSelectStop: (id: string | null) => void;
+  expandido: boolean;
+  onToggleExpandido: () => void;
 }
 
 const FUENTE: Record<string, string> = {
@@ -55,9 +60,17 @@ export default function Panel({
   reviseError,
   selectedStop,
   onSelectStop,
+  expandido,
+  onToggleExpandido,
 }: Props) {
   const [cambio, setCambio] = useState("");
   const [copiado, setCopiado] = useState(false);
+  /*
+    En pantalla angosta el pie de revision empieza cerrado. Medido: se llevaba
+    102 px de los 429 del panel, permanentes, por un campo que se usa de vez en
+    cuando. En pantalla ancha no cuesta nada y queda abierto.
+  */
+  const [revisionAbierta, setRevisionAbierta] = useState(false);
   const pestanas = useRef<HTMLDivElement>(null);
 
   if (!itinerary || !itinerary.days.length) return null;
@@ -112,6 +125,8 @@ export default function Panel({
 
   return (
     <section className="flex h-full flex-col border-borde-lienzo bg-superficie text-tinta max-lg:border-t lg:border-r">
+      <Asa expandido={expandido} onToggle={onToggleExpandido} />
+
       {interpretation?.area?.photo && (
         <FotoZona
           photo={interpretation.area.photo}
@@ -119,7 +134,7 @@ export default function Panel({
         />
       )}
 
-      <header className="border-b border-borde px-6 pt-6 pb-4 lg:pt-5">
+      <header className="border-b border-borde px-5 pt-2 pb-3 sm:px-6 sm:pt-6 sm:pb-4 lg:pt-5">
         <div className="flex items-start justify-between gap-3">
           <h1 className="text-titulo leading-tight font-semibold tracking-tight">
             {interpretation?.area?.name ?? "Tu itinerario"}
@@ -143,11 +158,25 @@ export default function Panel({
           </button>
         </div>
 
-        <p className="mt-1 text-menudo text-tinta-suave">
+        {/*
+          Expandido en pantalla angosta la cabecera se queda con lo que
+          identifica al panel y suelta el resto. No se pierde nada: es lo que
+          se lee de un vistazo al abrirlo, y colapsandolo vuelve. Son noventa
+          pixeles, que en un telefono son dos paradas mas del itinerario.
+        */}
+        <p
+          className={`mt-1 text-menudo text-tinta-suave lg:block ${
+            expandido ? "hidden" : ""
+          }`}
+        >
           {itinerary.days.length} {itinerary.days.length === 1 ? "día" : "días"} ·{" "}
           {itinerary.total_stops} paradas
         </p>
-        <p className="mt-1 text-dato leading-relaxed text-tinta-tenue">
+        <p
+          className={`mt-1 text-dato leading-relaxed text-tinta-tenue lg:block ${
+            expandido ? "hidden" : ""
+          }`}
+        >
           {FUENTE[itinerary.travel.source]}
           {itinerary.travel.reason && CAUSA[itinerary.travel.reason]
             ? `: ${CAUSA[itinerary.travel.reason]}`
@@ -183,7 +212,7 @@ export default function Panel({
           role="tablist"
           aria-label="Días del itinerario"
           onKeyDown={teclaEnPestanas}
-          className="flex gap-1 border-b border-borde px-6 py-3"
+          className="flex shrink-0 gap-1 border-b border-borde px-5 py-2 sm:px-6 sm:py-3"
         >
           {itinerary.days.map((d) => {
             const activo = d.number === dia.number;
@@ -227,7 +256,7 @@ export default function Panel({
         aria-labelledby={
           itinerary.days.length > 1 ? `pestana-dia-${dia.number}` : undefined
         }
-        className="flex-1 overflow-y-auto px-6 py-6"
+        className="flex-1 overflow-y-auto px-5 py-4 sm:px-6 sm:py-6"
       >
         <AnimatePresence mode="wait">
           <motion.div
@@ -266,11 +295,35 @@ export default function Panel({
           ))}
       </div>
 
-      <footer className="border-t border-borde px-6 py-4">
-        <label htmlFor="revisar" className="text-dato text-tinta-tenue">
+      <footer className="shrink-0 border-t border-borde px-6 py-3 lg:py-4">
+        {/*
+          Cerrado es un boton de una linea; abierto es el campo. En pantalla
+          ancha nunca esta cerrado, asi que el desplegable no molesta ahi.
+        */}
+        <button
+          onClick={() => setRevisionAbierta((v) => !v)}
+          aria-expanded={revisionAbierta}
+          aria-controls="revisar"
+          className="flex w-full items-center gap-2 text-left text-dato text-tinta-tenue transition-colors hover:text-tinta lg:hidden"
+        >
+          <FontAwesomeIcon
+            icon={revisionAbierta ? faChevronDown : faPenToSquare}
+            aria-hidden
+            className="size-3"
+          />
+          Cambiar el día {dia.number}
+        </button>
+
+        <label
+          htmlFor="revisar"
+          className="hidden text-dato text-tinta-tenue lg:block"
+        >
           Cambiar el día {dia.number}
         </label>
-        <div className="mt-2 flex gap-2">
+
+        <div
+          className={`mt-2 gap-2 lg:flex ${revisionAbierta ? "flex" : "hidden"}`}
+        >
           <input
             id="revisar"
             value={cambio}

@@ -293,6 +293,22 @@ body {
   color: var(--anil);
 }
 
+/*
+  Con el panel del itinerario expandido, el mapa queda en una franja de menos
+  de cien pixeles: sus controles no se pueden usar y se apilan encima del cromo
+  de la aplicacion. Se esconden hasta que el mapa vuelva a tener sitio.
+*/
+/*
+  La guarda del ancho va aca y no en la clase de utilidad: el panel arrastrable
+  solo existe en pantalla angosta, y en escritorio el mapa nunca se encoge
+  aunque el estado se quede encendido al cambiar de tamano la ventana.
+*/
+@media (max-width: 1023px) {
+  .waypoint-mapa-encogido .leaflet-control-container {
+    display: none;
+  }
+}
+
 .leaflet-control-zoom a {
   background: var(--superficie);
   color: var(--tinta);

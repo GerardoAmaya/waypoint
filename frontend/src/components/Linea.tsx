@@ -90,7 +90,7 @@ export default function Linea({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.28, delay: indice * 0.045 }}
-              className="grid grid-cols-[3.5rem_1.5rem_1fr] gap-x-3 pb-6 last:pb-0"
+              className="grid grid-cols-[3.25rem_1.5rem_1fr] gap-x-2.5 pb-4 last:pb-0 sm:grid-cols-[3.5rem_1.5rem_1fr] sm:gap-x-3 sm:pb-6"
             >
               {/*
                 El punto tiene columna propia. La primera version lo colocaba
@@ -107,7 +107,7 @@ export default function Linea({
                 {indice < day.stops.length - 1 && (
                   <span
                     aria-hidden
-                    className="absolute top-7 bottom-[-1.5rem] w-px bg-borde"
+                    className="absolute top-7 bottom-[-1rem] w-px bg-borde sm:bottom-[-1.5rem]"
                   />
                 )}
               </span>
@@ -175,7 +175,15 @@ export default function Linea({
                       {parada.travel_km_from_previous.toFixed(1)} km ·{" "}
                       {parada.travel_minutes_from_previous} min
                     </span>{" "}
-                    desde la parada anterior
+                    {/*
+                      En pantalla angosta la frase se va: envolvia a una
+                      segunda linea en cada parada —veinte pixeles por parada,
+                      ciento veinte en un dia de seis— y la posicion en la
+                      lista ya dice de donde viene el traslado.
+                    */}
+                    <span className="hidden sm:inline">
+                      desde la parada anterior
+                    </span>
                   </p>
                 )}
                 </button>

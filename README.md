@@ -728,6 +728,59 @@ pasaba hacia abajo. Cada función recibía entonces un proveedor concreto, y
 coche sin que nada lo delatara. Ahora se pasa `travel` —que puede ser un
 diccionario de modo a proveedor— y cada día resuelve el suyo.
 
+### En un teléfono el itinerario cabía en una rendija
+
+Medido sobre una pantalla de 780 px de alto, antes de tocar nada:
+
+| bloque | alto |
+|---|---|
+| mapa | 351 (45%) |
+| cabecera | 164 |
+| pestañas | 57 |
+| **itinerario** | **104** |
+| pie de revisión | 102 |
+
+El cromo se llevaba el 75% del panel y al itinerario —que es el producto— le
+quedaban 104 px, con paradas de 65. **Se veía una de seis.** Y las paradas
+pesaban más de lo que parecía: `[65, 131, 152, 110, 110, 86]`, 654 px en total,
+porque en 360 px de ancho los nombres largos y la frase «desde la parada
+anterior» envolvían a dos y tres líneas.
+
+Tres cambios, y el orden importa porque el segundo es el que más rinde:
+
+**El panel se arrastra.** El mapa y la lista compiten por la misma pantalla y
+uno mira una cosa a la vez, así que la respuesta no es repartir mejor sino
+dejar elegir. Es el patrón de las aplicaciones de mapas y por eso no hay que
+explicarlo. Se toca y también se arrastra, pero debajo es un botón de verdad
+con `aria-expanded`: un panel que solo responde a un gesto no se puede usar con
+teclado ni con lector de pantalla. El umbral del arrastre son 40 px, porque
+menos que eso es un toque tembloroso y tratarlo como arrastre haría que tocar
+fallara la mitad de las veces.
+
+**Las paradas se compactan.** «desde la parada anterior» se va en pantalla
+angosta: la posición en la lista ya dice de dónde viene el traslado, y esa
+frase costaba una segunda línea por parada. Con eso y menos aire entre paradas,
+las seis pasaron de 654 a 481 px.
+
+**El cromo suelta lo que ya se leyó.** Expandido, la cabecera se queda con lo
+que identifica al panel y esconde el resto —son noventa píxeles, dos paradas
+más—; el pie de revisión empieza cerrado, porque se llevaba 102 px permanentes
+por un campo que se usa de vez en cuando; y los controles del mapa desaparecen,
+porque en una franja de noventa píxeles no se pueden tocar y solo se apilaban
+encima del cromo de la aplicación.
+
+El resultado, medido igual que el problema:
+
+| | antes | colapsado | expandido |
+|---|---|---|---|
+| itinerario | 104 px | 167 px | **424 px** |
+| paradas visibles | 1 de 6 | 2 de 6 | **6 de 6** |
+| pie | 102 px | 44 px | 44 px |
+
+En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
+y la guarda de los controles del mapa vive en una media query, no en la clase,
+para que redimensionar la ventana no deje el mapa sin controles.
+
 ---
 
 ## Frontend

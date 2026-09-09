@@ -36,6 +36,11 @@ export default function Home() {
     apuntar con el dedo.
   */
   const [parada, setParada] = useState<ParadaElegida | null>(null);
+  /*
+    El panel arrastrable, solo en pantalla angosta. Vive aca y no dentro de
+    Panel porque lo que cambia es la altura del <aside>, que es de la pagina.
+  */
+  const [panelExpandido, setPanelExpandido] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revisando, setRevisando] = useState(false);
   const [errorRevision, setErrorRevision] = useState<string | null>(null);
@@ -121,6 +126,7 @@ export default function Home() {
     setInterpretacion(null);
     setDiaActivo(null);
     setParada(null);
+    setPanelExpandido(false);
     setError(null);
     setFase("quieto");
   }, []);
@@ -136,7 +142,11 @@ export default function Home() {
     */
     <MotionConfig reducedMotion="user">
       <main className="flex h-dvh flex-col overflow-hidden lg:flex-row">
-        <div className="relative order-1 min-h-0 flex-1 lg:order-2">
+        <div
+          className={`relative order-1 min-h-0 flex-1 lg:order-2 ${
+            panelExpandido ? "waypoint-mapa-encogido" : ""
+          }`}
+        >
           <Mapa
             fondo={fondo}
             field={field}
@@ -204,7 +214,11 @@ export default function Home() {
             esta abajo a la derecha y arriba a la derecha vive el cromo de la
             aplicacion.
           */}
-          <div className="absolute bottom-4 left-4 z-[1000] flex max-w-[min(22rem,calc(100%-2rem))] flex-col items-start gap-2">
+          <div
+            className={`absolute bottom-4 left-4 z-[1000] flex max-w-[min(22rem,calc(100%-2rem))] flex-col items-start gap-2 lg:flex ${
+              panelExpandido ? "hidden" : "flex"
+            }`}
+          >
             <Fondo fondo={fondo} onChange={setFondo} />
             {conPlan && itinerario && (
               <div className="hidden lg:block">
@@ -235,7 +249,17 @@ export default function Home() {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -24 }}
               transition={{ type: "spring", stiffness: 260, damping: 30 }}
-              className="order-2 h-[55dvh] w-full shrink-0 lg:order-1 lg:h-auto lg:w-[27rem]"
+              /*
+              La transicion va en CSS y no en Motion para que la regla de
+              prefers-reduced-motion la alcance: ahi el panel salta a su sitio
+              en vez de hacer esperar a quien pidio no esperar.
+
+              Expandido deja el mapa asomando: sin esa franja, el panel a
+              pantalla completa parece otra pantalla y se pierde de donde vino.
+            */
+            className={`order-2 w-full shrink-0 transition-[height] duration-300 ease-out lg:order-1 lg:h-auto lg:w-[27rem] lg:transition-none ${
+              panelExpandido ? "h-[88dvh]" : "h-[55dvh]"
+            }`}
             >
               <Panel
                 interpretation={interpretacion}
@@ -245,6 +269,8 @@ export default function Home() {
                 onRevise={revisar}
                 revising={revisando}
                 reviseError={errorRevision}
+                expandido={panelExpandido}
+                onToggleExpandido={() => setPanelExpandido((v) => !v)}
                 selectedStop={parada?.id ?? null}
                 onSelectStop={(id) =>
                   setParada(id ? { id, origen: "panel" } : null)
