@@ -186,7 +186,15 @@
     primera linea del titulo y los ejemplos. El maximo es el tamano de diseno y
     el minimo el que cabe en 390px.
   */
-  --text-obra: clamp(2.5rem, 8.5vw, 4.2rem);
+  /*
+    El titular. Bajo de los 4.2rem originales porque cambio lo que dice: era
+    una frase con voz —"Contame el viaje que querés hacer"— que se ganaba el
+    tamano de display, y es una frase descriptiva que envuelve a dos lineas. A
+    67 px ocupaba 124 px de alto para decir algo llano, y en extralight los
+    trazos se afinan de mas. La proporcion con la entradilla queda en 2,4 en
+    vez de 3,1, que es una jerarquia y no un grito.
+  */
+  --text-obra: clamp(2rem, 6.5vw, 3.25rem);
   --text-titulo: clamp(1.7rem, 5vw, 2.1rem);
   --text-guia: clamp(1.1rem, 3.6vw, 1.35rem);
   --text-cuerpo: 0.9375rem;

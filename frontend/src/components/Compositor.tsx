@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -8,6 +8,8 @@ import {
   faRoute,
   faTriangleExclamation,
 } from "@fortawesome/free-solid-svg-icons";
+
+import Pais from "./Pais";
 
 export type Fase = "quieto" | "leyendo" | "eligiendo" | "midiendo" | "listo";
 
@@ -27,6 +29,23 @@ const PASOS: { fase: Fase; texto: string }[] = [
   y no una zona turistica, porque desde el nomenclator se puede decir donde se
   esta uno quedando y eso no se adivina si nadie lo muestra.
 */
+/*
+  La caja arranca con una peticion escrita y no vacia.
+
+  Un area de texto en blanco con una sugerencia gris pide que uno redacte
+  desde cero, y quien llega no sabe todavia cuanto entiende esto: si escribe
+  "dos dias" se lleva lo que da un prompt de dos palabras y concluye que no da
+  para mas. Con la peticion puesta, el primer resultado que ve es el del
+  planificador trabajando con todo lo que sabe leer —alojamiento de partida,
+  hora de inicio, modo por dia, comidas, hora de regreso—, y el boton se puede
+  pulsar sin escribir nada.
+
+  El precio es que para escribir lo propio hay que borrar esto primero. Se
+  paga una vez y a cambio la pantalla ensena su techo en vez de su suelo.
+*/
+const PETICION_INICIAL =
+  "Me estoy hospedando en Hotel Barceló, quiero un itinerario de 2 días a partir de las 10 am, el primer día en coche y el segundo caminando, realizaré cena en los 2 viajes y quiero estar de vuelta en el hotel antes de las 11 p.m";
+
 const EJEMPLOS = [
   "Tres días por la Ruta de las Flores, odio madrugar",
   "Un día en Suchitoto caminando, sin museos",
@@ -36,14 +55,46 @@ const EJEMPLOS = [
 interface Props {
   fase: Fase;
   error: string | null;
-  /** Cuantos lugares tiene el catalogo cargado. Cero mientras no lleguen. */
-  catalogo: number;
   onSubmit: (mensaje: string) => void;
 }
 
-export default function Compositor({ fase, error, catalogo, onSubmit }: Props) {
-  const [texto, setTexto] = useState("");
+export default function Compositor({ fase, error, onSubmit }: Props) {
+  const [texto, setTexto] = useState(PETICION_INICIAL);
+  const caja = useRef<HTMLTextAreaElement>(null);
   const trabajando = fase !== "quieto" && fase !== "listo";
+
+  /*
+    La caja crece con lo que tiene dentro.
+
+    Con tres filas fijas, la peticion inicial entraba en 5 lineas en escritorio
+    y en 10 en un telefono de 360 px: mas de la mitad quedaba detras de un
+    desplazamiento interno, en una caja sin asa de redimensionar. Un texto
+    puesto de antemano que no se ve entero no ensena nada.
+
+    Donde hay field-sizing lo hace el CSS, que acierta ya en el primer cuadro y
+    no da salto. Donde no lo hay —Firefox al escribir esto— queda este efecto,
+    que es lo mismo medido a mano. El alto vuelve a "auto" antes de leer
+    scrollHeight porque si no, al borrar texto la caja no sabe encogerse.
+  */
+  useEffect(() => {
+    const el = caja.current;
+    if (!el || CSS.supports("field-sizing", "content")) return;
+
+    const ajustar = () => {
+      el.style.height = "auto";
+      // scrollHeight no cuenta los bordes y la caja mide en border-box: sin
+      // sumarlos quedan 2 px de menos y con ellos una barra de un pelo.
+      const estilo = getComputedStyle(el);
+      const bordes =
+        parseFloat(estilo.borderTopWidth) + parseFloat(estilo.borderBottomWidth);
+      el.style.height = `${el.scrollHeight + bordes}px`;
+    };
+    ajustar();
+    // El ancho de la columna cambia con la ventana, y con el ancho cambia
+    // donde parte cada linea.
+    window.addEventListener("resize", ajustar);
+    return () => window.removeEventListener("resize", ajustar);
+  }, [texto]);
 
   const enviar = () => {
     const limpio = texto.trim();
@@ -61,21 +112,52 @@ export default function Compositor({ fase, error, catalogo, onSubmit }: Props) {
       un mapa igual de claro, y sin un borde que llegue a contraste el panel se
       deshace contra el territorio. Es lo mismo que hundio la primera version de
       esta pantalla, resuelto con borde y elevacion en vez de con luminosidad.
+
+      Alto maximo y desplazamiento propio porque el contenido crece y la ventana
+      no: en un telefono de 568 px de alto la tarjeta pedia 618 px y el titulo
+      salia por arriba del viewport, sin barra que avisara. Acotarla a la altura
+      disponible hace que sobre ella misma se desplace lo que no entra, en vez
+      de recortarse. Es el mismo desborde que ya arreglo el clamp del titular,
+      que volvio cuando el texto se alargo.
     */
-    <div className="w-full max-w-2xl rounded-xl border border-borde-fuerte bg-superficie/94 px-6 py-7 shadow-panel backdrop-blur-sm sm:px-8 sm:py-9">
-      <h1 className="text-obra leading-[0.92] font-extralight tracking-tight text-tinta">
-        Contame el viaje
-        <br />
-        que querés hacer.
+    <div className="max-h-[calc(100dvh-3rem)] w-full max-w-2xl overflow-y-auto rounded-xl border border-borde-fuerte bg-superficie/94 px-6 py-7 shadow-panel backdrop-blur-sm sm:px-8 sm:py-9">
+      <Pais />
+
+      {/*
+        Interlineado 1.02 y no 0.92: el 0.92 venia de un titular de dos lineas
+        cortas, donde apretarlas las agrupaba. Sobre una frase que envuelve, un
+        interlineado menor que el cuerpo de la letra deja los ascendentes de la
+        segunda linea tocando la primera.
+      */}
+      <h1 className="mt-3 text-obra leading-[1.02] font-light tracking-tight text-balance text-tinta">
+        Recomendaciones de lugares en El Salvador
       </h1>
-      <p className="mt-4 max-w-md text-guia sm:mt-5 leading-snug font-light text-tinta-suave">
-        Escribilo como se lo contarías a alguien. Ayuda que cuentes cuántos
-        días, si vas en carro o a pie, desde qué hora podés salir y dónde te
-        estás quedando.
+      {/*
+        Sin medida propia: la entradilla ocupa la columna entera.
+
+        Con max-w-md se acotaba a 448 px dentro de una columna de 608, y la
+        tarjeta terminaba con tres bordes derechos distintos —el area de texto
+        en 606, el titular en 474, la entradilla en 437—: un escalon que se lee
+        como un hueco y no como una sangria. A la anchura de la columna son 28
+        em, unos 56 caracteres por linea, que sigue estando dentro de la medida
+        comoda de lectura, y el borde derecho vuelve a ser uno.
+
+        text-pretty en la entradilla y text-balance en el titular por lo mismo
+        desde el otro lado: el reparto lo decide el navegador y no el azar del
+        largo del texto, que aqui cambia.
+
+        Tamano de cuerpo en el telefono y de entradilla desde sm: a 17.6 px en
+        una columna de 264 px esto se convierte en un bloque de lineas cortas y
+        deja de leerse como una entrada. En pantalla ancha hay sitio y la
+        jerarquia se sostiene, asi que ahi se queda grande.
+      */}
+      <p className="mt-4 text-cuerpo leading-relaxed font-light text-pretty text-tinta-suave sm:mt-5 sm:text-guia sm:leading-snug">
+        Cuéntanos cuantos días tenés, desde donde salis (lugar o hotel), si deseas ir en carro o caminando, si querés madrugar o no y te armamos un itinerario con los lugares que podés visitar.
       </p>
 
       <div className="mt-6 sm:mt-8">
         <textarea
+          ref={caja}
           aria-label="Contá el viaje que querés hacer"
           value={texto}
           onChange={(e) => setTexto(e.target.value)}
@@ -88,7 +170,7 @@ export default function Compositor({ fase, error, catalogo, onSubmit }: Props) {
           disabled={trabajando}
           rows={3}
           placeholder="dos días por el occidente, sin madrugar"
-          className="w-full resize-none rounded-lg border border-borde-fuerte bg-superficie-alta px-4 py-3.5 text-cuerpo leading-relaxed text-tinta transition-colors placeholder:text-tinta-tenue focus:border-acento disabled:opacity-60"
+          className="max-h-[50dvh] w-full resize-none rounded-lg border border-borde-fuerte bg-superficie-alta px-4 py-3.5 text-cuerpo leading-relaxed text-tinta transition-colors field-sizing-content placeholder:text-tinta-tenue focus:border-acento disabled:opacity-60"
         />
 
         <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -170,22 +252,6 @@ export default function Compositor({ fase, error, catalogo, onSubmit }: Props) {
                 ))}
               </ul>
 
-              {/*
-                Sin la cifra del catalogo: a quien va a viajar no le cambia nada
-                que sean cinco mil o tres mil, y decir "ninguno inventado" le
-                mete una duda que no tenia. Lo que si le falta a esta pantalla
-                es el pais, que hasta ahora solo se deducia del mapa.
-
-                Se muestra solo cuando el catalogo llego de verdad. Afirmar de
-                donde salen los lugares con el backend caido seria sostener algo
-                que no se comprobo, que es justo lo que este proyecto no hace.
-              */}
-              {catalogo > 0 && (
-                <p className="mt-5 text-dato text-tinta-tenue">
-                  Lugares reales de El Salvador, del catálogo abierto de
-                  OpenStreetMap.
-                </p>
-              )}
             </div>
           )
         )}
