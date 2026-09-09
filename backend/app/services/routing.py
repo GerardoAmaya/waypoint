@@ -284,6 +284,10 @@ class MatrixStats:
     fetched: int = 0
     estimated: int = 0
     requests: int = 0
+    # Por que no hubo medidas reales, cuando no las hubo. Las tres causas
+    # posibles piden cosas distintas: configurar una llave, esperar a manana, o
+    # nada porque el lugar de verdad no tiene camino.
+    reason: str | None = None
 
     @property
     def total(self) -> int:
@@ -473,6 +477,16 @@ def load_travel_matrix(
             persist_edges(db, nuevas, profile, SOURCE_ORS)
 
     stats.estimated = len(_pairs(unicos)) - len(edges)
+
+    if not stats.cached and not stats.fetched:
+        if client is None:
+            stats.reason = "no_key"
+        elif not stats.requests:
+            # El presupuesto se comprueba antes de llamar, asi que quedarse sin
+            # cupo se ve como cero peticiones y no como una peticion fallida.
+            stats.reason = "no_quota"
+        else:
+            stats.reason = "unroutable"
 
     if stats.estimated:
         logger.info(

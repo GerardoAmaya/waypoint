@@ -17,9 +17,21 @@ interface Props {
 }
 
 const FUENTE: Record<string, string> = {
-  estimated: "Distancias estimadas desde la línea recta",
-  mixed: "Distancias reales, algunas estimadas",
-  real: "Distancias reales de carretera",
+  estimated: "Distancias estimadas",
+  mixed: "Distancias medidas, algunas estimadas",
+  real: "Distancias medidas sobre carretera",
+};
+
+/*
+  Las tres causas piden cosas distintas: configurar algo, esperar, o nada
+  porque el lugar de verdad no tiene camino. "Estimadas" a secas las mete en la
+  misma bolsa y deja al viajero sin saber si tiene que hacer algo.
+*/
+const CAUSA: Record<string, string> = {
+  no_key: "falta configurar OpenRouteService, así que salen de la línea recta",
+  no_quota: "se acabó el cupo diario de rutas, así que salen de la línea recta",
+  unroutable:
+    "estas paradas están lejos de toda carretera y no se pueden medir, así que salen de la línea recta",
 };
 
 export default function Panel({
@@ -52,9 +64,14 @@ export default function Panel({
           {interpretation?.area?.name ?? "Tu itinerario"}
         </h1>
         <p className="mt-1 text-menudo text-tinta-suave">
-          {itinerary.days.length}{" "}
-          {itinerary.days.length === 1 ? "día" : "días"} · {itinerary.total_stops}{" "}
-          paradas · {FUENTE[itinerary.travel.source]}
+          {itinerary.days.length} {itinerary.days.length === 1 ? "día" : "días"} ·{" "}
+          {itinerary.total_stops} paradas
+        </p>
+        <p className="mt-1 text-dato leading-relaxed text-tinta-tenue">
+          {FUENTE[itinerary.travel.source]}
+          {itinerary.travel.reason && CAUSA[itinerary.travel.reason]
+            ? `: ${CAUSA[itinerary.travel.reason]}`
+            : ""}
         </p>
 
         {/*

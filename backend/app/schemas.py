@@ -162,6 +162,10 @@ class TravelSourceOut(BaseModel):
     real_ratio: float = 0.0
     # Peticiones a ORS que costo este itinerario. Con la cache caliente es 0.
     requests: int = 0
+    # Por que no hubo medidas reales. "no_key", "no_quota" o "unroutable".
+    # Decir solo "estimadas" deja al usuario sin saber si falta configurar algo,
+    # si hay que esperar, o si el lugar simplemente no tiene camino.
+    reason: str | None = None
     # Lo que ORS dice que le queda. None mientras no haya respondido: nuestro
     # presupuesto sin estrenar no es una lectura del cupo real.
     quota_remaining: int | None = None

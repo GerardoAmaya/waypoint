@@ -65,6 +65,13 @@ class ClienteFalso:
 
     def matrix(self, coords, profile, sources=None, destinations=None):
         self.llamadas.append((list(coords), profile, sources, destinations))
+
+        # El cliente real comprueba el presupuesto ANTES de contar la peticion:
+        # quedarse sin cupo no gasta una llamada. El falso lo contaba igual, y
+        # eso hacia que "sin cupo" se viera como "hubo peticion y no sirvio".
+        if isinstance(self.falla_con, routing.ORSBudgetExhausted | routing.ORSQuotaExhausted):
+            raise self.falla_con
+
         self.request_count += 1
 
         if self.falla_con is not None:
@@ -232,8 +239,11 @@ class TestFetchEdges:
 
         aristas = fetch_edges(lugares, "driving", cliente, chunk_size=2)
 
-        # Se corta en el primer bloque en vez de insistir contra el limite.
-        assert cliente.request_count == 1
+        # Se corta en el primer bloque en vez de insistir contra el limite. El
+        # contador queda en cero porque quedarse sin cupo no gasta peticion:
+        # el presupuesto se comprueba antes de salir a la red.
+        assert cliente.request_count == 0
+        assert len(cliente.llamadas) == 1
         assert aristas == {}
 
     def test_un_bloque_fallido_no_detiene_los_demas(self):
@@ -639,3 +649,40 @@ class TestObservabilidadDelCupo:
         matriz = load_travel_matrix(lugares, "driving", client=cliente)
 
         assert matriz.stats.requests == 1, "no el acumulado del proceso"
+
+
+class TestPorQueNoHuboMedidasReales:
+    """Las tres causas piden cosas distintas del usuario.
+
+    Sin llave hay que configurar algo. Sin cupo hay que esperar. Sin ruta no
+    hay nada que hacer: el lugar de verdad no tiene camino. Decir solo
+    "estimadas" las mete en la misma bolsa.
+    """
+
+    def _lugares(self, cuantos=3):
+        return [lugar(f"L{i}", 13.7 + i * 0.01, -89.2) for i in range(cuantos)]
+
+    def test_sin_cliente_la_causa_es_la_llave(self):
+        matriz = load_travel_matrix(self._lugares(), "driving", client=None)
+        assert matriz.stats.reason == "no_key"
+
+    def test_sin_cupo_la_causa_es_el_cupo(self):
+        cliente = ClienteFalso(falla_con=routing.ORSBudgetExhausted("sin presupuesto"))
+        cliente.request_count = 0
+        matriz = load_travel_matrix(self._lugares(), "driving", client=cliente)
+        assert matriz.stats.reason == "no_quota"
+
+    def test_con_puntos_sin_carretera_la_causa_es_la_red_vial(self):
+        """El caso de los cerros: ORS responde y ninguna medida sirve."""
+        cerros = self._lugares()
+        nulos = [((a.lat, a.lon), (b.lat, b.lon)) for a in cerros for b in cerros]
+        cliente = ClienteFalso(nulos=nulos)
+
+        matriz = load_travel_matrix(cerros, "driving", client=cliente)
+
+        assert cliente.request_count == 1
+        assert matriz.stats.reason == "unroutable"
+
+    def test_con_medidas_reales_no_hay_causa_que_explicar(self):
+        matriz = load_travel_matrix(self._lugares(), "driving", client=ClienteFalso())
+        assert matriz.stats.reason is None

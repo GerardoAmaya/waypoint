@@ -70,6 +70,7 @@ export interface TravelSource {
   estimated: number;
   real_ratio: number;
   requests: number;
+  reason: "no_key" | "no_quota" | "unroutable" | null;
   quota_remaining: number | null;
 }
 

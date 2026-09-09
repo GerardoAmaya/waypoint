@@ -92,6 +92,7 @@ def _to_travel_source(stats) -> TravelSourceOut:
         estimated=stats.estimated,
         real_ratio=round(stats.real_ratio, 3),
         requests=stats.requests,
+        reason=getattr(stats, "reason", None),
         quota_remaining=restante,
     )
 
