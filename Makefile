@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter
+.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real
 
 up:
 	docker compose up -d --build
@@ -41,3 +41,11 @@ zones:
 # Reaplica el filtro de calidad al catalogo cargado. No escribe sin --apply.
 refilter:
 	docker compose exec api python -m scripts.refilter_places
+
+# Mide cuantos itinerarios cumplen todas sus restricciones. No gasta cupo.
+evaluate:
+	docker compose exec api python -m scripts.evaluate --verbose
+
+# Lo mismo con rutas reales de ORS. Gasta cupo: una peticion por caso.
+evaluate-real:
+	docker compose exec api python -m scripts.evaluate --real-routes

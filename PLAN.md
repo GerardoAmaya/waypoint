@@ -236,8 +236,17 @@ segunda consulta no llama a la API.
 ### Fase 5 — Capa conversacional
 
 Interpretar la frase del usuario y extraer las restricciones. Streaming del
-itinerario mientras se construye. Edición incremental: "el día 3 se ve caro"
-recalcula solo el día 3.
+itinerario mientras se construye. Edición incremental: "el día 3 tiene mucho
+carro" recalcula solo el día 3.
+
+El ejemplo original de esta fase era "el día 3 se ve caro". No se puede
+cumplir: no hay dimensión de costo en las restricciones y OpenStreetMap no
+trae precios, así que "caro" cae en lo que el modelo entendió y no pudo
+representar. Un plan que promete algo que el proyecto no hace envejece mal.
+
+El streaming es de la construcción inicial, no de la edición. Al revisar un
+día el momento visual ya ocurrió, y transmitir el armado de un día suelto
+sería fingir un progreso que no existe.
 
 *Verificación:* la edición parcial no altera los otros días.
 
