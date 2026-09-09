@@ -933,3 +933,71 @@ class TestSeleccionDeRestaurantes:
 
         comidas = [lugar("C", 13.7, -89.2, Category.food)]
         assert _meal_candidates([], comidas, EstimatedTravel()) == []
+
+
+class TestElDiaSeAchicaParaComer:
+    """El fallo que la evaluacion tardo dos intentos en localizar.
+
+    _insert_meals no lograba meter el restaurante por presupuesto y devolvia
+    el dia sin el. Ese dia cabia de sobra, asi que _trim_to_budget lo daba por
+    bueno y nunca intentaba achicarlo para hacerle lugar.
+    """
+
+    def _restricciones(self, **extra):
+        base = dict(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_travel_km_per_day=12,
+        )
+        base.update(extra)
+        return Constraints(**base)
+
+    def test_recorta_destinos_para_que_entre_el_almuerzo(self):
+        from app.services.itinerary import _trim_to_budget
+
+        # Cuatro destinos en fila que ya consumen casi todo el presupuesto.
+        destinos = [
+            lugar(f"D{i}", 13.700 + i * 0.020, -89.220, Category.nature) for i in range(4)
+        ]
+        comidas = [lugar("Comedor", 13.712, -89.235, Category.food)]
+
+        secuencia = _trim_to_budget(destinos, comidas, self._restricciones())
+
+        assert any(comida == "lunch" for _, comida in secuencia)
+
+    def test_no_achica_el_dia_si_la_comida_es_imposible(self):
+        """Con el restaurante a cuarenta kilometros, no hay recorte que ayude.
+
+        Quedarse sin comer ya es malo; quedarse ademas con una sola parada
+        seria peor. Se devuelve el dia mas completo de los que cabian.
+        """
+        from app.services.itinerary import _day_travel_km, _trim_to_budget
+
+        destinos = [
+            lugar(f"D{i}", 13.700 + i * 0.010, -89.220, Category.nature) for i in range(3)
+        ]
+        lejisimos = [lugar("Lejisimos", 14.100, -89.700, Category.food)]
+        restricciones = self._restricciones()
+
+        secuencia = _trim_to_budget(destinos, lejisimos, restricciones)
+
+        assert len(secuencia) >= 2, "no se achica hasta una parada por nada"
+        assert (
+            _day_travel_km(secuencia, restricciones.mode)
+            <= restricciones.max_travel_km_per_day
+        )
+
+    def test_un_dia_que_termina_antes_del_almuerzo_no_se_achica(self):
+        """Sin esta guarda el bucle recortaria buscando meter una comida
+        que ese dia no necesita."""
+        from app.services.itinerary import _trim_to_budget
+
+        destinos = [lugar("Corto", 13.700, -89.220, Category.viewpoint)]
+        comidas = [lugar("Lejisimos", 14.100, -89.700, Category.food)]
+
+        secuencia = _trim_to_budget(
+            destinos, comidas, self._restricciones(latest_end=time(11, 0))
+        )
+
+        assert len(secuencia) == 1

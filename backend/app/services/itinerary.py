@@ -803,7 +803,7 @@ def _trim_to_budget(
     constraints: Constraints,
     travel: TravelProvider | None = None,
 ) -> list[tuple[PlaceHit, str | None]]:
-    """Arma el dia y le quita paradas hasta que entre en el presupuesto.
+    """Arma el dia y le quita paradas hasta que entre, con su comida adentro.
 
     El limite se comprueba sobre la secuencia final, con las comidas ya
     intercaladas: un restaurante a ocho kilometros del recorrido suma
@@ -811,16 +811,51 @@ def _trim_to_budget(
 
     Se descarta la parada que mas traslado aporta, no la ultima, porque la
     culpable del exceso suele estar en el medio.
+
+    **Un dia sin comida tambien "cabe", y esa era la trampa.** La version
+    anterior salia del bucle en cuanto la secuencia entraba en el presupuesto.
+    Cuando el restaurante no entraba por kilometros, _insert_meals devolvia el
+    dia sin el, ese dia cabia de sobra, y el bucle lo daba por bueno sin
+    intentar achicarlo para hacerle lugar. Era la causa real de que la mitad
+    de los casos de la evaluacion se quedaran sin almorzar.
+
+    Ahora se sigue recortando mientras falte la comida pedida. Si aun asi no
+    entra —el unico restaurante esta a cuarenta kilometros— se devuelve el dia
+    MAS COMPLETO de los que cabian, no el ultimo recorte. Quedarse sin comida
+    ya es malo; quedarse ademas con una sola parada seria peor.
     """
     medidor = _travel_or_estimate(travel, constraints.mode)
     restantes = list(grupo)
+    mejor_sin_comida: list[tuple[PlaceHit, str | None]] | None = None
+    necesita_comida: bool | None = None
 
     while restantes:
         secuencia = _insert_meals(
             order_by_proximity(restantes, medidor), comidas, constraints, medidor
         )
-        if _fits_the_day(secuencia, constraints, medidor):
+        cabe = _fits_the_day(secuencia, constraints, medidor)
+        tiene_comida = any(comida for _, comida in secuencia)
+
+        # **Se decide una sola vez, sobre el dia completo.** Reevaluarlo en
+        # cada vuelta hace que el bucle se enganie solo: al achicar el dia
+        # para hacerle lugar al almuerzo, el dia deja de cruzar la hora de
+        # almorzar, "ya no necesita comida" pasa a ser cierto, y devuelve el
+        # dia recortado sin comer. Que es lo peor de las dos opciones.
+        if necesita_comida is None:
+            necesita_comida = (
+                constraints.include_meals
+                and bool(comidas)
+                and _crosses_lunch(secuencia, constraints, medidor)
+            )
+
+        if cabe and (tiene_comida or not necesita_comida):
             return secuencia
+
+        # El primero que cabe es el mas completo: se guarda por si la comida
+        # resulta imposible y hay que volver a el.
+        if cabe and mejor_sin_comida is None:
+            mejor_sin_comida = secuencia
+
         if len(restantes) == 1:
             break
 
@@ -838,7 +873,26 @@ def _trim_to_budget(
         )
         restantes.remove(peor)
 
+    if mejor_sin_comida is not None:
+        return mejor_sin_comida
     return _insert_meals(order_by_proximity(restantes, medidor), comidas, constraints, medidor)
+
+
+def _crosses_lunch(
+    secuencia: list[tuple[PlaceHit, str | None]],
+    constraints: Constraints,
+    travel: TravelProvider,
+) -> bool:
+    """Si el dia llega a la hora de almorzar.
+
+    Un dia que termina a las once no necesita restaurante, y sin esta
+    comprobacion el bucle lo achicaria hasta una parada buscando meterle uno.
+    """
+    if not secuencia:
+        return False
+    horas = _arrival_times(secuencia, constraints, travel)
+    fin = _sequence_end(secuencia, constraints, travel)
+    return horas[0] <= LUNCH_WINDOW[1] and fin is not None and fin >= LUNCH_WINDOW[0]
 
 
 def select_candidates(
