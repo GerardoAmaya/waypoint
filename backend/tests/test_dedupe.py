@@ -50,7 +50,7 @@ def insertar(conexion, nombre, lat, lon, calidad=0.4):
     return identificador
 
 
-def ejecutar_dedupe(conexion, radio=150, umbral=0.55):
+def ejecutar_dedupe(conexion, radio_urbano=150, radio_exterior=500, umbral=0.55):
     conexion.execute(
         text("""
             UPDATE places
@@ -78,7 +78,11 @@ def ejecutar_dedupe(conexion, radio=150, umbral=0.55):
                   ON a.id <> b.id
                  AND a.is_active AND b.is_active
                  AND a.duplicate_of IS NULL AND b.duplicate_of IS NULL
-                 AND ST_DWithin(a.geom, b.geom, :radio)
+                 AND ST_DWithin(
+                         a.geom, b.geom,
+                         CASE WHEN a.category::text = ANY(:exteriores)
+                              THEN :radio_exterior ELSE :radio_urbano END
+                     )
                  AND similarity(a.name, b.name) >= :umbral
                  AND (b.quality_score, b.id) > (a.quality_score, a.id)
             )
@@ -89,7 +93,12 @@ def ejecutar_dedupe(conexion, radio=150, umbral=0.55):
             FROM pares
             WHERE places.id = pares.perdedor
         """),
-        {"radio": radio, "umbral": umbral},
+        {
+            "radio_urbano": radio_urbano,
+            "radio_exterior": radio_exterior,
+            "exteriores": ["nature", "viewpoint"],
+            "umbral": umbral,
+        },
     ).rowcount
 
 
@@ -229,3 +238,49 @@ def test_el_reinicio_no_resucita_lo_rechazado_por_calidad(base_con_esquema):
             text("SELECT is_active FROM places WHERE id = :id"), {"id": malo}
         ).scalar()
         assert sigue_fuera is False
+
+
+class TestRadioSegunElTipoDeLugar:
+    """Un mirador y un restaurante no toleran la misma imprecision."""
+
+    def test_une_dos_miradores_del_mismo_volcan(self, base_con_esquema):
+        """Caso real: los dos miradores de Izalco estan a 308 metros.
+
+        Con el radio urbano de 150 m quedaban como lugares distintos y el
+        itinerario mandaba al usuario dos veces al mismo sitio.
+        """
+        with base_con_esquema.begin() as conexion:
+            a = insertar(conexion, "Mirador Volcán de Izalco", 13.8134, -89.6331, 0.4)
+            b = insertar(conexion, "Mirador al Volcan de Izalco", 13.8161, -89.6338, 0.5)
+            for identificador in (a, b):
+                conexion.execute(
+                    text("UPDATE places SET category = 'viewpoint' WHERE id = :id"),
+                    {"id": identificador},
+                )
+
+            metros = conexion.execute(
+                text("""
+                    SELECT ST_Distance(a.geom, b.geom)
+                    FROM places a, places b WHERE a.id = :a AND b.id = :b
+                """),
+                {"a": a, "b": b},
+            ).scalar()
+            assert 250 < metros < 400, f"El caso de prueba mide {metros} m"
+
+            assert ejecutar_dedupe(conexion) == 1
+            assert activos(conexion) == 1
+
+    def test_no_une_dos_restaurantes_a_esa_misma_distancia(self, base_con_esquema):
+        """El radio ancho es solo para exteriores: a 300 metros hay varios
+        negocios distintos y fundirlos seria peor que dejarlos separados."""
+        with base_con_esquema.begin() as conexion:
+            a = insertar(conexion, "Pupuseria Central", 13.6929, -89.2182, 0.4)
+            b = insertar(conexion, "Pupuseria Central", 13.6956, -89.2189, 0.5)
+            for identificador in (a, b):
+                conexion.execute(
+                    text("UPDATE places SET category = 'food' WHERE id = :id"),
+                    {"id": identificador},
+                )
+
+            assert ejecutar_dedupe(conexion) == 0
+            assert activos(conexion) == 2

@@ -68,10 +68,14 @@ QUERY_GROUPS: dict[str, str] = {
 # insiste; esperar es mas barato que que nos bloqueen a mitad de la carga.
 PAUSE_SECONDS = 8.0
 
-# Dos lugares con nombres parecidos a menos de esta distancia son el mismo.
-# 150 m: lo suficiente para unir "Cascadas de Huizucar" duplicada, sin fundir
-# dos restaurantes distintos de la misma cuadra.
-DUPLICATE_RADIUS_M = 150
+# Radio de deduplicacion segun el tipo de lugar. Para un negocio urbano, 150 m
+# distingue bien dos locales de la misma cuadra. Para un mirador en la cresta
+# de un volcan no alcanza: dos personas marcan el mismo punto con trescientos
+# metros de diferencia sin equivocarse ninguna.
+URBAN_RADIUS_M = 150
+OUTDOOR_RADIUS_M = 500
+OUTDOOR_CATEGORIES = ("nature", "viewpoint")
+
 NAME_SIMILARITY = 0.55
 
 
@@ -254,7 +258,11 @@ def deduplicate() -> int:
                       ON a.id <> b.id
                      AND a.is_active AND b.is_active
                      AND a.duplicate_of IS NULL AND b.duplicate_of IS NULL
-                     AND ST_DWithin(a.geom, b.geom, :radio)
+                     AND ST_DWithin(
+                             a.geom, b.geom,
+                             CASE WHEN a.category::text = ANY(:exteriores)
+                                  THEN :radio_exterior ELSE :radio_urbano END
+                         )
                      AND similarity(a.name, b.name) >= :umbral
                      -- El ganador es el que trae mas informacion; a igualdad,
                      -- el de id menor, para que el resultado sea estable.
@@ -267,7 +275,12 @@ def deduplicate() -> int:
                 FROM pares
                 WHERE places.id = pares.perdedor
             """),
-            {"radio": DUPLICATE_RADIUS_M, "umbral": NAME_SIMILARITY},
+            {
+                "radio_urbano": URBAN_RADIUS_M,
+                "radio_exterior": OUTDOOR_RADIUS_M,
+                "exteriores": list(OUTDOOR_CATEGORIES),
+                "umbral": NAME_SIMILARITY,
+            },
         )
         db.commit()
         return resultado.rowcount or 0
