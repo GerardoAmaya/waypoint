@@ -89,6 +89,15 @@ def _ruta_km(lugares) -> float:
     return sum(medidor.between(a, b)[0] for a, b in zip(lugares, lugares[1:], strict=False))
 
 
+def _motivo(detalle: str) -> str:
+    """Clasifica el consejo por su causa, leyendo el texto que emitio el motor."""
+    if "no hay ningún lugar" in detalle:
+        return "sin restaurantes en la zona"
+    if "horario de almuerzo" in detalle:
+        return "ninguno cae en la franja horaria"
+    return "el mas cercano no entra en el presupuesto"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--real-routes", action="store_true", help="usar ORS")
@@ -104,6 +113,8 @@ def main() -> int:
     fallos_por_check: Counter[str] = Counter()
     cumplidos = 0
     recomendaciones = 0
+    total_dias = 0
+    motivos_consejo: Counter[str] = Counter()
     marginales: list[float] = []
     total_paradas = 0
     inventados = 0
@@ -122,6 +133,14 @@ def main() -> int:
 
             reporte = check_all(itinerario, caso.constraints, ids)
             total_paradas += itinerario.total_stops
+            total_dias += len(itinerario.days)
+
+            # Los consejos los emite el motor y no el comprobador: aqui solo
+            # se cuentan, para separar "no hay restaurantes" de "los hay pero
+            # no entran en el presupuesto". Son cosas distintas y la segunda
+            # se arregla subiendo un limite.
+            for consejo in itinerario.advice:
+                motivos_consejo[_motivo(consejo.detail)] += 1
             marginales.extend(marginal_stop_cost(itinerario))
 
             for fallo in reporte.failures:
@@ -147,16 +166,27 @@ def main() -> int:
 
     print(f"\n{'=' * 60}")
     print(
-        f"Cumplen TODAS sus restricciones: {cumplidos}/{len(casos)} "
+        f"Cumplen todos sus LIMITES DUROS: {cumplidos}/{len(casos)} "
         f"({cumplidos / len(casos):.0%})"
     )
     print(f"Paradas generadas: {total_paradas}")
     print(f"Lugares inventados: {inventados}")
 
-    if fallos_por_check:
-        print("\nFallos por comprobacion:")
-        for check, cuantos in fallos_por_check.most_common():
+    duros = {k: v for k, v in fallos_por_check.items() if k not in SOFT_CHECKS}
+    if duros:
+        print("\nLimites incumplidos:")
+        for check, cuantos in sorted(duros.items(), key=lambda kv: -kv[1]):
             print(f"  {check:<24} {cuantos:>4}")
+    else:
+        print("\nNingun limite duro incumplido.")
+
+    if total_dias:
+        print(
+            f"\nDias con recomendacion de llevar comida: {recomendaciones}"
+            f" de {total_dias} ({recomendaciones / total_dias:.0%})"
+        )
+        for motivo, cuantos in sorted(motivos_consejo.items(), key=lambda kv: -kv[1]):
+            print(f"  {motivo:<28} {cuantos:>4}")
 
     if marginales:
         print(
