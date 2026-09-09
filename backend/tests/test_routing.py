@@ -43,10 +43,11 @@ def lugar(nombre, lat, lon, categoria=Category.attraction) -> PlaceHit:
 
 
 class RespuestaFalsa:
-    def __init__(self, status_code=200, payload=None, text=""):
+    def __init__(self, status_code=200, payload=None, text="", headers=None):
         self.status_code = status_code
         self._payload = payload or {}
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         return self._payload
@@ -406,3 +407,88 @@ class TestMotorConRutasReales:
         )
         con_rutas_reales = build_days(candidatos, restricciones, lejos)
         assert len(con_rutas_reales[0]) == 1, "por carretera no caben"
+
+
+# --------------------------------------------------------------------------
+# Presupuesto diario
+# --------------------------------------------------------------------------
+
+
+class TestDailyQuota:
+    def test_deja_gastar_hasta_el_techo(self):
+        cupo = routing.DailyQuota(3)
+        assert [cupo.try_spend() for _ in range(4)] == [True, True, True, False]
+        assert cupo.remaining == 0
+
+    def test_el_encabezado_del_servidor_manda_sobre_la_cuenta_propia(self):
+        """Tras un reinicio nuestra cuenta esta en cero y la de ORS no."""
+        cupo = routing.DailyQuota(45)
+        assert cupo.remaining == 45
+
+        cupo.sync_with_server(2)
+        assert cupo.remaining == 2
+
+    def test_no_gasta_si_el_servidor_dice_que_no_queda(self):
+        cupo = routing.DailyQuota(45)
+        cupo.sync_with_server(0)
+        assert cupo.try_spend() is False
+
+    def test_un_encabezado_ausente_no_rompe_la_cuenta(self):
+        cupo = routing.DailyQuota(5)
+        cupo.sync_with_server(None)
+        assert cupo.remaining == 5
+
+    def test_la_ventana_es_deslizante(self, monkeypatch):
+        """A las 24 horas de una llamada, esa llamada deja de contar."""
+        cupo = routing.DailyQuota(2)
+        reloj = {"t": 1000.0}
+        monkeypatch.setattr(routing._time, "monotonic", lambda: reloj["t"])
+
+        assert cupo.try_spend() and cupo.try_spend()
+        assert cupo.try_spend() is False
+
+        reloj["t"] += routing.DailyQuota.WINDOW_SECONDS + 1
+        assert cupo.try_spend() is True
+
+
+class TestClienteConPresupuesto:
+    def test_el_cliente_deja_de_llamar_al_agotar_el_presupuesto(self, monkeypatch):
+        llamadas = {"n": 0}
+
+        def post_falso(url, json, headers, timeout):
+            llamadas["n"] += 1
+            return RespuestaFalsa(200, {"distances": [[0, 1]], "durations": [[0, 60]]})
+
+        monkeypatch.setattr(routing.httpx, "post", post_falso)
+        cliente = ORSClient("llave", min_interval_seconds=0, daily_budget=2)
+
+        cliente.matrix([SAN_SALVADOR, SANTA_ANA], "driving-car")
+        cliente.matrix([SAN_SALVADOR, SANTA_ANA], "driving-car")
+        with pytest.raises(routing.ORSBudgetExhausted):
+            cliente.matrix([SAN_SALVADOR, SANTA_ANA], "driving-car")
+
+        assert llamadas["n"] == 2, "la tercera no debio salir a la red"
+
+    def test_lee_el_cupo_restante_del_encabezado(self, monkeypatch):
+        respuesta = RespuestaFalsa(200, {"distances": [[0]], "durations": [[0]]})
+        respuesta.headers = {"x-ratelimit-remaining": "7"}
+        monkeypatch.setattr(
+            routing.httpx, "post", lambda url, json, headers, timeout: respuesta
+        )
+
+        cliente = ORSClient("llave", min_interval_seconds=0, daily_budget=45)
+        cliente.matrix([SAN_SALVADOR], "driving-car")
+
+        assert cliente.quota.remaining == 7
+
+    def test_el_presupuesto_agotado_degrada_a_estimacion(self):
+        """Sin cupo el itinerario sale igual, con distancias aproximadas."""
+        lugares = [lugar(f"L{i}", 13.7 + i * 0.01, -89.2) for i in range(3)]
+        cliente = ClienteFalso(falla_con=routing.ORSBudgetExhausted("sin presupuesto"))
+
+        matriz = load_travel_matrix(lugares, "driving", client=cliente)
+
+        assert matriz.stats.fetched == 0
+        assert matriz.stats.estimated == 3 * 2
+        km, minutos = matriz.between(lugares[0], lugares[1])
+        assert km > 0 and minutos > 0

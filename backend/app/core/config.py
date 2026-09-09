@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # Ritmo minimo entre llamadas a ORS. Controlar el ritmo en origen es mejor
     # que reintentar contra un limite que ya sabemos que existe.
     ors_min_interval_seconds: float = 1.5
+    # Techo propio de peticiones por ventana de 24 horas. El endpoint de matriz
+    # da 50; dejamos margen para poder calibrar o depurar sin quedarnos sin
+    # cupo para la demo. Al llegar al techo los traslados se estiman.
+    ors_daily_budget: int = 45
 
     @property
     def cors_origin_list(self) -> list[str]:

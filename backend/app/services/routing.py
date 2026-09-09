@@ -65,6 +65,70 @@ class ORSUnroutable(ORSError):
     """Alguno de los puntos no se pudo enganchar a la red de carreteras."""
 
 
+class ORSBudgetExhausted(ORSError):
+    """Se acabo el presupuesto que nos pusimos nosotros, antes del de ORS."""
+
+
+class DailyQuota:
+    """Cuenta cuantas peticiones llevamos en la ventana de 24 horas.
+
+    El espaciado del Pacer evita ir demasiado rapido pero no evita ir
+    demasiado lejos: cincuenta llamadas a un segundo y medio de distancia
+    agotan el cupo diario en poco mas de un minuto.
+
+    **La ventana es deslizante y no un contador que se pone en cero a
+    medianoche**, porque asi es como funciona ORS: el reinicio cae 24 horas
+    despues de la primera peticion, no a una hora fija, y esa ventana se va
+    corriendo dia a dia.
+
+    Vive en memoria, asi que un reinicio del proceso le borra la cuenta. Por
+    eso `sync_with_server` existe: la respuesta de ORS trae cuanto cupo queda
+    de verdad, y esa cifra manda sobre la nuestra. Al primer intento despues
+    de un reinicio volvemos a saber donde estamos parados.
+    """
+
+    WINDOW_SECONDS = 24 * 60 * 60
+
+    def __init__(self, budget: int) -> None:
+        self.budget = budget
+        self._lock = threading.Lock()
+        self._calls: list[float] = []
+        self._server_remaining: int | None = None
+
+    def _prune(self, ahora: float) -> None:
+        limite = ahora - self.WINDOW_SECONDS
+        self._calls = [t for t in self._calls if t > limite]
+
+    @property
+    def remaining(self) -> int:
+        with self._lock:
+            self._prune(_time.monotonic())
+            propio = max(0, self.budget - len(self._calls))
+        if self._server_remaining is None:
+            return propio
+        return min(propio, self._server_remaining)
+
+    def try_spend(self) -> bool:
+        """Reserva una peticion, o dice que no queda."""
+        with self._lock:
+            ahora = _time.monotonic()
+            self._prune(ahora)
+            if len(self._calls) >= self.budget:
+                return False
+            if self._server_remaining is not None and self._server_remaining <= 0:
+                return False
+            self._calls.append(ahora)
+            if self._server_remaining is not None:
+                self._server_remaining -= 1
+            return True
+
+    def sync_with_server(self, remaining: int | None) -> None:
+        """Ajusta la cuenta a lo que dice ORS, que es la cifra que manda."""
+        if remaining is None:
+            return
+        self._server_remaining = remaining
+
+
 class Pacer:
     """Espaciado minimo entre llamadas.
 
@@ -95,11 +159,13 @@ class ORSClient:
         base_url: str = "https://api.openrouteservice.org",
         min_interval_seconds: float = 1.5,
         timeout: float = 30.0,
+        daily_budget: int = 45,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.pacer = Pacer(min_interval_seconds)
+        self.quota = DailyQuota(daily_budget)
         self.request_count = 0
 
     def matrix(
@@ -126,6 +192,13 @@ class ORSClient:
         if destinations is not None:
             cuerpo["destinations"] = destinations
 
+        # El presupuesto se comprueba antes del espaciado: no tiene sentido
+        # esperar segundo y medio para descubrir que no ibamos a llamar.
+        if not self.quota.try_spend():
+            raise ORSBudgetExhausted(
+                f"presupuesto diario agotado ({self.quota.budget} peticiones)"
+            )
+
         self.pacer.wait()
         self.request_count += 1
 
@@ -142,6 +215,7 @@ class ORSClient:
         except httpx.HTTPError as exc:
             raise ORSError(f"no se pudo llamar a ORS: {exc}") from exc
 
+        self.quota.sync_with_server(_remaining_header(respuesta))
         self._raise_for_status(respuesta)
 
         datos = respuesta.json()
@@ -170,6 +244,19 @@ class ORSClient:
             raise ORSUnroutable(f"punto sin carretera cercana: {detalle}")
 
         raise ORSError(f"ORS respondio {respuesta.status_code}: {detalle}")
+
+
+def _remaining_header(respuesta) -> int | None:
+    """Cupo restante segun ORS, si lo informa.
+
+    Es la unica fuente fiable: nuestra cuenta se pierde al reiniciar el
+    proceso y no ve las peticiones que hizo otra instancia con la misma llave.
+    """
+    valor = respuesta.headers.get("x-ratelimit-remaining")
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -253,10 +340,10 @@ def fetch_edges(
 
             try:
                 distancias, duraciones = client.matrix(coords, profile, fuentes, destinos_idx)
-            except ORSQuotaExhausted:
+            except (ORSQuotaExhausted, ORSBudgetExhausted):
                 # El cupo no se recupera reintentando. Se corta aqui y lo que
                 # falte se estima.
-                logger.warning("cupo de ORS agotado, el resto se estima")
+                logger.warning("sin cupo para mas peticiones, el resto se estima")
                 return resultado
             except ORSError as exc:
                 logger.warning("bloque de matriz sin resolver, se estima: %s", exc)
@@ -425,6 +512,7 @@ def client_from_settings() -> ORSClient | None:
         api_key=settings.ors_api_key,
         base_url=settings.ors_base_url,
         min_interval_seconds=settings.ors_min_interval_seconds,
+        daily_budget=settings.ors_daily_budget,
     )
 
 
@@ -432,7 +520,9 @@ __all__ = [
     "SOURCE_ESTIMATED",
     "SOURCE_ORS",
     "MatrixStats",
+    "DailyQuota",
     "ORSAuthError",
+    "ORSBudgetExhausted",
     "ORSClient",
     "ORSError",
     "ORSQuotaExhausted",
