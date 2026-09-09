@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real
+.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real web web-build
 
 up:
 	docker compose up -d --build
@@ -49,3 +49,10 @@ evaluate:
 # Lo mismo con rutas reales de ORS. Gasta cupo: una peticion por caso.
 evaluate-real:
 	docker compose exec api python -m scripts.evaluate --real-routes
+
+# El frontend corre fuera de docker: recarga en caliente sin montar volumenes.
+web:
+	cd frontend && npm install && npm run dev
+
+web-build:
+	cd frontend && npm run build

@@ -32,6 +32,18 @@ class PlaceList(BaseModel):
     total: int
 
 
+class PlaceField(BaseModel):
+    """Las coordenadas del catalogo entero, sin nada mas.
+
+    Pares [lat, lon] en vez de objetos: con cinco mil seiscientos lugares, la
+    diferencia son cientos de kilobytes de nombres y categorias que el estado
+    vacio del mapa no dibuja.
+    """
+
+    points: list[list[float]]
+    total: int
+
+
 class CatalogStats(BaseModel):
     active: int
     downloaded: int

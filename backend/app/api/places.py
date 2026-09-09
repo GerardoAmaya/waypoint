@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.models import Category
-from app.schemas import CatalogStats, PlaceList, PlaceOut
+from app.schemas import CatalogStats, PlaceField, PlaceList, PlaceOut
 from app.services import places as servicio
 
 router = APIRouter(prefix="/places", tags=["places"])
@@ -100,6 +101,28 @@ def search(
 ) -> PlaceList:
     """Busca por nombre tolerando errores de escritura."""
     return _to_list(servicio.search_by_name(db, q, limit=limit))
+
+
+@router.get("/field", response_model=PlaceField)
+def field(db: Session = Depends(get_db)) -> PlaceField:
+    """Solo las coordenadas de todo el catalogo activo.
+
+    Alimenta el estado vacio del mapa: antes de que el usuario escriba nada, se
+    ven los lugares del pais como puntos tenues. No es decoracion, es una foto
+    del material disponible.
+
+    Van como pares [lat, lon] redondeados a cuatro decimales —unos once metros,
+    de sobra para un punto de dos pixeles— y no como objetos con nombre y
+    categoria. Con cinco mil seiscientos lugares, la diferencia entre un arreglo
+    de pares y un arreglo de objetos es de cientos de kilobytes que el cliente
+    no dibuja.
+    """
+    filas = db.execute(text("SELECT lat, lon FROM places WHERE is_active")).all()
+
+    return PlaceField(
+        points=[[round(f.lat, 4), round(f.lon, 4)] for f in filas],
+        total=len(filas),
+    )
 
 
 @router.get("/stats", response_model=CatalogStats)
