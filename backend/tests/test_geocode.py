@@ -7,7 +7,7 @@ cada punto. Una zona con el punto mal no tiene lugares y se nota enseguida.
 
 import pytest
 
-from app.services.geocode import ZONES, find_zone, zone_names
+from app.services.geocode import FOTOS, ZONES, find_zone, zone_names
 
 
 class TestResolucionDeZona:
@@ -87,6 +87,10 @@ class TestAnclaDelCatalogo:
         from app.services import geocode
 
         monkeypatch.setattr(geocode, "search_by_name", lambda *a, **k: hits)
+        # Estos casos son sobre el ancla de punto de interes, asi que el
+        # nomenclator se aisla: si no, resolveria "La Gran Via" por su cuenta y
+        # el test dejaria de comprobar lo que dice comprobar.
+        monkeypatch.setattr(geocode, "find_place_name", lambda *a, **k: None)
         return geocode.resolve_area(None, "La Gran Via")
 
     def test_descarta_un_restaurante_como_centro(self, monkeypatch):
@@ -131,3 +135,41 @@ class TestAnclaDelCatalogo:
         assert resultado is not None
         assert resultado.source == "zone"
         assert resultado.name == "Suchitoto"
+
+
+def test_las_zonas_con_foto_traen_credito_completo():
+    """Una foto de Commons sin autor ni licencia no se puede publicar.
+
+    El schema ya obliga los campos, pero nada impide dejarlos en blanco. Este
+    test es la garantia de que no se cuela una foto sin credito, que es un
+    incumplimiento de licencia y no un detalle de estilo.
+    """
+    con_foto = [z for z in ZONES if z.photo is not None]
+
+    # Si esto baja, alguien borro fotos sin querer.
+    assert len(con_foto) >= 18
+
+    for zona in con_foto:
+        assert zona.photo.file, f"{zona.key}: foto sin archivo"
+        assert zona.photo.author.strip(), f"{zona.key}: foto sin autor"
+        assert zona.photo.license.strip(), f"{zona.key}: foto sin licencia"
+        assert zona.photo.page.startswith("https://commons.wikimedia.org/"), (
+            f"{zona.key}: la pagina del credito tiene que apuntar a Commons"
+        )
+        # Un archivo de mapa en vez de una foto: es el error que ya ocurrio una
+        # vez, con el mapa de situacion del pais en lugar de Juayua.
+        assert not zona.photo.file.lower().endswith(".svg"), (
+            f"{zona.key}: {zona.photo.file} parece un mapa y no una foto"
+        )
+
+
+def test_el_area_del_catalogo_no_trae_foto():
+    """Solo las zonas del nomenclator tienen identidad propia.
+
+    Un ancla que salio de buscar por nombre es un lugar suelto del catalogo, y
+    ponerle la foto de una zona vecina seria afirmar algo que no se sabe.
+    """
+    assert all(z.photo is None or z.key in FOTOS for z in ZONES)
+    assert set(FOTOS) <= {z.key for z in ZONES}, (
+        "hay fotos con claves que no corresponden a ninguna zona"
+    )

@@ -37,6 +37,182 @@ class PlaceHit:
     tags: dict | None = None
 
 
+# Cocina en castellano. OSM la escribe en ingles y con guiones bajos, y
+# "regional;pupusa" es un valor perfectamente valido: hay que partirlo.
+_COCINAS = {
+    "pupusa": "pupusas",
+    "pupuseria": "pupusas",
+    "regional": "comida típica",
+    "local": "comida típica",
+    "latin_american": "latinoamericana",
+    "central_american": "centroamericana",
+    "mexican": "mexicana",
+    "italian": "italiana",
+    "pizza": "pizza",
+    "burger": "hamburguesas",
+    "chicken": "pollo",
+    "seafood": "mariscos",
+    "fish": "pescado",
+    "steak_house": "carnes",
+    "barbecue": "parrilla",
+    "grill": "parrilla",
+    "chinese": "china",
+    "japanese": "japonesa",
+    "sushi": "sushi",
+    "asian": "asiática",
+    "american": "americana",
+    "international": "internacional",
+    "coffee_shop": "café",
+    "cafe": "café",
+    "bakery": "panadería",
+    "ice_cream": "helados",
+    "dessert": "postres",
+    "sandwich": "sándwiches",
+    "breakfast": "desayunos",
+    "vegetarian": "vegetariana",
+    "vegan": "vegana",
+    "spanish": "española",
+    "peruvian": "peruana",
+    "argentinian": "argentina",
+    "brazilian": "brasileña",
+    "french": "francesa",
+    "indian": "india",
+    "thai": "tailandesa",
+    "turkish": "turca",
+    "greek": "griega",
+}
+
+
+# "regional" y "local" son ciertos y no dicen nada. Cuando vienen junto a algo
+# concreto —y "regional;pupusa" es de los valores mas frecuentes del catalogo—
+# manda lo concreto: "pupusas" ayuda a elegir donde almorzar y "comida tipica"
+# no.
+_COCINAS_GENERICAS = frozenset({"regional", "local"})
+
+
+def cocina_legible(tags: dict | None) -> str | None:
+    """La cocina de un comedor, en castellano y en una sola etiqueta.
+
+    Solo traduce lo que conoce, en vez de mostrar el valor crudo de OSM: una
+    etiqueta que diga "steak_house" delata la fuente y no ayuda a nadie.
+    """
+    if not tags:
+        return None
+    crudo = tags.get("cuisine")
+    if not crudo:
+        return None
+
+    generica: str | None = None
+    for parte in str(crudo).replace(",", ";").split(";"):
+        clave = parte.strip().lower().replace(" ", "_")
+        if clave not in _COCINAS:
+            continue
+        if clave in _COCINAS_GENERICAS:
+            generica = generica or _COCINAS[clave]
+        else:
+            return _COCINAS[clave]
+    return generica
+
+
+def altitud_m(tags: dict | None) -> int | None:
+    """La altitud en metros, si OSM la trae y es un numero creible.
+
+    El valor de `ele` es texto libre: llega "1965", "1965 m" y alguna vez algo
+    que no es un numero. El punto mas alto de El Salvador son 2.730 m, asi que
+    cualquier cosa por encima es un error de captura y no un dato.
+    """
+    if not tags:
+        return None
+    crudo = str(tags.get("ele") or "").strip().lower().removesuffix("m").strip()
+    try:
+        valor = round(float(crudo.replace(",", ".")))
+    except ValueError:
+        return None
+    return valor if 0 <= valor <= 2800 else None
+
+
+def contacto(tags: dict | None, campo: str) -> str | None:
+    """Telefono o sitio web. OSM los escribe con y sin el prefijo contact:.
+
+    Cuando hay varios se manda el primero: tres numeros no caben en el panel y
+    el primero es el que la gente pone de principal.
+
+    El separador oficial de OSM es el punto y coma, pero en telefonos aparece
+    la coma con la misma frecuencia —"2121-2828, 2312-7228"— y sin partirla se
+    mostrarian los dos numeros pegados como si fueran uno. En las direcciones
+    web no se parte por coma: es un caracter valido en una URL y partir ahi
+    romperia el enlace.
+    """
+    if not tags:
+        return None
+    valor = tags.get(campo) or tags.get(f"contact:{campo}")
+    if not valor:
+        return None
+
+    texto = str(valor)
+    if campo == "phone":
+        texto = texto.replace(",", ";")
+    return texto.split(";")[0].strip() or None
+
+
+# Nexos que en un nombre propio castellano van en minuscula salvo al principio.
+#
+# Solo nexos, NO articulos: en el nombre de un negocio el articulo es parte del
+# nombre —"Restaurante El Amate" y no "Restaurante el Amate"— mientras que "de"
+# y "y" nunca se escriben en mayuscula en medio.
+_NEXOS = frozenset(
+    {"a", "al", "con", "de", "del", "e", "en", "o", "para", "por", "sin", "sobre", "u", "y"}
+)
+
+
+def _es_sigla(palabra: str) -> bool:
+    """Si una palabra corta en mayusculas parece sigla y no palabra.
+
+    La longitud sola no sirve: "DON" tiene tres letras y es una palabra. Sin
+    vocales no se puede pronunciar, y eso si distingue "SV" o "TV" de "DON".
+    """
+    return 2 <= len(palabra) <= 3 and palabra.isalpha() and not set(palabra) & set("AEIOU")
+
+
+def nombre_legible(nombre: str) -> str:
+    """El nombre del lugar como se muestra, no como lo escribio OSM.
+
+    OSM es texto libre y en el catalogo cargado hay 55 nombres enteros en
+    mayusculas, 17 que terminan en puntuacion y algunos con espacios dobles.
+    Puestos en un itinerario se leen como un grito o como un error: en una
+    captura real salio "COMIDA A LA VISTA Y PUPUSERIA." entre paradas normales.
+
+    **Se corrige al mostrar y no en el catalogo.** El catalogo guarda lo que
+    dice OSM, que es la fuente; reescribirlo ahi perderia el original y haria
+    que una recarga del catalogo deshiciera el arreglo.
+
+    **Solo se rebaja lo que es seguro.** Una palabra sola en mayusculas puede
+    ser una sigla —ISEADE-FEPADE, ANDEN— y convertirla en "Iseade-Fepade"
+    empeora el nombre en vez de arreglarlo, asi que se rebaja unicamente cuando
+    hay dos palabras o mas. Dentro del nombre, una palabra corta se conserva en
+    mayusculas solo si no tiene vocales: "SV" se queda y "DON" no, porque la
+    longitud sola confundia siglas con palabras.
+    """
+    limpio = " ".join(nombre.split()).rstrip(".,;:")
+
+    palabras = limpio.split(" ")
+    if len(palabras) > 1 and limpio == limpio.upper():
+        salida = []
+        for indice, palabra in enumerate(palabras):
+            bajado = palabra.lower()
+            # El nexo se comprueba ANTES de la sigla: "Y" no tiene vocales y la
+            # prueba de sigla la daba por buena, asi que quedaba "Cafe Y Pan".
+            if indice > 0 and bajado in _NEXOS:
+                salida.append(bajado)
+            elif indice > 0 and _es_sigla(palabra):
+                salida.append(palabra)
+            else:
+                salida.append(bajado.capitalize())
+        limpio = " ".join(salida)
+
+    return limpio or nombre
+
+
 def _row_to_hit(row) -> PlaceHit:
     return PlaceHit(
         id=row.id,

@@ -15,11 +15,17 @@ import L from "leaflet";
 export class FieldLayer extends L.Layer {
   private canvas: HTMLCanvasElement | null = null;
   private puntos: [number, number][];
+  private color: string;
   private _opacidad = 1;
 
-  constructor(puntos: [number, number][]) {
+  /**
+   * El color llega de afuera y no sale de un literal: lo resuelve Mapa desde
+   * el CSS, que es la fuente unica de los materiales del proyecto.
+   */
+  constructor(puntos: [number, number][], color: string) {
     super();
     this.puntos = puntos;
+    this.color = color;
   }
 
   onAdd(map: L.Map): this {
@@ -42,6 +48,19 @@ export class FieldLayer extends L.Layer {
     this.canvas?.remove();
     this.canvas = null;
     return this;
+  }
+
+  /**
+   * Cambia el color de los puntos.
+   *
+   * Lo pide el cambio de fondo: sobre el mapa dibujado, que es claro, el punto
+   * tiene que ser tinta; sobre la foto de satelite, que es oscura, la tinta
+   * desaparece y hace falta un punto claro. No es el tema quien decide esto
+   * —el mapa no sigue al tema— sino la capa de teselas que este puesta.
+   */
+  setColor(color: string): void {
+    this.color = color;
+    this.redibujar();
   }
 
   /**
@@ -80,9 +99,10 @@ export class FieldLayer extends L.Layer {
     // a escala de pueblo tienen que seguir siendo fondo, no competencia.
     const zoom = map.getZoom();
     const radio = Math.max(0.6, Math.min(2.2, (zoom - 6) * 0.32));
-    // Tinta sobre el mapa claro. Antes eran puntos claros sobre mapa oscuro;
-    // con el mapa natural, un punto claro desaparece sobre cualquier calle.
-    ctx.fillStyle = "rgba(31, 36, 41, 0.34)";
+    // El color lo pone quien crea la capa y lo cambia setColor: depende del
+    // fondo que este puesto, no del tema.
+    ctx.globalAlpha = 0.34;
+    ctx.fillStyle = this.color;
 
     const margen = 8;
     for (const [lat, lon] of this.puntos) {

@@ -20,6 +20,7 @@ marcado como tal. Un itinerario con distancias aproximadas sirve; un error
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time as _time
@@ -244,6 +245,61 @@ class ORSClient:
         ]
         return distancias, duraciones
 
+    def directions(
+        self, coords: list[tuple[float, float]], profile: str
+    ) -> list[tuple[float, float]]:
+        """El trazo por carretera que une los puntos, en el orden dado.
+
+        Una peticion cubre el dia entero: ORS acepta varias paradas y devuelve
+        una sola geometria que las recorre en orden. Pedir tramo por tramo
+        costaria una peticion por tramo y el presupuesto diario no lo aguanta.
+
+        Devuelve los vertices en (lat, lon), que es el orden del proyecto. ORS
+        habla (lon, lat) en las dos direcciones —entrada y salida—, asi que hay
+        dos inversiones y ninguna es opcional. Es el error mas comun contra
+        esta API y no da fallo: devuelve una ruta plausible en el oceano Indico.
+        """
+        if len(coords) < 2:
+            return []
+
+        if not self.quota.try_spend():
+            raise ORSBudgetExhausted(
+                f"presupuesto diario agotado ({self.quota.budget} peticiones)"
+            )
+
+        self.pacer.wait()
+        self.request_count += 1
+
+        try:
+            respuesta = httpx.post(
+                f"{self.base_url}/v2/directions/{profile}/geojson",
+                json={"coordinates": [[lon, lat] for lat, lon in coords]},
+                headers={
+                    "Authorization": self.api_key,
+                    "Content-Type": "application/json",
+                },
+                timeout=self.timeout,
+            )
+        except httpx.HTTPError as exc:
+            raise ORSError(f"no se pudo llamar a ORS: {exc}") from exc
+
+        self.quota.sync_with_server(_remaining_header(respuesta))
+        self._raise_for_status(respuesta)
+
+        datos = respuesta.json()
+        rasgos = datos.get("features") or []
+        if not rasgos:
+            return []
+
+        vertices = ((rasgos[0].get("geometry") or {}).get("coordinates")) or []
+        # Se leen solo las coordenadas y ningun otro campo de la respuesta a
+        # proposito: partir el trazo por tramos se hace despues, buscando el
+        # vertice mas cercano a cada parada. ORS publica indices de waypoint
+        # que servirian, pero depender de ellos ata el dibujo a un campo mas
+        # de un formato que ya cambio una vez, y el vertice mas cercano da lo
+        # mismo porque ORS engancha cada parada a la red vial.
+        return [(lat, lon) for lon, lat in vertices if lon is not None]
+
     def _raise_for_status(self, respuesta: httpx.Response) -> None:
         if respuesta.status_code == 200:
             return
@@ -428,6 +484,51 @@ def _cell(matriz: list[list[float | None]], i: int, j: int) -> float | None:
         return None
 
 
+def split_by_stops(
+    trazo: list[tuple[float, float]], paradas: list[tuple[float, float]]
+) -> list[list[tuple[float, float]]]:
+    """Parte el trazo del dia en un tramo por cada par de paradas consecutivas.
+
+    Cada parada se ancla al vertice del trazo mas cercano a ella. Funciona
+    porque el enrutador engancha cada parada a la red vial: el vertice mas
+    cercano a la parada *es* su punto de entrada a la ruta.
+
+    **Los anclajes se buscan hacia adelante y nunca retroceden.** Un trazo que
+    pasa dos veces por el mismo cruce —ir y volver por la misma calle, que en
+    un dia de montana es lo normal— tiene dos vertices casi identicos, y
+    buscar el minimo global le asignaria a la tercera parada un vertice del
+    principio. El tramo saldria vacio o del reves.
+
+    Devuelve una lista de len(paradas) - 1 tramos. Un tramo puede salir vacio
+    si el trazo no alcanza a cubrirlo, y quien dibuja tiene que aguantarlo.
+    """
+    if len(paradas) < 2 or len(trazo) < 2:
+        return [[] for _ in range(max(0, len(paradas) - 1))]
+
+    def cuadrado(a: tuple[float, float], b: tuple[float, float]) -> float:
+        return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
+
+    indices: list[int] = []
+    desde = 0
+    for numero, parada in enumerate(paradas):
+        # La ultima parada ancla al final del trazo: es donde termina la ruta
+        # que se pidio, y buscarla por cercania podria dejar fuera la cola.
+        if numero == len(paradas) - 1:
+            indices.append(len(trazo) - 1)
+            break
+
+        mejor = min(range(desde, len(trazo)), key=lambda i: cuadrado(trazo[i], parada))
+        indices.append(mejor)
+        desde = mejor
+
+    tramos = []
+    for inicio, fin in zip(indices, indices[1:], strict=False):
+        # +1 para que el tramo incluya su vertice final: dos tramos
+        # consecutivos comparten la parada que los une y el trazo no se corta.
+        tramos.append(trazo[inicio : fin + 1] if fin > inicio else [])
+    return tramos
+
+
 def load_travel_matrix(
     places: list,
     mode: str = "driving",
@@ -563,6 +664,190 @@ def persist_edges(
     return len(valores)
 
 
+# Tolerancia de simplificacion del trazo, en grados.
+#
+# La geometria se guarda entera y se simplifica al servirla: la peticion es lo
+# caro, asi que la cache tiene que quedarse con la mejor version disponible y
+# la tolerancia poder cambiar sin volver a pedir nada.
+#
+# Medido sobre un tramo real de 18 km entre Ataco y Juayua, 451 vertices:
+#
+#     tolerancia  vertices     KB   desvio   px a z14   px a z16
+#        0.00002       224    5.4      2 m        0.2        1.0
+#        0.00005       132    3.2      6 m        0.6        2.4
+#        0.00010        88    2.1     11 m        1.2        4.7
+#        0.00050        39    0.9     54 m        5.8       23.2
+#
+# El trazo se dibuja con 3.5 px de grosor, asi que por debajo de un par de
+# pixeles de desvio no hay nada que ver. En 0.00005 el trazo pesa un tercio y
+# se separa de la carretera menos de lo que mide su propia linea hasta zoom 16,
+# que es donde el mapa trabaja: encuadra los dias como maximo a 14 y vuela a 16
+# al elegir una parada.
+SIMPLIFY_TOLERANCE_DEG = 0.00005
+
+
+def read_cached_geometry(
+    db, place_ids: list[uuid.UUID], profile: str
+) -> dict[tuple[uuid.UUID, uuid.UUID], list[tuple[float, float]]]:
+    """Los trazos ya guardados entre estos lugares, simplificados al servir.
+
+    ST_Simplify trabaja en grados sobre 4326, que es la unidad en la que se
+    calibro la tolerancia. Devuelve (lat, lon) porque es el orden del proyecto;
+    PostGIS entrega (lon, lat) como manda GeoJSON.
+    """
+    from sqlalchemy import text
+
+    filas = db.execute(
+        text("""
+            SELECT origin_id, destination_id,
+                   ST_AsGeoJSON(ST_Simplify(geometry, :tol)) AS trazo
+            FROM route_legs
+            WHERE profile = :profile
+              AND origin_id = ANY(:ids)
+              AND destination_id = ANY(:ids)
+        """),
+        {"tol": SIMPLIFY_TOLERANCE_DEG, "profile": profile, "ids": list(place_ids)},
+    ).all()
+
+    salida: dict[tuple[uuid.UUID, uuid.UUID], list[tuple[float, float]]] = {}
+    for fila in filas:
+        if not fila.trazo:
+            continue
+        coords = json.loads(fila.trazo).get("coordinates") or []
+        if len(coords) >= 2:
+            salida[(fila.origin_id, fila.destination_id)] = [(lat, lon) for lon, lat in coords]
+    return salida
+
+
+def persist_geometry(
+    db,
+    trazos: dict[tuple[uuid.UUID, uuid.UUID], list[tuple[float, float]]],
+    profile: str,
+) -> int:
+    """Guarda el trazo de cada tramo en route_legs.
+
+    No depende de que la distancia del par este medida. ORS mide el cupo por
+    endpoint —observado en vivo: la matriz agotada y direcciones contestando—
+    asi que un tramo puede tener trazo real y distancia estimada. Cuando esto
+    era una columna de travel_edges, ese caso no se podia guardar y el trazo se
+    volvia a pedir en cada consulta.
+    """
+    from sqlalchemy import text
+
+    escritas = 0
+    for (origen, destino), trazo in trazos.items():
+        if len(trazo) < 2:
+            continue
+        wkt = "LINESTRING(" + ",".join(f"{lon} {lat}" for lat, lon in trazo) + ")"
+        resultado = db.execute(
+            text("""
+                INSERT INTO route_legs
+                    (origin_id, destination_id, profile, geometry)
+                VALUES
+                    (:origen, :destino, :profile, ST_GeomFromText(:wkt, 4326))
+                ON CONFLICT (origin_id, destination_id, profile) DO NOTHING
+            """),
+            {"wkt": wkt, "origen": origen, "destino": destino, "profile": profile},
+        )
+        escritas += resultado.rowcount or 0
+
+    if escritas:
+        db.commit()
+    return escritas
+
+
+@dataclass
+class GeometryStats:
+    """De donde salio el trazo de cada tramo."""
+
+    cached: int = 0
+    fetched: int = 0
+    straight: int = 0
+    requests: int = 0
+
+    @property
+    def real_ratio(self) -> float:
+        total = self.cached + self.fetched + self.straight
+        return (self.cached + self.fetched) / total if total else 0.0
+
+
+def load_route_geometry(
+    days: list[list],
+    mode: str = "driving",
+    *,
+    db=None,
+    client: ORSClient | None = None,
+) -> tuple[dict[tuple[uuid.UUID, uuid.UUID], list[tuple[float, float]]], GeometryStats]:
+    """El trazo por carretera de cada tramo del itinerario.
+
+    `days` es una lista de dias, cada uno con sus lugares ya ordenados. Se
+    pide **una peticion por dia**: ORS acepta varias paradas y devuelve una
+    sola geometria que las recorre en orden, y despues se parte por tramos.
+    Pedir tramo por tramo multiplicaria el costo por el numero de tramos.
+
+    **La geometria cuesta aparte de la distancia.** La matriz cubre el
+    itinerario entero con una peticion; la geometria necesita una por dia. Un
+    itinerario de tres dias pasa de una peticion a cuatro, asi que la cache
+    importa mas aca que en la matriz: el trazo entre dos puntos fijos tampoco
+    cambia, y una zona ya recorrida no gasta nada.
+
+    Igual que la matriz, nunca falla: sin llave, sin cupo o con un dia que ORS
+    no puede enrutar, los tramos de ese dia se quedan sin trazo y quien dibuja
+    tira la linea recta. El degradado es por tramo y no por itinerario, que es
+    lo que permite decir la verdad de cada uno por separado.
+    """
+    profile = ORS_PROFILES.get(mode, ORS_PROFILES["driving"])
+    stats = GeometryStats()
+    trazos: dict[tuple[uuid.UUID, uuid.UUID], list[tuple[float, float]]] = {}
+
+    tramos = [(a.id, b.id) for dia in days for a, b in zip(dia, dia[1:], strict=False)]
+    if not tramos:
+        return trazos, stats
+
+    if db is not None:
+        ids = list({lugar.id for dia in days for lugar in dia})
+        trazos = {
+            par: trazo
+            for par, trazo in read_cached_geometry(db, ids, profile).items()
+            if par in set(tramos)
+        }
+        stats.cached = len(trazos)
+
+    if client is not None:
+        antes = client.request_count
+        nuevos: dict[tuple[uuid.UUID, uuid.UUID], list[tuple[float, float]]] = {}
+
+        for dia in days:
+            pares = list(zip(dia, dia[1:], strict=False))
+            # Un dia entero ya en cache no se vuelve a pedir. Se comprueba el
+            # dia completo y no tramo por tramo porque la peticion es del dia:
+            # si falta un solo tramo hay que pedirlo igual.
+            if len(dia) < 2 or all((a.id, b.id) in trazos for a, b in pares):
+                continue
+
+            try:
+                trazo = client.directions([(p.lat, p.lon) for p in dia], profile)
+            except (ORSError, ORSBudgetExhausted) as exc:
+                logger.info("sin geometria para un dia: %s", exc)
+                continue
+
+            for (a, b), tramo in zip(
+                pares, split_by_stops(trazo, [(p.lat, p.lon) for p in dia]), strict=False
+            ):
+                if len(tramo) >= 2:
+                    nuevos[(a.id, b.id)] = tramo
+
+        stats.fetched = len(nuevos)
+        stats.requests = client.request_count - antes
+        trazos.update(nuevos)
+
+        if db is not None and nuevos:
+            persist_geometry(db, nuevos, profile)
+
+    stats.straight = len(tramos) - len(trazos)
+    return trazos, stats
+
+
 @lru_cache(maxsize=1)
 def client_from_settings() -> ORSClient | None:
     """Cliente compartido por todo el proceso, o None si no hay llave.
@@ -594,6 +879,7 @@ def client_from_settings() -> ORSClient | None:
 __all__ = [
     "SOURCE_ESTIMATED",
     "SOURCE_ORS",
+    "GeometryStats",
     "MatrixStats",
     "DailyQuota",
     "ORSAuthError",
@@ -605,6 +891,11 @@ __all__ = [
     "Pacer",
     "TravelMatrix",
     "client_from_settings",
+    "SIMPLIFY_TOLERANCE_DEG",
     "fetch_edges",
+    "load_route_geometry",
     "load_travel_matrix",
+    "persist_geometry",
+    "read_cached_geometry",
+    "split_by_stops",
 ]

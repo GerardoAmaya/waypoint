@@ -171,6 +171,59 @@ class TestArmadoDeDias:
         restricciones = Constraints(days=5, center_lat=13.70, center_lon=-89.22)
         assert len(build_days(candidatos, restricciones)) == 1
 
+    def test_prefiere_variar_la_categoria_dentro_del_dia(self):
+        """Repetir categoria cuesta kilometros, asi que un dia no sale monotono.
+
+        El llenado del dia ordenaba solo por distancia a la semilla, y como los
+        lugares de una misma categoria estan agrupados en el terreno, un dia
+        sembrado con un cerro se llenaba de cerros. Medido sobre los casos de
+        evaluacion: el 45% de los dias tenian tres o mas paradas seguidas de la
+        misma categoria.
+
+        Aca la semilla es naturaleza, hay dos naturalezas pegadas a ella y una
+        cultura un poco mas lejos. Sin penalizacion entrarian las dos
+        naturalezas; con ella, la cultura le gana el sitio a la segunda.
+        """
+        candidatos = [
+            # La semilla: la de mejor calidad manda en el orden inicial.
+            lugar("Cerro semilla", 13.70, -89.22, Category.nature, 0.9),
+            lugar("Cerro vecino", 13.7010, -89.22, Category.nature, 0.5),
+            lugar("Otro cerro", 13.7020, -89.22, Category.nature, 0.5),
+            # Mas lejos que los cerros, pero de otra categoria.
+            lugar("Iglesia", 13.7060, -89.22, Category.culture, 0.5),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=3,
+            include_meals=False,
+        )
+        categorias = [p.category for p in build_days(candidatos, restricciones)[0]]
+
+        assert Category.culture.value in categorias, f"el dia salio monotono: {categorias}"
+
+    def test_sin_alternativa_el_dia_se_llena_igual(self):
+        """La penalizacion es un desempate, no un filtro.
+
+        Donde el catalogo solo tiene una clase de lugar —Perquin, Costa del
+        Sol— el dia tiene que salir de esa clase. Filtrar por categoria
+        repetida dejaria esos dias a medio llenar, que es peor que un dia
+        monotematico.
+        """
+        candidatos = [
+            lugar(f"Cerro {i}", 13.70 + i * 0.002, -89.22, Category.nature, 0.5)
+            for i in range(6)
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=4,
+            include_meals=False,
+        )
+        assert len(build_days(candidatos, restricciones)[0]) == 4
+
     def test_prefiere_las_categorias_pedidas(self):
         candidatos = [
             lugar("Comun", 13.70, -89.22, Category.attraction, 0.5),

@@ -18,11 +18,27 @@ escritura con trigramas.
 from __future__ import annotations
 
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.places import PlaceHit, search_by_name
+
+
+@dataclass(frozen=True)
+class ZonePhoto:
+    """Una foto libre de la zona, con lo que su licencia obliga a mostrar.
+
+    `author` y `license` no son opcionales ni decorativos: las imagenes son de
+    Wikimedia Commons y sus licencias exigen credito. Guardarlos juntos evita
+    que se pueda usar la foto sin la atribucion por descuido.
+    """
+
+    file: str
+    author: str
+    license: str
+    page: str
 
 
 @dataclass(frozen=True)
@@ -35,12 +51,134 @@ class Zone:
     lon: float
     radius_m: int
     aliases: tuple[str, ...] = field(default=())
+    photo: ZonePhoto | None = None
+
+
+# Se resolvieron una vez contra Wikidata (P18) y Wikimedia Commons, y quedan
+# fijas. No se consultan en tiempo de ejecucion a proposito: son veinte valores
+# que no cambian, y una peticion por itinerario a un tercero solo agrega una
+# forma nueva de fallar. Dos zonas se quedaron sin foto libre y eso es correcto:
+# la interfaz omite la imagen en vez de inventarla.
+#
+# P18 en vez de la imagen destacada del articulo: la del articulo sale del
+# infobox y a veces es el mapa de situacion del pais. Juayua caia justo en ese
+# caso.
+FOTOS: dict[str, ZonePhoto] = {
+    "san-salvador": ZonePhoto(
+        file="World_Trade_Center_San_Salvador.jpg",
+        author="JMRAFFi",
+        license="CC BY-SA 4.0",
+        page="https://commons.wikimedia.org/wiki/File:World_Trade_Center_San_Salvador.jpg",
+    ),
+    "santa-ana": ZonePhoto(
+        file="ES_Santa_Ana_06_2011_2543.jpg",
+        author="Mariordo  (Mario Roberto Durán Ortiz)",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:ES_Santa_Ana_06_2011_2543.jpg",
+    ),
+    "ataco": ZonePhoto(
+        file="DESDE_EL_MIRADOR_DE_LA_CRUZ_EN_ATACO,_AHUACHAPAN_-_panoramio.jpg",
+        author="feinteriano",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:DESDE_EL_MIRADOR_DE_LA_CRUZ_EN_ATACO,_AHUACHAPAN_-_panoramio.jpg",
+    ),
+    "juayua": ZonePhoto(
+        file="PANORAMICA_PLAZA_CENTRAL_JUAYUA_1.jpg",
+        author="ClauH0288",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:PANORAMICA_PLAZA_CENTRAL_JUAYUA_1.jpg",
+    ),
+    "apaneca": ZonePhoto(
+        file="Apaneca_-_panoramio.jpg",
+        author="Roberto Alas",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:Apaneca_-_panoramio.jpg",
+    ),
+    "nahuizalco": ZonePhoto(
+        file="Iglesia_San_Juan_Bautista_Nahuizalco.JPG",
+        author="Efegé",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:Iglesia_San_Juan_Bautista_Nahuizalco.JPG",
+    ),
+    "suchitoto": ZonePhoto(
+        file="Iglesia_De_Suchitoto..JPG",
+        author="ElmerGuevara",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:Iglesia_De_Suchitoto..JPG",
+    ),
+    "sonsonate": ZonePhoto(
+        file="Catedral_de_Sonsonate.jpg",
+        author="Stvn87",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:Catedral_de_Sonsonate.jpg",
+    ),
+    "ahuachapan": ZonePhoto(
+        file="Ahuachapan_Parroquia_Nuestra_Señora_de_la_Asuncion.jpg",
+        author="YessicaGuerra19",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:Ahuachapan_Parroquia_Nuestra_Se%C3%B1ora_de_la_Asuncion.jpg",
+    ),
+    "la-libertad": ZonePhoto(
+        file="MALECON_DEL_PUERTO_DE_LA_LIBERTAD._-_panoramio.jpg",
+        author="feinteriano",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:MALECON_DEL_PUERTO_DE_LA_LIBERTAD._-_panoramio.jpg",
+    ),
+    "el-zonte": ZonePhoto(
+        file="El_Zonte_(01.2011)_-_panoramio.jpg",
+        author="Martin Haeusler",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:El_Zonte_(01.2011)_-_panoramio.jpg",
+    ),
+    "san-miguel": ZonePhoto(
+        file="San_Miguel_El_Salvador.png",
+        author="House1090",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:San_Miguel_El_Salvador.png",
+    ),
+    "metapan": ZonePhoto(
+        file="Iglesia_Colonial_Metapan.jpg",
+        author="Alex Martínez",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:Iglesia_Colonial_Metapan.jpg",
+    ),
+    "la-palma": ZonePhoto(
+        file="Entrada_de_La_Palma.JPG",
+        author="Beatriz Fortinez",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:Entrada_de_La_Palma.JPG",
+    ),
+    "alegria": ZonePhoto(
+        file="Alegría,_El_Salvador,_Iglesia_(12-2010)_-_panoramio.jpg",
+        author="Martin Haeusler",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:Alegr%C3%ADa,_El_Salvador,_Iglesia_(12-2010)_-_panoramio.jpg",
+    ),
+    "perquin": ZonePhoto(
+        file="A_street_view-PICT0024.jpg",
+        author="Jose Huwaidi",
+        license="CC BY-SA 4.0",
+        page="https://commons.wikimedia.org/wiki/File:A_street_view-PICT0024.jpg",
+    ),
+    "coatepeque": ZonePhoto(
+        file="Coatepeque_Vista1.jpg",
+        author="JMRAFFi",
+        license="CC BY 4.0",
+        page="https://commons.wikimedia.org/wiki/File:Coatepeque_Vista1.jpg",
+    ),
+    "cerro-verde": ZonePhoto(
+        file="Cerro_Verde_from_Santa_Ana_Volcano.jpg",
+        author="Dead.rabbit",
+        license="CC BY-SA 4.0",
+        page="https://commons.wikimedia.org/wiki/File:Cerro_Verde_from_Santa_Ana_Volcano.jpg",
+    ),
+}
 
 
 # Las coordenadas se comprueban contra el catalogo en los tests: una zona cuyo
 # punto este mal no va a tener lugares alrededor y el test lo canta. Es mas
 # fiable que revisarlas a ojo en un mapa.
-ZONES: tuple[Zone, ...] = (
+_ZONAS_SIN_FOTO: tuple[Zone, ...] = (
     Zone("san-salvador", "San Salvador", 13.6929, -89.2182, 15_000, ("capital",)),
     Zone("santa-ana", "Santa Ana", 13.9942, -89.5597, 25_000),
     Zone(
@@ -92,6 +230,11 @@ ZONES: tuple[Zone, ...] = (
 )
 
 
+# La foto se engancha por clave en vez de escribirse dentro de cada Zone: la
+# lista de zonas se lee de un tirón y las fotos se resolvieron aparte.
+ZONES: tuple[Zone, ...] = tuple(replace(z, photo=FOTOS.get(z.key)) for z in _ZONAS_SIN_FOTO)
+
+
 @dataclass
 class ResolvedArea:
     """Donde centrar la busqueda, y de donde salio ese punto."""
@@ -100,8 +243,12 @@ class ResolvedArea:
     lat: float
     lon: float
     radius_m: int
-    # "zone" si vino del nomenclator, "catalog" si de la busqueda por nombre.
+    # "zone" si salio de las zonas curadas, "gazetteer" si del nomenclator de
+    # OSM, "catalog" si de buscar un punto de interes por nombre.
     source: str
+    # Solo las zonas del nomenclator tienen foto. Un ancla que salio del
+    # catalogo es un lugar suelto y no una zona con identidad propia.
+    photo: ZonePhoto | None = None
 
 
 def _normalize(texto: str) -> str:
@@ -154,6 +301,83 @@ CATEGORIAS_NO_ANCLABLES = {"food", "lodging"}
 # se pide mas parecido que para buscar un punto en el mapa.
 MIN_SIMILARITY_ANCLA = 0.45
 
+# Lo mismo para el nomenclator, pero medido: hay dos mil seiscientos nombres, y
+# con umbral bajo cualquier palabra encuentra un barrio.
+#
+# El valor sale de mirar los dos extremos sobre los nombres cargados:
+#
+#     "Megicanos" -> "Mejicanos"     0.538   <- hay que aceptarlo
+#     "volcan"    -> "Volcancillo"   0.462   <- hay que rechazarlo
+#     "playa"     -> "Playa El Cuco" 0.429   <- hay que rechazarlo
+#
+# 0.50 cae en ese hueco: acepta el error de escritura plausible y deja fuera
+# las palabras genericas que se parecen a un topominmo por casualidad. El
+# margen contra "volcan" es de cuatro centesimas, asi que si se agregan
+# nombres al nomenclator conviene volver a medir estos tres casos.
+MIN_SIMILARITY_NOMENCLATOR = 0.50
+
+# Cuando un nombre existe en varios niveles a la vez —"San Salvador" es
+# departamento, municipio y ciudad— gana el mas especifico. El numero es el
+# rango: mas bajo es mas especifico.
+#
+# Es lo que la gente quiere decir: quien nombra "San Salvador" piensa en la
+# ciudad y no en los cuarenta kilometros de radio del departamento, y quien
+# quiere el departamento entero lo dice de otra forma. Entre iguales gana el
+# que tiene mas destinos cerca, que es el que mas probablemente sea el que
+# nombraron.
+ORDEN_NOMENCLATOR = {
+    "neighbourhood": 0,
+    "suburb": 1,
+    "admin8": 2,
+    "village": 3,
+    "town": 4,
+    "city": 5,
+    "admin6": 6,
+    "admin4": 7,
+}
+
+
+def find_place_name(db: Session, texto: str) -> ResolvedArea | None:
+    """Busca el texto en el nomenclator de nombres de lugar.
+
+    Tabla propia y no `places`: un nombre de lugar y un punto de interes son
+    cosas distintas, y meter dos mil seiscientos nombres de barrio a competir
+    por trigramas con los nombres de negocios haria peor las dos busquedas.
+
+    El radio sale del nomenclator y no de un valor por defecto: un departamento
+    y un barrio no se recorren igual.
+    """
+    # El orden de especificidad se arma desde la constante de Python para que
+    # no haya dos listas que mantener sincronizadas.
+    casos = " ".join(
+        f"WHEN '{kind}' THEN {rango}" for kind, rango in ORDEN_NOMENCLATOR.items()
+    )
+
+    fila = db.execute(
+        text(f"""
+            SELECT name, kind, lat, lon, radius_m,
+                   similarity(name, :texto) AS parecido,
+                   CASE kind {casos} ELSE 99 END AS especificidad
+            FROM place_names
+            WHERE is_active
+              AND similarity(name, :texto) >= :minimo
+            ORDER BY parecido DESC, especificidad ASC, destinations_nearby DESC
+            LIMIT 1
+        """),
+        {"texto": texto, "minimo": MIN_SIMILARITY_NOMENCLATOR},
+    ).first()
+
+    if fila is None:
+        return None
+
+    return ResolvedArea(
+        name=fila.name,
+        lat=fila.lat,
+        lon=fila.lon,
+        radius_m=fila.radius_m,
+        source="gazetteer",
+    )
+
 
 def resolve_area(
     db: Session, texto: str, *, default_radius_m: int = 15_000
@@ -182,7 +406,16 @@ def resolve_area(
             lon=zona.lon,
             radius_m=zona.radius_m,
             source="zone",
+            photo=zona.photo,
         )
+
+    # El nomenclator va antes que el catalogo: "Mejicanos" es un lugar donde
+    # la gente vive, y lo unico que el catalogo tiene con ese nombre son cuatro
+    # puestos de comida. Preguntar primero por nombres de lugar y despues por
+    # puntos de interes es el orden que responde lo que se pregunto.
+    del_nomenclator = find_place_name(db, texto)
+    if del_nomenclator is not None:
+        return del_nomenclator
 
     hits: list[PlaceHit] = search_by_name(
         db, texto, limit=8, min_similarity=MIN_SIMILARITY_ANCLA

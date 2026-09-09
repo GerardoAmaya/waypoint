@@ -79,10 +79,24 @@ def cliente(monkeypatch):
 
 
 class _SesionFalsa:
-    """Base minima: sin cache de traslados guardada y sin nada que escribir."""
+    """Base minima: sin cache de traslados guardada y sin nada que escribir.
+
+    El resultado falso trae `rowcount` ademas de `all` y `scalar` porque el
+    resultado real de execute() lo trae: persist_geometry lo lee para saber
+    cuantas aristas quedaron con su trazo, y un doble sin ese atributo hace
+    fallar el endpoint por una carencia del doble y no del codigo.
+    """
 
     def execute(self, *args, **kwargs):
-        return type("R", (), {"all": lambda _self: [], "scalar": lambda _self: None})()
+        return type(
+            "R",
+            (),
+            {
+                "all": lambda _self: [],
+                "scalar": lambda _self: None,
+                "rowcount": 0,
+            },
+        )()
 
     def commit(self):
         pass

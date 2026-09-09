@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real web web-build
+.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check
 
 up:
 	docker compose up -d --build
@@ -38,6 +38,15 @@ ors-warm:
 zones:
 	docker compose exec api python -m scripts.check_zones
 
+# Carga el nomenclator: departamentos, municipios, pueblos y barrios de OSM.
+# Es lo que hace que "vivo en Mejicanos" resuelva; sin el, el proyecto solo
+# conoce las veinte zonas escritas a mano.
+gazetteer:
+	docker compose exec api python -m scripts.load_gazetteer
+
+gazetteer-dry:
+	docker compose exec api python -m scripts.load_gazetteer --dry-run
+
 # Reaplica el filtro de calidad al catalogo cargado. No escribe sin --apply.
 refilter:
 	docker compose exec api python -m scripts.refilter_places
@@ -56,3 +65,7 @@ web:
 
 web-build:
 	cd frontend && npm run build
+
+# Las mismas tres comprobaciones que corre CI sobre el frontend.
+web-check:
+	cd frontend && npm run typecheck && npm run lint && npm run build

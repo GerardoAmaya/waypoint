@@ -1,9 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faArrowRight,
+  faCheck,
+  faCopy,
+  faTriangleExclamation,
+} from "@fortawesome/free-solid-svg-icons";
 
+import FotoZona from "./FotoZona";
 import Linea from "./Linea";
+import { itinerarioComoTexto } from "@/lib/texto";
 import type { Interpretation, Itinerary } from "@/lib/types";
 
 interface Props {
@@ -14,6 +23,8 @@ interface Props {
   onRevise: (mensaje: string) => Promise<void>;
   revising: boolean;
   reviseError: string | null;
+  selectedStop: string | null;
+  onSelectStop: (id: string | null) => void;
 }
 
 const FUENTE: Record<string, string> = {
@@ -42,8 +53,12 @@ export default function Panel({
   onRevise,
   revising,
   reviseError,
+  selectedStop,
+  onSelectStop,
 }: Props) {
   const [cambio, setCambio] = useState("");
+  const [copiado, setCopiado] = useState(false);
+  const pestanas = useRef<HTMLDivElement>(null);
 
   if (!itinerary || !itinerary.days.length) return null;
 
@@ -57,12 +72,77 @@ export default function Panel({
     setCambio("");
   };
 
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        itinerarioComoTexto(itinerary, interpretation),
+      );
+      setCopiado(true);
+      window.setTimeout(() => setCopiado(false), 2000);
+    } catch {
+      /* Sin permiso de portapapeles no hay nada que decirle al usuario que
+         pueda arreglar; el boton simplemente no confirma. */
+    }
+  };
+
+  /*
+    Flechas entre dias, que es como se navega un grupo de pestanas. Con solo
+    tabulador hay que pasar por cada dia para llegar al contenido, y con siete
+    dias eso son siete paradas antes del itinerario.
+  */
+  const teclaEnPestanas = (e: React.KeyboardEvent) => {
+    const paso = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!paso) return;
+    e.preventDefault();
+
+    const indice = itinerary.days.findIndex((d) => d.number === dia.number);
+    const siguiente =
+      itinerary.days[
+        (indice + paso + itinerary.days.length) % itinerary.days.length
+      ];
+    onSelectDay(siguiente.number);
+
+    // El foco sigue a la seleccion: si se queda atras, la flecha siguiente
+    // vuelve a partir del dia viejo.
+    const botones = pestanas.current?.querySelectorAll<HTMLButtonElement>(
+      '[role="tab"]',
+    );
+    botones?.[itinerary.days.indexOf(siguiente)]?.focus();
+  };
+
   return (
-    <section className="flex h-full flex-col bg-basalto text-tinta">
-      <header className="border-b border-basalto-borde px-6 pt-6 pb-4">
-        <h1 className="text-titulo leading-tight font-semibold tracking-tight">
-          {interpretation?.area?.name ?? "Tu itinerario"}
-        </h1>
+    <section className="flex h-full flex-col border-borde-lienzo bg-superficie text-tinta max-lg:border-t lg:border-r">
+      {interpretation?.area?.photo && (
+        <FotoZona
+          photo={interpretation.area.photo}
+          areaName={interpretation.area.name}
+        />
+      )}
+
+      <header className="border-b border-borde px-6 pt-6 pb-4 lg:pt-5">
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-titulo leading-tight font-semibold tracking-tight">
+            {interpretation?.area?.name ?? "Tu itinerario"}
+          </h1>
+
+          {/*
+            Copiar y no descargar: el plan termina en un chat o en una nota, y
+            un .txt en la carpeta de descargas del telefono no llega a ninguno
+            de los dos lados.
+          */}
+          <button
+            onClick={() => void copiar()}
+            className="mt-1 inline-flex shrink-0 items-center gap-1.5 rounded-md border border-borde-fuerte px-2.5 py-1.5 text-dato text-tinta-suave transition-colors hover:border-acento hover:text-tinta"
+          >
+            <FontAwesomeIcon
+              icon={copiado ? faCheck : faCopy}
+              aria-hidden
+              className="size-3"
+            />
+            {copiado ? "Copiado" : "Copiar"}
+          </button>
+        </div>
+
         <p className="mt-1 text-menudo text-tinta-suave">
           {itinerary.days.length} {itinerary.days.length === 1 ? "día" : "días"} ·{" "}
           {itinerary.total_stops} paradas
@@ -80,7 +160,7 @@ export default function Panel({
           que dejarlo creer que se tuvo en cuenta.
         */}
         {!!interpretation?.unmapped?.length && (
-          <p className="mt-3 border-l-2 border-anil-claro pl-3 text-menudo leading-relaxed text-tinta-suave">
+          <p className="mt-3 border-l-2 border-acento pl-3 text-menudo leading-relaxed text-tinta-suave">
             No supe cómo usar esto: {interpretation.unmapped.join(", ")}. El resto
             sí está aplicado.
           </p>
@@ -98,19 +178,28 @@ export default function Panel({
       </header>
 
       {itinerary.days.length > 1 && (
-        <nav
+        <div
+          ref={pestanas}
+          role="tablist"
           aria-label="Días del itinerario"
-          className="flex gap-1 border-b border-basalto-borde px-6 py-3"
+          onKeyDown={teclaEnPestanas}
+          className="flex gap-1 border-b border-borde px-6 py-3"
         >
           {itinerary.days.map((d) => {
             const activo = d.number === dia.number;
             return (
               <button
                 key={d.number}
+                role="tab"
+                id={`pestana-dia-${d.number}`}
+                aria-selected={activo}
+                aria-controls="panel-dia"
+                /* Un solo punto de tabulacion para el grupo entero: dentro se
+                   navega con flechas. Es el patron de pestanas de ARIA. */
+                tabIndex={activo ? 0 : -1}
                 onClick={() => onSelectDay(d.number)}
-                aria-current={activo ? "true" : undefined}
-                className={`relative rounded px-3 py-1.5 text-menudo transition-colors ${
-                  activo ? "text-niebla" : "text-tinta-suave hover:text-tinta"
+                className={`relative rounded-md px-3 py-1.5 text-menudo transition-colors ${
+                  activo ? "text-sobre-acento" : "text-tinta-suave hover:text-tinta"
                 }`}
               >
                 {/*
@@ -121,7 +210,7 @@ export default function Panel({
                 {activo && (
                   <motion.span
                     layoutId="dia-activo"
-                    className="absolute inset-0 z-0 rounded bg-anil-claro"
+                    className="absolute inset-0 z-0 rounded-md bg-acento"
                     transition={{ type: "spring", stiffness: 380, damping: 32 }}
                   />
                 )}
@@ -129,10 +218,17 @@ export default function Panel({
               </button>
             );
           })}
-        </nav>
+        </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div
+        id="panel-dia"
+        role={itinerary.days.length > 1 ? "tabpanel" : undefined}
+        aria-labelledby={
+          itinerary.days.length > 1 ? `pestana-dia-${dia.number}` : undefined
+        }
+        className="flex-1 overflow-y-auto px-6 py-6"
+      >
         <AnimatePresence mode="wait">
           <motion.div
             key={dia.number}
@@ -145,6 +241,9 @@ export default function Panel({
               day={dia}
               advice={itinerary.advice}
               violations={itinerary.violations}
+              mode={interpretation?.constraints?.mode ?? "driving"}
+              selectedStop={selectedStop}
+              onSelectStop={onSelectStop}
             />
           </motion.div>
         </AnimatePresence>
@@ -154,18 +253,20 @@ export default function Panel({
           .map((v, i) => (
             <p
               key={i}
-              className="mt-6 border-l-2 border-ocre pl-3 text-menudo text-tinta-suave"
+              className="mt-6 flex gap-2.5 border-l-2 border-aviso pl-3 text-menudo text-tinta-suave"
             >
-              {v.detail}
+              <FontAwesomeIcon
+                icon={faTriangleExclamation}
+                aria-hidden
+                className="mt-0.5 size-3 shrink-0 text-aviso"
+              />
+              <span>{v.detail}</span>
             </p>
           ))}
       </div>
 
-      <footer className="border-t border-basalto-borde px-6 py-4">
-        <label
-          htmlFor="revisar"
-          className="text-dato text-tinta-tenue"
-        >
+      <footer className="border-t border-borde px-6 py-4">
+        <label htmlFor="revisar" className="text-dato text-tinta-tenue">
           Cambiar el día {dia.number}
         </label>
         <div className="mt-2 flex gap-2">
@@ -178,18 +279,21 @@ export default function Panel({
             }}
             disabled={revising}
             placeholder="menos carro, o sacá el museo"
-            className="min-w-0 flex-1 rounded border border-basalto-borde bg-basalto-alto px-3 py-2 text-menudo text-tinta placeholder:text-tinta-tenue focus:border-anil-claro disabled:opacity-60"
+            className="min-w-0 flex-1 rounded-md border border-borde-fuerte bg-superficie-alta px-3 py-2 text-menudo text-tinta transition-colors placeholder:text-tinta-tenue focus:border-acento disabled:opacity-60"
           />
           <button
             onClick={() => void enviar()}
             disabled={revising || !cambio.trim()}
-            className="rounded bg-anil-claro px-4 py-2 text-menudo text-niebla transition-opacity disabled:opacity-40"
+            className="inline-flex items-center gap-2 rounded-md bg-acento px-4 py-2 text-menudo text-sobre-acento transition-opacity disabled:opacity-40"
           >
             {revising ? "Rehaciendo" : "Aplicar"}
+            {!revising && (
+              <FontAwesomeIcon icon={faArrowRight} aria-hidden className="size-3" />
+            )}
           </button>
         </div>
         {reviseError && (
-          <p className="mt-2 text-dato leading-relaxed text-ocre">{reviseError}</p>
+          <p className="mt-2 text-dato leading-relaxed text-aviso">{reviseError}</p>
         )}
       </footer>
     </section>

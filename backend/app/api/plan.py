@@ -29,6 +29,7 @@ from app.core.db import SessionLocal
 from app.core.ratelimit import Limit, RateLimiter, limiter_dependency
 from app.schemas import (
     AreaOut,
+    AreaPhotoOut,
     InterpretationOut,
     PlanMessage,
     ReviseRequest,
@@ -66,6 +67,16 @@ def _interpretation_payload(resultado) -> dict:
                 lon=resultado.area.lon,
                 radius_m=resultado.area.radius_m,
                 source=resultado.area.source,
+                photo=(
+                    AreaPhotoOut(
+                        file=resultado.area.photo.file,
+                        author=resultado.area.photo.author,
+                        license=resultado.area.photo.license,
+                        page=resultado.area.photo.page,
+                    )
+                    if resultado.area.photo
+                    else None
+                ),
             )
             if resultado.area
             else None
@@ -145,7 +156,8 @@ def _phase_payload(evento) -> dict:
     if isinstance(evento, motor.DraftReady):
         return _to_out(evento.itinerary, None).model_dump(mode="json")
 
-    return _to_out(evento.itinerary, evento.stats).model_dump(mode="json")
+    # Aca el evento ya es PlanReady: la rama de arriba se llevo el borrador.
+    return _to_out(evento.itinerary, evento.stats, evento.geometry).model_dump(mode="json")
 
 
 @router.post("", dependencies=[Depends(limitar)])

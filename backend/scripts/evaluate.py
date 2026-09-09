@@ -83,6 +83,41 @@ def marginal_stop_cost(itinerario: Itinerary) -> list[float]:
     return fracciones
 
 
+# Un dia de una o dos paradas no dice nada de variedad: con dos paradas, la
+# categoria mayoritaria es la mitad por aritmetica.
+MIN_STOPS_FOR_VARIETY = 3
+
+
+def day_variety(itinerario: Itinerary) -> list[tuple[int, int]]:
+    """Por cada dia medible: categorias distintas y racha mas larga.
+
+    La monotonia fue una limitacion real y medida. El llenado del dia ordenaba
+    solo por distancia a la semilla, y como los lugares de una misma categoria
+    estan agrupados en el terreno —los cerros comparten cresta, las iglesias
+    comparten centro— un dia sembrado con un cerro se llenaba de cerros: el
+    45% de los dias tenian tres o mas paradas seguidas iguales.
+
+    Se mide aca para que no vuelva a degradarse en silencio: la penalizacion
+    que lo corrige es una constante del motor, y una constante sin metrica que
+    la vigile es una constante que alguien baja sin darse cuenta.
+    """
+    salida = []
+
+    for dia in itinerario.days:
+        cats = [parada.place.category for parada in dia.stops]
+        if len(cats) < MIN_STOPS_FOR_VARIETY:
+            continue
+
+        mejor = actual = 1
+        for anterior, siguiente in zip(cats, cats[1:], strict=False):
+            actual = actual + 1 if anterior == siguiente else 1
+            mejor = max(mejor, actual)
+
+        salida.append((len(set(cats)), mejor))
+
+    return salida
+
+
 def _ruta_km(lugares) -> float:
     """Kilometros del recorrido, medidos igual que los mide el motor."""
     medidor = EstimatedTravel("driving")
@@ -116,6 +151,7 @@ def main() -> int:
     total_dias = 0
     motivos_consejo: Counter[str] = Counter()
     marginales: list[float] = []
+    variedad: list[tuple[int, int]] = []
     total_paradas = 0
     inventados = 0
 
@@ -142,6 +178,7 @@ def main() -> int:
             for consejo in itinerario.advice:
                 motivos_consejo[_motivo(consejo.detail)] += 1
             marginales.extend(marginal_stop_cost(itinerario))
+            variedad.extend(day_variety(itinerario))
 
             for fallo in reporte.failures:
                 fallos_por_check[fallo.check] += 1
@@ -205,6 +242,22 @@ def main() -> int:
             f"\nNingun dia llego a {MIN_STOPS_FOR_MARGIN} paradas: "
             "la metrica del rebote no aplica."
         )
+
+    if variedad:
+        distintas = [d for d, _ in variedad]
+        rachas = [r for _, r in variedad]
+        dominados = sum(1 for d in distintas if d == 1)
+        con_racha = sum(1 for r in rachas if r >= 3)
+        print(f"\nVariedad por dia (solo dias de {MIN_STOPS_FOR_VARIETY}+ paradas):")
+        print(
+            f"  categorias distintas: media {statistics.mean(distintas):.2f}   "
+            f"peor {min(distintas)}   dias medidos {len(variedad)}"
+        )
+        print(
+            f"  dias con 3+ paradas seguidas iguales: {con_racha} "
+            f"({con_racha / len(variedad):.0%})"
+        )
+        print(f"  dias de una sola categoria: {dominados} ({dominados / len(variedad):.0%})")
 
     return 0
 

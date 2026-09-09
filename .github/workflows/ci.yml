@@ -53,3 +53,37 @@ jobs:
 
       - name: Migraciones y esquema
         run: pytest tests/ -v
+
+  # El frontend no tenia job: se podia romper el build o el tipado y CI seguia
+  # verde, porque el unico job miraba solo backend/.
+  frontend:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Tipado
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # El build es la unica comprobacion que ejecuta el CSS de Tailwind: un
+      # token mal escrito no falla el tipado ni el lint, falla aca.
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8100

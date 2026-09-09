@@ -353,6 +353,53 @@ def _two_opt(ruta: list[PlaceHit], travel: TravelProvider | None = None) -> list
     return ruta
 
 
+# Cuanto cuesta repetir categoria dentro de un dia, expresado en kilometros.
+#
+# El llenado del dia ordenaba solo por distancia a la semilla, y como los
+# lugares de una misma categoria estan agrupados en el terreno —los cerros
+# comparten cresta, las iglesias comparten centro— un dia sembrado con un cerro
+# se llenaba de cerros. Medido sobre los 26 casos de evaluacion: el 75% de los
+# dias tenian una categoria en la mitad o mas de sus paradas y el 45% tenian
+# tres o mas seguidas iguales.
+#
+# La penalizacion va en kilometros a proposito, para que sea comparable con lo
+# unico que el llenado media hasta ahora: la segunda parada de una categoria
+# que ya esta en el dia tiene que estar este numero de kilometros mas cerca que
+# una de categoria nueva para ganarle el sitio.
+#
+# **No es un filtro, es un desempate.** Donde el catalogo solo tiene cerros
+# —Perquin, Costa del Sol— el dia sigue saliendo de cerros, porque no hay otra
+# cosa. Filtrar dejaria esos dias a medio llenar.
+#
+# El valor sale de barrer de 0 a 40 sobre los 26 casos:
+#
+#     km   cumple   km/dia  cats/dia  dom>=50%  racha3+
+#      0   25/26     10.4      2.63       75%      47%
+#      6   25/26     13.1      3.23       53%      28%
+#     12   25/26     14.3      3.28       44%      21%
+#     20   25/26     15.2      3.30       39%      19%
+#     40   25/26     15.1      3.32       39%      16%
+#
+# A partir de 20 la variedad se satura —lo que queda es catalogo que de verdad
+# solo tiene una clase de lugar— y se empiezan a perder paradas: 281 contra las
+# 284 de 12, porque algun dia ya no encuentra con que llenarse. En 12 se
+# recoge casi toda la mejora disponible, ningun dia se pasa de su presupuesto
+# (el peor queda en el 99%, igual que antes) y el atractivo medio de las
+# paradas no baja: 0.699 contra 0.694.
+REPEAT_PENALTY_KM = 12.0
+
+
+def _fill_cost(
+    dia: list[PlaceHit],
+    candidato: PlaceHit,
+    semilla: PlaceHit,
+    medidor: TravelProvider,
+) -> float:
+    """Lo que cuesta agregar un candidato: distancia mas repeticion."""
+    repetidas = sum(1 for parada in dia if parada.category == candidato.category)
+    return medidor.between(semilla, candidato)[0] + repetidas * REPEAT_PENALTY_KM
+
+
 def _fits_travel_budget(
     ruta: list[PlaceHit],
     nueva: PlaceHit,
@@ -418,9 +465,11 @@ def build_days(
         cupo = max(constraints.max_stops_per_day - reservados, 1)
 
         while len(dia) < cupo:
+            # Se reordena en cada vuelta porque el coste depende de lo que
+            # ya haya en el dia, y eso cambia con cada parada agregada.
             cercanos = sorted(
                 (h for h in disponibles if h.category != Category.food.value),
-                key=lambda h: medidor.between(semilla, h)[0],
+                key=lambda h: _fill_cost(dia, h, semilla, medidor),
             )
             agregado = False
             for candidato in cercanos[:15]:
@@ -844,7 +893,7 @@ def _meal_advice(
     return Advice(
         kind,
         dia.number,
-        f"el lugar para comer más conveniente es {comida.name}, que agrega "
+        f"El lugar para comer más conveniente es {comida.name}, que agrega "
         f"{costo:.1f} km y dejaría el día en {total:.1f} km, sobre tu límite de "
         f"{constraints.max_travel_km_per_day:.0f}. Llevá {nombre}, o subí el "
         f"límite de traslado a {total:.0f} km",
@@ -1098,10 +1147,19 @@ class PlanReady:
     Cambia el orden del recorrido, los kilometros del dia y las horas de
     llegada. Dos lugares que la linea recta pone juntos pueden estar separados
     por un cerro.
+
+    Trae tambien el trazo por carretera de cada tramo, indexado por el par de
+    lugares que une. Los tramos que no lo tienen —sin llave, sin cupo, o dos
+    paradas que ORS no puede enrutar— simplemente no aparecen en el diccionario,
+    y quien dibuja tira la linea recta. El degradado es por tramo y no por
+    itinerario: un solo par sin carretera no tiene por que borrar el trazo real
+    de los otros seis.
     """
 
     itinerary: Itinerary
     stats: object | None = None
+    geometry: dict = field(default_factory=dict)
+    geometry_stats: object | None = None
     phase: str = field(default="plan", init=False)
 
 
@@ -1128,7 +1186,11 @@ def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterat
     estimacion cuesta cero y acota el problema a las paradas elegidas mas sus
     restaurantes cercanos: menos de cincuenta lugares, una sola peticion.
     """
-    from app.services.routing import client_from_settings, load_travel_matrix
+    from app.services.routing import (
+        client_from_settings,
+        load_route_geometry,
+        load_travel_matrix,
+    )
 
     comidas, destinos = select_candidates(db, constraints)
     yield CandidatesReady(destinations=destinos, meals=comidas)
@@ -1138,18 +1200,33 @@ def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterat
     borrador = assemble(comidas, destinos, constraints, estimado, grupos)
     yield DraftReady(itinerary=borrador)
 
+    cliente = client if client is not None else client_from_settings()
     matriz = load_travel_matrix(
         _places_to_measure(borrador),
         constraints.mode,
         db=db,
-        client=client if client is not None else client_from_settings(),
+        client=cliente,
     )
 
     # El reparto de dias se rehace con distancias reales: dos lugares que la
     # linea recta pone en el mismo dia pueden estar separados por un cerro.
+    final = assemble(comidas, destinos, constraints, matriz)
+
+    # El trazo se pide DESPUES del reparto final y no antes: con distancias
+    # reales el orden del dia cambia, y una geometria pedida sobre el orden del
+    # borrador dibujaria un recorrido que el itinerario ya no hace.
+    geometria, geo_stats = load_route_geometry(
+        [[parada.place for parada in dia.stops] for dia in final.days],
+        constraints.mode,
+        db=db,
+        client=cliente,
+    )
+
     yield PlanReady(
-        itinerary=assemble(comidas, destinos, constraints, matriz),
+        itinerary=final,
         stats=matriz.stats,
+        geometry=geometria,
+        geometry_stats=geo_stats,
     )
 
 

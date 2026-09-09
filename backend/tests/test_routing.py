@@ -23,7 +23,9 @@ from app.services.routing import (
     Pacer,
     TravelMatrix,
     fetch_edges,
+    load_route_geometry,
     load_travel_matrix,
+    split_by_stops,
 )
 
 SAN_SALVADOR = (13.6929, -89.2182)
@@ -686,3 +688,187 @@ class TestPorQueNoHuboMedidasReales:
     def test_con_medidas_reales_no_hay_causa_que_explicar(self):
         matriz = load_travel_matrix(self._lugares(), "driving", client=ClienteFalso())
         assert matriz.stats.reason is None
+
+
+class TestTroceoDelTrazo:
+    """Partir el trazo del dia en un tramo por par de paradas consecutivas.
+
+    Es la pieza con mas riesgo de error silencioso de toda la geometria: si el
+    troceo se equivoca, el mapa dibuja lineas que van del reves o que faltan, y
+    no hay excepcion que lo delate.
+
+    Validado tambien contra geometria real de carretera de tres paradas
+    (Ataco - Apaneca - Juayua): los tramos que salen miden lo mismo que las
+    distancias por tramo que reporta el enrutador, con un 0.2% de diferencia.
+    """
+
+    def test_parte_un_trazo_recto(self):
+        trazo = [(i * 1.0, 0.0) for i in range(11)]
+        tramos = split_by_stops(trazo, [(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)])
+
+        assert len(tramos) == 2
+        assert tramos[0][0] == (0.0, 0.0)
+        assert tramos[0][-1] == (5.0, 0.0)
+        assert tramos[1][0] == (5.0, 0.0)
+        assert tramos[1][-1] == (10.0, 0.0)
+
+    def test_los_tramos_comparten_la_parada_que_los_une(self):
+        """Sin el vertice compartido el trazo sale cortado en cada parada."""
+        trazo = [(i * 1.0, 0.0) for i in range(11)]
+        tramos = split_by_stops(trazo, [(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)])
+
+        assert tramos[0][-1] == tramos[1][0]
+
+    def test_ida_y_vuelta_por_la_misma_calle(self):
+        """El caso que rompe la version ingenua del troceo.
+
+        Un trazo que pasa dos veces por el mismo punto tiene dos vertices casi
+        identicos. Buscando el minimo global, la parada final se anclaria a un
+        vertice del principio y el segundo tramo saldria vacio o del reves.
+        """
+        ida = [(i * 1.0, 0.0) for i in range(6)]
+        vuelta = [(i * 1.0, 0.0) for i in range(4, -1, -1)]
+        tramos = split_by_stops(ida + vuelta, [(0.0, 0.0), (5.0, 0.0), (0.0, 0.0)])
+
+        assert len(tramos) == 2
+        assert all(tramo for tramo in tramos), "un tramo salio vacio"
+        assert tramos[0][0] == (0.0, 0.0)
+        assert tramos[0][-1] == (5.0, 0.0)
+        assert tramos[1][-1] == (0.0, 0.0)
+
+    def test_la_ultima_parada_ancla_al_final_del_trazo(self):
+        """Buscarla por cercania podria dejar fuera la cola de la ruta."""
+        trazo = [(i * 1.0, 0.0) for i in range(11)]
+        tramos = split_by_stops(trazo, [(0.0, 0.0), (9.4, 0.0)])
+
+        assert tramos[0][-1] == trazo[-1]
+
+    def test_devuelve_un_tramo_menos_que_paradas(self):
+        trazo = [(i * 1.0, 0.0) for i in range(21)]
+        paradas = [(0.0, 0.0), (5.0, 0.0), (10.0, 0.0), (20.0, 0.0)]
+
+        assert len(split_by_stops(trazo, paradas)) == len(paradas) - 1
+
+    @pytest.mark.parametrize(
+        "trazo,paradas,esperado",
+        [
+            ([], [(0.0, 0.0), (1.0, 0.0)], 1),
+            ([(0.0, 0.0)], [(0.0, 0.0), (1.0, 0.0)], 1),
+            ([(i * 1.0, 0.0) for i in range(5)], [(0.0, 0.0)], 0),
+            ([(i * 1.0, 0.0) for i in range(5)], [], 0),
+        ],
+    )
+    def test_sin_datos_devuelve_tramos_vacios_y_no_falla(self, trazo, paradas, esperado):
+        """El dibujo tiene que aguantar la falta de geometria, no romperse."""
+        tramos = split_by_stops(trazo, paradas)
+
+        assert len(tramos) == esperado
+        assert all(tramo == [] for tramo in tramos)
+
+
+class LugarFalso:
+    """Lo minimo que load_route_geometry necesita de un lugar."""
+
+    def __init__(self, nombre: str, lat: float, lon: float) -> None:
+        self.id = uuid.uuid4()
+        self.name = nombre
+        self.lat = lat
+        self.lon = lon
+
+
+class ClienteGeometriaFalso:
+    """Devuelve un trazo recto entre las paradas y cuenta las peticiones."""
+
+    def __init__(self, falla: bool = False) -> None:
+        self.request_count = 0
+        self.llamadas: list[list[tuple[float, float]]] = []
+        self.falla = falla
+
+    def directions(self, coords, profile):
+        self.request_count += 1
+        self.llamadas.append(list(coords))
+        if self.falla:
+            raise ORSError("sin ruta")
+        # Diez vertices por tramo, interpolados: se parece a un trazo real lo
+        # suficiente para que el troceo tenga algo que partir.
+        trazo = []
+        for a, b in zip(coords, coords[1:], strict=False):
+            for paso in range(10):
+                t = paso / 10
+                trazo.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+        trazo.append(coords[-1])
+        return trazo
+
+
+class TestGeometriaDeLaRuta:
+    def test_una_peticion_por_dia_y_no_por_tramo(self):
+        """Es la decision que sostiene el presupuesto.
+
+        Un dia de cuatro paradas tiene tres tramos. Pedirlos por separado
+        triplicaria el costo del dia, y con cuarenta y cinco peticiones diarias
+        eso se agota en una demo.
+        """
+        dia1 = [LugarFalso(f"A{i}", 13.70 + i * 0.01, -89.22) for i in range(4)]
+        dia2 = [LugarFalso(f"B{i}", 13.80 + i * 0.01, -89.30) for i in range(3)]
+        cliente = ClienteGeometriaFalso()
+
+        trazos, stats = load_route_geometry([dia1, dia2], client=cliente)
+
+        assert cliente.request_count == 2, "una peticion por dia"
+        assert stats.requests == 2
+        # Tres tramos del primer dia mas dos del segundo.
+        assert len(trazos) == 5
+        assert stats.fetched == 5
+        assert stats.straight == 0
+
+    def test_manda_las_paradas_en_orden_y_en_lat_lon(self):
+        """Invertir lat/lon no da error: devuelve una ruta en el oceano Indico."""
+        dia = [LugarFalso("A", 13.70, -89.22), LugarFalso("B", 13.75, -89.30)]
+        cliente = ClienteGeometriaFalso()
+
+        load_route_geometry([dia], client=cliente)
+
+        assert cliente.llamadas[0] == [(13.70, -89.22), (13.75, -89.30)]
+
+    def test_sin_cliente_no_hay_trazos_y_todos_son_rectas(self):
+        """Sin llave el mapa dibuja lo de siempre, no se queda vacio."""
+        dia = [LugarFalso(f"A{i}", 13.70 + i * 0.01, -89.22) for i in range(3)]
+
+        trazos, stats = load_route_geometry([dia])
+
+        assert trazos == {}
+        assert stats.straight == 2
+        assert stats.real_ratio == 0.0
+
+    def test_si_ors_falla_el_dia_se_queda_sin_trazo_pero_no_revienta(self):
+        dia = [LugarFalso(f"A{i}", 13.70 + i * 0.01, -89.22) for i in range(3)]
+        cliente = ClienteGeometriaFalso(falla=True)
+
+        trazos, stats = load_route_geometry([dia], client=cliente)
+
+        assert trazos == {}
+        assert stats.straight == 2
+        assert stats.fetched == 0
+
+    def test_un_dia_de_una_sola_parada_no_gasta_peticion(self):
+        cliente = ClienteGeometriaFalso()
+
+        trazos, stats = load_route_geometry(
+            [[LugarFalso("Solo", 13.70, -89.22)]], client=cliente
+        )
+
+        assert cliente.request_count == 0
+        assert trazos == {}
+        assert stats.straight == 0
+
+    def test_los_tramos_van_en_el_sentido_del_recorrido(self):
+        """El sentido importa: un tramo del reves se dibuja igual y esta mal."""
+        a = LugarFalso("A", 13.70, -89.22)
+        b = LugarFalso("B", 13.75, -89.22)
+        cliente = ClienteGeometriaFalso()
+
+        trazos, _ = load_route_geometry([[a, b]], client=cliente)
+
+        tramo = trazos[(a.id, b.id)]
+        assert tramo[0][0] == pytest.approx(13.70, abs=1e-6)
+        assert tramo[-1][0] == pytest.approx(13.75, abs=1e-6)

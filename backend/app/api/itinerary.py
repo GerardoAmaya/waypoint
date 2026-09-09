@@ -28,6 +28,7 @@ from app.schemas import (
     ViolationOut,
 )
 from app.services import itinerary as motor
+from app.services.places import altitud_m, cocina_legible, contacto, nombre_legible
 from app.services.routing import client_from_settings
 
 router = APIRouter(prefix="/itinerary", tags=["itinerary"])
@@ -61,23 +62,31 @@ def _to_constraints(peticion: ItineraryRequest) -> motor.Constraints:
     )
 
 
-def _to_stop(parada: motor.Stop) -> StopOut:
+def _to_stop(
+    parada: motor.Stop,
+    trazo: list[tuple[float, float]] | None = None,
+) -> StopOut:
     lugar = parada.place
     return StopOut(
         place=PlaceOut(
             id=lugar.id,
-            name=lugar.name,
+            name=nombre_legible(lugar.name),
             category=lugar.category,
             subcategory=lugar.subcategory,
             lat=lugar.lat,
             lon=lugar.lon,
             quality_score=lugar.quality_score,
+            cuisine=cocina_legible(lugar.tags),
+            elevation_m=altitud_m(lugar.tags),
+            phone=contacto(lugar.tags, "phone"),
+            website=contacto(lugar.tags, "website"),
         ),
         arrival=parada.arrival,
         departure=parada.departure,
         travel_minutes_from_previous=parada.travel_minutes_from_previous,
         travel_km_from_previous=parada.travel_km_from_previous,
         meal=parada.meal,
+        geometry_from_previous=trazo,
     )
 
 
@@ -109,12 +118,32 @@ def _to_travel_source(stats) -> TravelSourceOut:
     )
 
 
-def _to_out(itinerario: motor.Itinerary, stats) -> ItineraryOut:
+def _to_out(
+    itinerario: motor.Itinerary,
+    stats,
+    geometry: dict | None = None,
+) -> ItineraryOut:
+    """Serializa el itinerario, con el trazo de cada tramo si se pidio.
+
+    `geometry` viene indexado por el par de lugares que une el tramo. Se busca
+    por el par y no por posicion porque el mismo par puede aparecer en dos dias
+    distintos y su trazo es el mismo.
+    """
+    trazos = geometry or {}
+
     return ItineraryOut(
         days=[
             DayOut(
                 number=dia.number,
-                stops=[_to_stop(p) for p in dia.stops],
+                stops=[
+                    _to_stop(
+                        parada,
+                        trazos.get((anterior.place.id, parada.place.id))
+                        if anterior is not None
+                        else None,
+                    )
+                    for anterior, parada in zip([None, *dia.stops], dia.stops, strict=False)
+                ],
                 travel_km=dia.travel_km,
                 start=dia.start,
                 end=dia.end,

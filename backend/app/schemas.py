@@ -26,6 +26,17 @@ class PlaceOut(BaseModel):
     # Presente solo en busquedas con un punto de referencia.
     distance_m: float | None = None
 
+    # Los cuatro datos de OSM que existen en cantidad suficiente para valer la
+    # pena, medidos sobre el catalogo cargado: cocina en el 42% de los
+    # comedores, altitud en el 24% de los lugares naturales, telefono en el 27%
+    # de los alojamientos y web en el 17%. Se derivan de las etiquetas en vez de
+    # mandarlas crudas: el cliente no tiene por que saber como OSM escribe
+    # "contact:phone", y el resto de las etiquetas no le sirve de nada.
+    cuisine: str | None = None
+    elevation_m: int | None = None
+    phone: str | None = None
+    website: str | None = None
+
 
 class PlaceList(BaseModel):
     items: list[PlaceOut]
@@ -111,6 +122,16 @@ class StopOut(BaseModel):
     travel_km_from_previous: float
     meal: str | None = None
 
+    # El trazo por carretera del tramo que llega a esta parada, en (lat, lon).
+    #
+    # Va con la parada de destino y no en el dia porque acompaña a
+    # travel_km_from_previous, que es el otro dato del mismo tramo. Nulo
+    # cuando ese tramo no se pudo enrutar, y eso es informacion: el cliente
+    # dibuja la recta punteada y con eso dice que esa distancia es estimada.
+    # La primera parada de cada dia nunca lo tiene, porque no llega de ningun
+    # lado.
+    geometry_from_previous: list[tuple[float, float]] | None = None
+
 
 class DayOut(BaseModel):
     number: int
@@ -192,6 +213,22 @@ class PlanMessage(BaseModel):
     message: str = Field(min_length=1, max_length=600)
 
 
+class AreaPhotoOut(BaseModel):
+    """Una foto libre de la zona, con su credito.
+
+    El autor y la licencia viajan con la imagen porque la licencia de Commons
+    los exige. Que sean obligatorios en el schema es a proposito: asi no se
+    puede servir la foto sin el credito.
+    """
+
+    # Nombre del archivo en Wikimedia Commons. El cliente arma la URL con
+    # Special:FilePath, que deja pedir el ancho que necesite.
+    file: str
+    author: str
+    license: str
+    page: str
+
+
 class AreaOut(BaseModel):
     name: str
     lat: float
@@ -199,6 +236,8 @@ class AreaOut(BaseModel):
     radius_m: int
     # "zone" si vino del nomenclator, "catalog" si de la busqueda por nombre.
     source: str
+    # Solo las zonas del nomenclator la tienen, y dos de ellas tampoco.
+    photo: AreaPhotoOut | None = None
 
 
 class InterpretationOut(BaseModel):

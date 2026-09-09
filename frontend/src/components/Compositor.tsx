@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { motion } from "motion/react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faRoute, faTriangleExclamation } from "@fortawesome/free-solid-svg-icons";
 
 export type Fase = "quieto" | "leyendo" | "eligiendo" | "midiendo" | "listo";
 
@@ -12,26 +14,18 @@ const PASOS: { fase: Fase; texto: string }[] = [
 ];
 
 const EJEMPLOS = [
-  "tres días por la Ruta de las Flores, odio madrugar",
-  "un día en Suchitoto caminando, sin museos",
-  "dos días en Santa Ana sin pasarme el día en el carro",
+  "Tres días por la Ruta de las Flores, odio madrugar",
+  "Un día en Suchitoto caminando, sin museos",
+  "Dos días en Santa Ana sin pasarme el día en el carro",
 ];
 
 interface Props {
   fase: Fase;
   error: string | null;
-  compacto: boolean;
   onSubmit: (mensaje: string) => void;
-  onReset: () => void;
 }
 
-export default function Compositor({
-  fase,
-  error,
-  compacto,
-  onSubmit,
-  onReset,
-}: Props) {
+export default function Compositor({ fase, error, onSubmit }: Props) {
   const [texto, setTexto] = useState("");
   const trabajando = fase !== "quieto" && fase !== "listo";
 
@@ -41,35 +35,29 @@ export default function Compositor({
     onSubmit(limpio);
   };
 
-  if (compacto) {
-    return (
-      <button
-        onClick={onReset}
-        className="rounded-full border border-basalto-borde bg-basalto/92 px-4 py-2 text-menudo text-niebla shadow-lg backdrop-blur transition-colors hover:border-anil-claro"
-      >
-        Empezar de nuevo
-      </button>
-    );
-  }
-
   return (
     /*
       Una pieza sobre el mapa y no un velo encima. Oscurecer el pais entero para
       que se lea un titular tapa justo lo que el estado vacio quiere mostrar: que
       hay material, y donde esta.
+
+      El borde es el fuerte y no el divisor: en tema claro esta caja flota sobre
+      un mapa igual de claro, y sin un borde que llegue a contraste el panel se
+      deshace contra el territorio. Es lo mismo que hundio la primera version de
+      esta pantalla, resuelto con borde y elevacion en vez de con luminosidad.
     */
-    <div className="w-full max-w-2xl rounded-xl border border-basalto-borde bg-basalto/94 px-8 py-9 shadow-[0_24px_60px_-12px_rgb(19_26_32_/_0.6)] backdrop-blur-sm">
-      <h1 className="text-obra leading-[0.92] font-extralight tracking-tight text-niebla">
+    <div className="w-full max-w-2xl rounded-xl border border-borde-fuerte bg-superficie/94 px-6 py-7 shadow-panel backdrop-blur-sm sm:px-8 sm:py-9">
+      <h1 className="text-obra leading-[0.92] font-extralight tracking-tight text-tinta">
         Contame el viaje
         <br />
         que querés hacer.
       </h1>
-      <p className="mt-5 max-w-md text-guia leading-snug font-light text-niebla/55">
+      <p className="mt-4 max-w-md text-guia sm:mt-5 leading-snug font-light text-tinta-suave">
         Escribilo como se lo contarías a alguien. El plan sale sobre lugares que
         existen, con distancias medidas.
       </p>
 
-      <div className="mt-8">
+      <div className="mt-6 sm:mt-8">
         <textarea
           aria-label="Contá el viaje que querés hacer"
           value={texto}
@@ -82,21 +70,22 @@ export default function Compositor({
           }}
           disabled={trabajando}
           rows={3}
-          placeholder="tres días por la Ruta de las Flores, odio madrugar y no quiero pasarme el día en el carro"
-          className="w-full resize-none rounded-lg border border-basalto-borde bg-basalto-alto px-4 py-3.5 text-cuerpo leading-relaxed text-niebla placeholder:text-niebla/30 focus:border-anil-claro disabled:opacity-60"
+          placeholder="Tres días por la Ruta de las Flores, odio madrugar y no quiero pasarme el día en el carro"
+          className="w-full resize-none rounded-lg border border-borde-fuerte bg-superficie-alta px-4 py-3.5 text-cuerpo leading-relaxed text-tinta transition-colors placeholder:text-tinta-tenue focus:border-acento disabled:opacity-60"
         />
 
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
             onClick={enviar}
             disabled={trabajando || !texto.trim()}
-            className="rounded bg-anil-claro px-5 py-2.5 text-cuerpo text-niebla transition-opacity disabled:opacity-40"
+            className="inline-flex items-center gap-2 rounded-md bg-acento px-5 py-2.5 text-cuerpo text-sobre-acento transition-opacity disabled:opacity-40"
           >
+            <FontAwesomeIcon icon={faRoute} aria-hidden className="size-3.5" />
             Armar el itinerario
           </button>
 
           {trabajando && (
-            <div className="flex items-center gap-2" role="status" aria-live="polite">
+            <div className="flex items-center gap-3" role="status" aria-live="polite">
               {PASOS.map((paso) => {
                 const indice = PASOS.findIndex((p) => p.fase === fase);
                 const propio = PASOS.findIndex((p) => p.fase === paso.fase);
@@ -107,16 +96,16 @@ export default function Compositor({
                     key={paso.fase}
                     className={`text-dato ${
                       actual
-                        ? "text-niebla"
+                        ? "text-tinta"
                         : hecho
-                          ? "text-niebla/35"
-                          : "text-niebla/20"
+                          ? "text-tinta-tenue"
+                          : "text-tinta-tenue/50"
                     }`}
                   >
                     {actual && (
                       <motion.span
                         aria-hidden
-                        className="mr-1.5 inline-block size-1.5 rounded-full bg-anil-claro align-middle"
+                        className="mr-1.5 inline-block size-1.5 rounded-full bg-acento align-middle"
                         animate={{ opacity: [1, 0.25, 1] }}
                         transition={{ duration: 1.4, repeat: Infinity }}
                       />
@@ -130,8 +119,13 @@ export default function Compositor({
         </div>
 
         {error ? (
-          <p className="mt-4 max-w-lg border-l-2 border-cafe pl-3 text-menudo leading-relaxed text-niebla/70">
-            {error}
+          <p className="mt-4 flex max-w-lg gap-2.5 border-l-2 border-aviso pl-3 text-menudo leading-relaxed text-tinta-suave">
+            <FontAwesomeIcon
+              icon={faTriangleExclamation}
+              aria-hidden
+              className="mt-0.5 size-3 shrink-0 text-aviso"
+            />
+            <span>{error}</span>
           </p>
         ) : (
           !trabajando && (
@@ -140,7 +134,7 @@ export default function Compositor({
                 <li key={ejemplo}>
                   <button
                     onClick={() => setTexto(ejemplo)}
-                    className="text-left text-menudo text-niebla/40 transition-colors hover:text-niebla/75"
+                    className="text-left text-menudo text-tinta-tenue transition-colors hover:text-tinta"
                   >
                     {ejemplo}
                   </button>

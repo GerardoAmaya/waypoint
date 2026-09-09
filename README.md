@@ -157,6 +157,54 @@ comida**: si el único restaurante rompe el presupuesto, no hay almuerzo, y se
 reporta como restricción incumplida para que el usuario decida si lleva comida o
 levanta el límite. Meterlo rompiendo el límite sería elegir por él.
 
+### Repetir categoría cuesta kilómetros
+
+Un día de cuatro cerros seguidos no es un día que alguien quiera. La causa no
+era el azar: `build_days` sembraba el día con el mejor lugar sin usar y lo
+llenaba con **los más cercanos a la semilla**, sin mirar qué había ya en el día.
+Y como los lugares de una misma categoría están agrupados en el terreno —los
+cerros comparten cresta, las iglesias comparten centro— un día sembrado con un
+cerro se llenaba de cerros.
+
+Medido sobre los 26 casos de evaluación, antes del cambio: el 75% de los días
+tenían una categoría en la mitad o más de sus paradas, y el 45% tenían tres o
+más seguidas iguales.
+
+La corrección es un término en el orden de llenado: la segunda parada de una
+categoría que ya está en el día tiene que estar `REPEAT_PENALTY_KM` kilómetros
+más cerca que una de categoría nueva para ganarle el sitio. Va en kilómetros
+para que sea comparable con lo único que el llenado medía hasta ahora.
+
+**Es un desempate, no un filtro.** Donde el catálogo solo tiene una clase de
+lugar —Perquín, Costa del Sol— el día sigue saliendo de esa clase, porque no
+hay otra cosa. Filtrar por categoría repetida dejaría esos días a medio llenar,
+que es peor que un día monotemático. Hay un test para cada mitad de esa frase.
+
+El valor sale de barrer de 0 a 40 sobre los 26 casos:
+
+| penalización | cumple | km/día | cats/día | una cat ≥50% | racha 3+ |
+|---|---|---|---|---|---|
+| 0 (antes) | 25/26 | 10,4 | 2,63 | 75% | 47% |
+| 6 | 25/26 | 13,1 | 3,23 | 53% | 28% |
+| **12** | **25/26** | **14,3** | **3,28** | **44%** | **21%** |
+| 20 | 25/26 | 15,2 | 3,30 | 39% | 19% |
+| 40 | 25/26 | 15,1 | 3,32 | 39% | 16% |
+
+A partir de 20 la variedad se satura —lo que queda es catálogo que de verdad
+solo tiene una clase de lugar— y se empiezan a perder paradas: 281 contra las
+284 de 12, porque algún día ya no encuentra con qué llenarse.
+
+En 12 se recoge casi toda la mejora disponible y no se paga por ningún lado que
+importe: el cumplimiento de límites duros no se mueve (25/26 en todo el
+barrido), ningún día se pasa de su presupuesto de traslado —el peor sigue en el
+99%, igual que antes—, y el atractivo medio de las paradas elegidas no baja:
+0,699 contra 0,694. Los 4 km/día de más salen de un presupuesto que casi nunca
+estaba ajustado.
+
+La métrica vive en `scripts/evaluate.py` y no en un cuaderno: la penalización es
+una constante del motor, y una constante sin métrica que la vigile es una
+constante que alguien baja sin darse cuenta.
+
 ### Restricciones duras que el motor hace cumplir
 
 Las categorías que el usuario pide evitar se descartan en el motor, no se
@@ -294,6 +342,454 @@ paradas de un mismo día están cerca entre sí.
 petición a OpenRouteService por itinerario en zona fría, cero con la caché
 caliente.
 
+### El trazo va por carretera, y lo dice tramo por tramo
+
+El mapa dibujaba líneas rectas entre paradas, y eso no era culpa de
+OpenStreetMap: OSM tiene toda la geometría de las carreteras. Las rectas las
+dibujaba el propio cliente, porque el endpoint `/v2/matrix` que usa el backend
+devuelve **números, no geometría**. Medido en un tramo real de la Ruta de las
+Flores, Ataco → Juayúa: 11,3 km en línea recta contra 18,4 km por carretera, un
+factor de rodeo de 1,63. Las distancias no estaban mal —`DETOUR_FACTOR` está
+calibrado en 1,45 y este par cayó dentro del rango— pero la línea sí.
+
+**Una petición de direcciones por día, no por tramo.** ORS acepta varias
+paradas y devuelve una sola geometría que las recorre en orden; después se
+parte. Un itinerario de tres días pasa de una petición a cuatro, así que con 45
+diarias la caché importa más acá que en la matriz: el trazo entre dos puntos
+fijos tampoco cambia, y una zona ya recorrida no gasta nada.
+
+El trazo vive en la misma fila que la distancia del tramo. No hace falta una
+tabla aparte: tiene la misma clave —origen, destino y perfil—, sale de la misma
+fuente y se invalida en los mismos casos. Es anulable, porque la distancia y la
+geometría cuestan peticiones distintas y una arista puede tener la primera y no
+la segunda.
+
+**El troceo no depende de `way_points`.** ORS publica índices de waypoint que
+servirían para partir la geometría, pero atarse a un campo más de un formato que
+ya cambió una vez es fragilidad gratis: la parada se ancla al vértice más
+cercano del trazo, que da lo mismo porque el enrutador engancha cada parada a la
+red vial. Validado contra geometría real de tres paradas: los tramos que salen
+miden lo mismo que las distancias por tramo que reporta el enrutador, con un
+0,2% de diferencia, y comparten el vértice que los une.
+
+El caso que rompe la versión ingenua del troceo es la ida y vuelta por la misma
+calle, que en un día de montaña es lo normal: dos vértices casi idénticos, y
+buscando el mínimo global la tercera parada se ancla a uno del principio. Los
+anclajes se buscan hacia adelante y nunca retroceden. Hay un test.
+
+**El guion dejó de ser una propiedad del itinerario.** Antes el trazo punteado
+se decidía con el `travelSource` del plan completo, así que un solo par que ORS
+no podía enrutar punteaba todo —incluidos los tramos que sí se habían medido—.
+El mapa decía menos de lo que el backend sabía. Ahora cada tramo trae su trazo o
+no lo trae, y se dibuja sólido siguiendo la carretera o recto y punteado. La
+leyenda lista solo las clases que aparecen.
+
+La geometría se guarda entera y se simplifica al servirla: la petición es lo
+caro, así que la caché se queda con la mejor versión y la tolerancia puede
+cambiar sin volver a pedir nada. Medido sobre ese tramo de 18 km, 451 vértices:
+
+| tolerancia | vértices | KB | desvío | px a z14 | px a z16 |
+|---|---|---|---|---|---|
+| 0,00002 | 224 | 5,4 | 2 m | 0,2 | 1,0 |
+| **0,00005** | **132** | **3,2** | **6 m** | **0,6** | **2,4** |
+| 0,00010 | 88 | 2,1 | 11 m | 1,2 | 4,7 |
+| 0,00050 | 39 | 0,9 | 54 m | 5,8 | 23,2 |
+
+El trazo se dibuja con 3,5 px de grosor, así que por debajo de un par de píxeles
+de desvío no hay nada que ver. En 0,00005 pesa un tercio y se separa de la
+carretera menos de lo que mide su propia línea hasta zoom 16, que es donde el
+mapa trabaja.
+
+### La animación de la ruta nunca se había ejecutado
+
+Al reescribir el dibujo salió a la luz: el CSS animaba
+`.leaflet-overlay-pane path`, y no había ninguno. El mapa se crea con
+`preferCanvas` —lo necesita el campo de 5.652 puntos del catálogo— y eso mandaba
+también las polilíneas al canvas. Cero `<path>` en el panel de superposición, y
+las dos animaciones de trazado del CSS no corrieron nunca. El `PLAN.md` cuenta
+«la ruta se dibuja de parada en parada» entre las cuatro cosas que se pueden
+animar y entre las que forman el momento memorable, y no estaba pasando.
+
+El plan usa ahora un renderizador SVG propio. El campo no pierde nada: es una
+capa de canvas aparte y no depende de `preferCanvas`.
+
+La longitud del trazo se lee del propio nodo con `getTotalLength` en vez de
+fijar un número. Con geometría real un tramo puede medir cinco veces más que
+otro —medido en pantalla: 1.335, 1.220, 952 y 258 px en el mismo día— y un
+`dasharray` constante dejaría los largos a medio dibujar y los cortos animados
+de más. Los tramos punteados aparecen en vez de dibujarse: ahí el guion es el
+dato, y animar el trazado tendría que sobrescribir el `dasharray`.
+
+### Una frase puede estar cubierta a medias, y entonces se parte
+
+"quiero comer bien" se iba entera a `unmapped`. Son dos cosas: que le importa
+la comida, que sí se puede representar en `preferred_categories`, y que la
+quiere buena, que no —el catálogo no tiene valoraciones de nadie—. Mandar la
+frase completa a `unmapped` le dice a la persona que ignoraste hasta la parte
+que sí aplicaste.
+
+Ahora se parte: `food` a las categorías preferidas y "comer bien" a `unmapped`.
+
+**No se mapeó a `min_quality`, que era la tentación.** `score_quality` dice de
+sí mismo que «no mide si el lugar es bueno, mide si el registro sirve para
+armar un itinerario»: son las horas publicadas, el sitio web, la dirección. Un
+comedor con horarios no es un comedor rico. Usarlo para "comer bien" sería
+exactamente la equivalencia forzada que el propio prompt prohíbe.
+
+El efecto medido sobre el itinerario es casi nulo —el atractivo de la
+subcategoría pesa el doble y domina el empujón de la preferencia— y eso también
+es correcto: `include_meals` ya coloca un almuerzo, así que preferir comida no
+tiene que agregar más. Lo que la persona quería era un restaurante *mejor*, y
+eso es justo lo que queda visible en `unmapped`.
+
+### El nombre se arregla al mostrarlo, no en el catálogo
+
+OSM es texto libre. En el catálogo cargado hay 55 nombres enteros en mayúsculas,
+17 que terminan en puntuación y algunos con espacios dobles. Puestos entre
+paradas normales se leen como un grito o como un error: en una captura real
+salió «COMIDA A LA VISTA Y PUPUSERIA.».
+
+Se corrige al serializar y no en la tabla. El catálogo guarda lo que dice OSM,
+que es la fuente; reescribirlo ahí perdería el original y una recarga
+desharía el arreglo.
+
+**Solo se rebaja lo que es seguro**, y las dos reglas salieron de fallar:
+
+- Una palabra sola en mayúsculas puede ser sigla —`ISEADE-FEPADE`, `ANDEN`— y
+  «Iseade-Fepade» es peor que dejarla. Se rebaja únicamente con dos palabras o
+  más.
+- Dentro del nombre, una palabra corta se conserva en mayúsculas solo si no
+  tiene vocales: `SV` se queda y `DON` no. La primera versión usaba la longitud
+  y dejaba «Cafe de DON Jose».
+- El nexo manda sobre la sigla: la `Y` no tiene vocales y la prueba de sigla la
+  daba por buena, así que salía «Cafe Y Pan».
+- Los nexos van en minúscula en medio del nombre, los artículos no: en el nombre
+  de un negocio el artículo es parte del nombre, «Restaurante El Amate».
+
+Lo que **no** se hace es renombrar. «Mirador 3» sigue llamándose así, porque es
+el nombre que OSM le da y cambiarlo sería inventar. Que un nombre poco
+informativo pierda el sitio frente a otro mejor es una decisión de calidad y
+necesita una señal medida, que todavía no hay.
+
+### El nomenclátor: nombres de lugar, aparte de los puntos de interés
+
+"vivo en Mejicanos" no resolvía nada. La causa era concreta y no un fallo de
+interpretación: lo único llamado Mejicanos en el catálogo son **cuatro puestos
+de comida**, y el motor —con razón— se niega a anclar un viaje en un café.
+Mejicanos no es un punto de interés, es un lugar donde la gente vive. Y el
+proyecto solo conocía veinte zonas escritas a mano en Python.
+
+Un nombre de lugar y un punto de interés son cosas distintas, así que van en
+tablas distintas. De OSM salen 3.122 con nombre:
+
+| qué | cuántos | activos | radio medio | destinos medios |
+|---|---|---|---|---|
+| barrios | 1.982 | 1.679 | 3,0 km | 38 |
+| aldeas | 455 | 338 | 5,0 km | 18 |
+| municipios | 263 | 240 | 8,4 km | 32 |
+| pueblos | 257 | 238 | 8,0 km | 36 |
+| suburbios | 129 | 128 | 5,0 km | 111 |
+| ciudades | 15 | 15 | 12,0 km | 95 |
+| departamentos | 14 | 14 | 33,6 km | 440 |
+| distritos | 7 | 7 | 3,6 km | 115 |
+
+**El radio sale de la geometría del límite, no de una constante.** Un
+departamento y un barrio no se recorren igual: medido sobre los límites reales,
+la mediana da 37,8 km de radio para un departamento y 7,3 para un municipio. Se
+usa la mitad de la diagonal del recuadro, que para decidir dónde buscar
+candidatos alcanza —guardar el polígono con sus cientos de vértices sería pagar
+mucho por una precisión que nadie usa—. Los lugares que OSM publica como un
+punto suelto no traen recuadro y llevan un radio por tipo.
+
+**463 nombres quedan marcados por no tener con qué llenar un día**, con menos de
+cuatro destinos en su radio. Se guardan marcados y no se borran, igual que los
+descartes del catálogo: borrarlos impediría medir el filtro. El eslabón débil
+son las aldeas —26% demasiado pobres—; los barrios en cambio funcionan casi
+todos, porque son urbanos y densos.
+
+Las veinte zonas curadas siguen ganando primero. Tienen radios afinados y
+alias que OSM no da: "ruta de las flores" resuelve a Ataco y eso no sale de
+ningún dato. El nomenclátor cubre la cola larga.
+
+Cuando un nombre existe en varios niveles —"San Salvador" es departamento,
+municipio y ciudad— gana el más específico: quien lo nombra piensa en la ciudad
+y no en los treinta y cinco kilómetros del departamento.
+
+El umbral de parecido está medido y el margen es corto:
+
+```
+"Megicanos" -> "Mejicanos"     0.538   hay que aceptarlo
+"volcan"    -> "Volcancillo"   0.462   hay que rechazarlo
+"playa"     -> "Playa El Cuco" 0.429   hay que rechazarlo
+```
+
+0.50 cae en ese hueco. Son cuatro centésimas de margen contra "volcan", así que
+si el nomenclátor crece conviene volver a medir esos tres casos.
+
+### El cupo de OpenRouteService es por endpoint, no uno solo
+
+Se descubrió corriendo, y corrigió un diseño. La matriz respondía
+`Quota exceeded` mientras direcciones seguía contestando: son cupos separados.
+
+Eso significa que un itinerario puede tener **distancias estimadas y trazo real
+al mismo tiempo**. Con la geometría como columna de `travel_edges` ese caso no
+se podía guardar —solo se guardan las aristas medidas, así que no había fila que
+actualizar—: el trazo se descartaba y la petición siguiente lo volvía a pedir.
+Se quemaba cupo de direcciones en cada consulta para tirar el resultado.
+
+Por eso el trazo vive en `route_legs`, con la misma clave pero su propia fila.
+Medido después del cambio: de cinco tramos guardados, **cuatro no tienen
+distancia medida** —son exactamente los que antes se perdían— y la segunda
+consulta no gasta nada.
+
+---
+
+## Frontend
+
+### El tema no es un interruptor de luminosidad
+
+La pantalla es un panel oscuro contra el mapa en sus colores reales, y ese
+contraste es lo que separa el territorio del plan. Hacer un tema claro
+invirtiendo el panel reintroduce el problema que esa decisión resolvió: panel
+claro sobre mapa claro no se separa de nada, porque el color de fondo de las
+teselas de OSM (`#f2efe9`) y la superficie del panel (`#f4f2ed`) son
+prácticamente el mismo.
+
+Así que en tema claro la separación no viene de la luminosidad sino de la
+costura: `--borde-lienzo` es un divisor tenue en oscuro, donde el salto de
+luminosidad ya hace el trabajo, y una línea a 3:1 en claro, donde es lo único
+que separa. La elevación del compositor cambia en la misma dirección.
+
+**El mapa no sigue al tema.** No hay tesela oscura que conserve la información
+que el mapa natural ya da —bosque contra ciudad, río contra carretera—. Se
+probaron las dos alternativas: el filtro de invertir y rotar el matiz devolvía
+parques verde oliva y carreteras salmón, y las teselas de CARTO pasaron a
+exigir llave. Lo que sí sigue al tema es el cromo que flota encima.
+
+### Los tokens van por rol y no por material
+
+Los colores salen del sujeto —roca volcánica, añil, arena negra— y esos nombres
+son los buenos para hablar de la paleta. Pero `bg-basalto` repartido por 63
+sitios no deja dónde enganchar un tema: hay que tocar los 63 igual.
+
+El CSS va en tres capas. Los materiales son literales fijos; los roles dicen
+qué material cumple qué función en cada tema; `@theme inline` publica los roles
+como utilidades de Tailwind. El `inline` es lo que hace posible el tema: sin él
+Tailwind congela el valor al compilar y redefinir la variable en tiempo de
+ejecución no cambia nada.
+
+Los materiales se declaran una sola vez. El mapa los lee del CSS con
+`getComputedStyle` en vez de mantener una copia en TypeScript: Leaflet escribe
+el color como atributo de presentación del SVG y ahí `var()` no resuelve, así
+que necesita el literal —pero la copia paralela ya se había desincronizado, con
+`tinta-suave` en dos valores distintos.
+
+### El icono es el segundo canal, no un adorno
+
+La categoría de una parada se codificaba solo con el color del punto. El color
+por sí solo no es información accesible: quien no distingue el café del verde no
+tiene de dónde sacar si la parada es un comedor o un cerro. Con icono el color
+pasa a reforzar algo que ya se puede leer sin él.
+
+Por lo mismo el mapa tiene leyenda. Venía codificando dos cosas sin decirlo en
+ninguna parte: el color del pin era la categoría y el guion del trazo era «esta
+distancia es estimada». Un código sin leyenda es decoración. La leyenda lista
+solo las categorías que aparecen en el plan, y no se muestra en móvil, donde el
+panel queda pegado debajo del mapa y cada parada ya trae su icono al lado del
+nombre de su categoría.
+
+### El territorio entra en foco cuando el plan aterriza
+
+Antes de que haya plan el mapa está en foco suave y el compositor es lo nítido.
+Cuando los pines caen, el desenfoque se retira. Responde a una acción y muestra
+algo que acaba de cambiar, así que entra en lo que el `PLAN.md` permite animar —
+y de paso es parte del momento memorable en vez de un efecto suelto.
+
+**El desenfoque es graduado, no uniforme.** El estado vacío existe para mostrar
+que hay material y dónde está: los 5.652 puntos del catálogo. Un desenfoque
+plano los borra a todos y deja la misma pantalla genérica que el velo oscuro que
+ya se había descartado. Con una máscara radial el foco se pierde detrás del
+compositor, que es donde no hay nada que leer, y se conserva en la periferia,
+que es donde están los puntos. El desenfoque incluso ayuda ahí: agrupa las motas
+y se lee la densidad mejor que con el detalle.
+
+Se atenúa con `opacity` y no bajando el radio. Un elemento con `backdrop-filter`
+y `opacity < 1` compone el fondo desenfocado sobre el nítido, así que la opacidad
+funciona como mando del desenfoque —y `opacity` se anima en todas partes,
+mientras que `backdrop-filter` no—. El filtro se apaga del todo al terminar la
+transición para no dejar una capa compuesta por gusto.
+
+El velo va en `z-index` 750: encima de todos los paneles de Leaflet, que llegan
+a 700, y debajo de sus controles, que van a 800 y 1000. El mapa se desenfoca y
+los botones de zoom y la atribución siguen nítidos, que es un requisito y no una
+preferencia: la atribución es la licencia de las teselas.
+
+Los prefijos los pone Lightning CSS según los objetivos de Next. Escribirlos a
+mano fue un error: colapsaba las dos declaraciones y emitía solo la versión
+`-webkit-`.
+
+### El mapa llena la pantalla, no cabe dentro de ella
+
+El Salvador mide 2.5 grados de ancho por 1.35 de alto, casi el doble de ancho
+que de alto. `fitBounds` garantiza que el rectángulo entre completo, así que en
+una pantalla vertical de teléfono resolvía la diferencia mostrando latitud de
+sobra: el país quedaba como una franja en medio y arriba se veía Belice. El
+estado vacío existe para mostrar dónde está el material, y mostraba el país
+equivocado.
+
+`getBoundsZoom(bounds, true)` da el zoom al que el rectángulo cubre el
+contenedor. El país llena la pantalla y lo que sobra se recorta por el lado
+largo. En escritorio también mejora: antes se veían Ciudad de Guatemala y
+Tegucigalpa con El Salvador como una banda al medio.
+
+### Fotos: de la zona sí, de cada parada no
+
+Se midió antes de decidir, sobre el catálogo cargado. El loader guarda las
+etiquetas completas de OSM en JSONB justamente para esto, así que la cobertura
+es una consulta y no una estimación.
+
+| Categoría | Activos | Con etiqueta de imagen | % |
+|---|---|---|---|
+| culture | 286 | 18 | 6,3 |
+| lodging | 509 | 17 | 3,3 |
+| attraction | 80 | 2 | 2,5 |
+| nature | 2.024 | 32 | 1,6 |
+| food | 2.718 | 2 | 0,1 |
+| viewpoint | 35 | 0 | 0 |
+| **total** | **5.652** | **71** | **1,3** |
+
+Filtrar por calidad no ayuda: en el decil más alto es 6,2% y del tercero hacia
+abajo es cero. Una foto por parada dejaría el hueco vacío diecinueve de cada
+veinte veces, y eso parece una aplicación rota, no un catálogo incompleto. Cada
+almuerzo y cada cena salen de las 2.718 entradas de comida, donde hay dos fotos.
+
+Las zonas sí son entidades con nombre propio: **18 de las 20 tienen foto libre**
+en Wikimedia Commons. Van en la cabecera del panel, una por itinerario.
+
+Se resolvieron una vez y quedan fijas en el código. No se consultan en tiempo de
+ejecución a propósito: son veinte valores que no cambian, y una petición por
+itinerario a un tercero solo agrega una forma nueva de fallar. Se usa `P18` de
+Wikidata y no la imagen destacada del artículo, porque esa sale del infobox y a
+veces es el mapa de situación del país —Juayúa caía justo en ese caso.
+
+El autor y la licencia son obligatorios en el schema y hay un test que lo
+comprueba. La atribución la exige la licencia de Commons, así que no es un
+detalle de estilo: una foto sin crédito es un incumplimiento. Por eso el crédito
+va visible sobre la imagen y no en un `title` que en un teléfono no existe.
+
+En móvil la foto no aparece. Entre ella, el título a dos líneas y la explicación
+de las distancias, la primera parada quedaba abajo del borde del panel: había
+que desplazarse para ver el itinerario, que es el producto. Ahí el presupuesto
+vertical es del itinerario, y el mapa está pegado arriba mostrando el territorio
+de verdad.
+
+### Satélite como capa opcional, y sin llave
+
+Sirve para algo que el mapa dibujado no puede decir: si un mirador está de
+verdad sobre una cresta, o si un «parque» es bosque o potrero. Como fondo por
+defecto sería un retroceso —encima de una foto aérea el trazo añil se pierde y
+los nombres de los pueblos desaparecen—, así que es un interruptor y el mapa
+dibujado sigue siendo el de partida.
+
+**Esri World Imagery, que responde sin llave.** No Mapbox ni Stadia, que la
+piden. El problema de una llave en un mapa de cliente no es el cupo: es que las
+teselas las pide el navegador, así que la llave viaja en el HTML y cualquiera
+que lea el código puede gastar el cupo. Un cupo público es un cupo agotable por
+un tercero. La llave de OpenRouteService no tiene ese problema porque la usa el
+backend y nunca sale de ahí.
+
+Y las teselas de Google Satellite no son una opción, ni gratis ni pagando: sus
+términos prohíben usarlas fuera de sus propios SDK, así que no se pueden pintar
+en Leaflet.
+
+Cambiar el fondo quita una capa y pone otra en vez de reconstruir el mapa, así
+que el encuadre, el plan y el campo del catálogo se quedan donde están. La
+atribución viaja con la capa porque cada proveedor exige la suya.
+
+**El color de los puntos del catálogo sigue al fondo, no al tema.** Son tinta
+sobre el mapa dibujado, que es claro, y niebla sobre la foto de satélite, que es
+oscura. Con un solo color el campo entero desaparecía la mitad de las veces: fue
+lo primero que se vio al encender el satélite.
+
+### Al elegir una parada: ir, no mirar
+
+La pregunta natural es si al hacer clic se puede ver una foto del sitio. No: ya
+está medido arriba —1,3% del catálogo, 0,1% de los comedores. Lo que sí se puede
+ofrecer siempre es la acción de ir, porque no depende de que OSM tenga el dato,
+solo de las coordenadas. Un enlace de indicaciones, no una integración:
+enlazar a un mapa está permitido, incrustar sus teselas no.
+
+Los cuatro datos derivados de las etiquetas sí aparecen lo suficiente para valer
+la pena. Medido sobre el catálogo cargado, con al menos uno presente:
+
+| Categoría | Activos | Con algún dato | % |
+|---|---|---|---|
+| food | 2.718 | 1.211 | 45 |
+| lodging | 509 | 156 | 31 |
+| nature | 2.024 | 482 | 24 |
+| attraction | 80 | 2 | 2 |
+| culture | 286 | 4 | 1 |
+| viewpoint | 35 | 0 | 0 |
+| **total** | **5.652** | **1.855** | **33** |
+
+Un tercio, contra el 1,3% de las fotos: por eso esto se muestra y las fotos no.
+En miradores no hay ninguno, así que la interfaz tiene que verse bien sin
+ninguno —y por eso la acción de ir es lo único que no es condicional.
+
+Se derivan en el backend en vez de mandar las etiquetas crudas: el cliente no
+tiene por qué saber cómo OSM escribe `contact:phone`, y el resto de las
+etiquetas no le sirve de nada. La cocina se traduce y solo si se conoce el
+valor: una etiqueta que diga `steak_house` delata la fuente y no ayuda a elegir
+dónde almorzar. Entre `regional;pupusa` gana lo concreto, porque «pupusas»
+ayuda y «comida típica» no.
+
+OSM es texto libre y eso se nota en los tres derivadores: la altitud llega como
+`1965` y como `2381 m`, y alguna vez como algo que no es un número; los
+teléfonos vienen separados por punto y coma y también por coma —`2121-2828,
+2312-7228` es un caso real del catálogo—, pero en una dirección web la coma no
+se parte porque es un carácter válido y rompería el enlace. Hay tests para cada
+una de esas formas.
+
+### El panel y el mapa se señalan entre sí
+
+Elegir una parada en el panel lleva el mapa hasta ella; elegir un pin la abre en
+el panel. La elección lleva de dónde salió, y no es un detalle: si vino del
+panel el mapa vuela, y si vino de un pin ya está a la vista y volar sería
+moverle el mapa a alguien que acaba de apuntar con el dedo.
+
+El vuelo va a zoom 16 y no al máximo: a 18 se ve el techo del sitio y nada de su
+alrededor, y lo que uno quiere saber al apretar una parada es dónde queda
+respecto de las demás.
+
+El anillo del pin elegido es niebla y no el acento, porque el pin vive sobre el
+mapa y el mapa no sigue al tema: un anillo añil sobre bosque oscuro no se ve, y
+sobre satélite menos.
+
+### Contraste medido, no estimado
+
+Los valores de la paleta se eligieron resolviendo el contraste requerido contra
+el fondo más exigente de cada rol, no a ojo. Tres fallaban:
+
+| Par | Antes | Ahora | Mínimo |
+|---|---|---|---|
+| Anillo de foco sobre el panel | 2.76:1 | 3.02:1 | 3:1 (SC 1.4.11) |
+| Borde del campo de texto | 1.40:1 | 3.01:1 | 3:1 (SC 1.4.11) |
+| Texto tenue sobre superficie elevada | 4.07:1 | 4.54:1 | 4.5:1 (SC 1.4.3) |
+
+El anillo de foco era el que más pesaba: el piso de calidad del `PLAN.md` pide
+foco de teclado visible, y estaba declarado sin cumplirse.
+
+`prefers-reduced-motion` tenía el mismo problema. La regla de CSS anulaba las
+animaciones declaradas en la hoja, pero no las de Motion, que escribe sus
+valores en el estilo del elemento desde JavaScript. Lo resuelve
+`<MotionConfig reducedMotion="user">`.
+
+Y el estado vacío no cabía en un teléfono. El titular a 4.2rem fijos ocupaba
+cinco líneas en 390px y la tarjeta salía más alta que la pantalla; el contenedor
+recorta arriba y abajo, así que se perdían la primera línea del título y los
+ejemplos. Los dos tamaños grandes son ahora fluidos con `clamp()`: el máximo es
+el tamaño de diseño y el mínimo el que cabe.
+
 ---
 
 ## Stack
@@ -303,14 +799,27 @@ caliente.
 | Backend | Python 3.11 + FastAPI |
 | Base de datos | PostgreSQL + PostGIS, migraciones con Alembic |
 | Lugares | OpenStreetMap vía Overpass, cargado una vez |
-| Rutas | OpenRouteService, endpoint de matriz |
+| Nombres de lugar | Nomenclátor de OSM: 3.122 departamentos, municipios, pueblos y barrios |
+| Rutas | OpenRouteService: matriz para distancias, direcciones para el trazo |
 | Modelo | Claude (Haiku para armar, Sonnet para conversar) |
+| Frontend | Next.js (App Router) + React + Tailwind 4 |
+| Mapa | Leaflet directo, sin react-leaflet |
+| Animación | Motion |
+| Iconos | Font Awesome, paquetes SVG con tree-shaking |
+| Satélite | Esri World Imagery, sin llave |
+| Fotos de zona | Wikimedia Commons, resueltas una vez |
 | Tests | pytest, 315 casos |
-| CI | GitHub Actions, con migraciones en ambos sentidos |
+| CI | GitHub Actions: migraciones en ambos sentidos, y tipado, lint y build del frontend |
 
 Sin Celery: la carga del catálogo es un guion que corre una vez y la generación
 de itinerarios es petición-respuesta. Sin embeddings: la selección de lugares se
 resuelve con filtros espaciales y por categoría.
+
+Sin kit de componentes, que impondría su propio aspecto. De Font Awesome se usan
+los paquetes SVG de React y no el kit de CSS: el kit trae la hoja y la fuente
+enteras, y así entran solo los iconos que se importan. Leaflet se maneja directo
+porque `react-leaflet` no se llegó a usar en ninguna parte —el mapa es
+imperativo— y quedó como dependencia muerta.
 
 ---
 
@@ -329,6 +838,11 @@ guion que consuma cupo por equivocación sale caro.
 
 ## Lo que falta
 
-Fase 5: capa conversacional, con interpretación de la frase del usuario y edición
-incremental. Fase 6: frontend con mapa y línea de tiempo. Fase 7: evaluación
-automática del cumplimiento de restricciones. Fase 8: despliegue y límite por IP.
+Fase 7: evaluación automática del cumplimiento de restricciones. Fase 8:
+despliegue y límite por IP.
+
+Del frontend queda una cosa medida y no resuelta: las familias tipográficas se
+piden con `<link>` a Google Fonts, lo que mete un tercero en el camino crítico
+de la primera pintura. `next/font` lo arreglaría autohospedándolas, pero las
+descarga al compilar y eso ata el build a que `fonts.googleapis.com` esté
+alcanzable. La salida es versionar los `.woff2` en el repo.

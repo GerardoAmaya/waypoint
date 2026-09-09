@@ -8,40 +8,169 @@
   Los colores salen del sujeto y no de un generador de temas. El Salvador tiene
   tres materiales visuales propios —la roca volcanica, el anil que fue su
   exportacion historica, y la arena negra del Pacifico— y de ahi salen.
+
+  El archivo va en tres capas y conviene no mezclarlas:
+
+    1. MATERIALES  literales fijos. No cambian con el tema.
+    2. ROLES       que material cumple cada funcion en cada tema.
+    3. @theme      los roles publicados como utilidades de Tailwind.
+
+  Editar un color es editar la capa 1. Cambiar como se ve un tema es la capa 2.
 */
 
+/* ─────────────────────── 1. Materiales ─────────────────────── */
 /*
-  Ojo: los mismos valores estan tambien en src/lib/types.ts, como PALETA.
-  Leaflet escribe el color como atributo de presentacion del SVG y ahi var() no
-  resuelve de forma fiable, asi que el mapa necesita literales. Si se cambia un
-  color aca, hay que cambiarlo alla.
+  Fuente unica de los colores del proyecto. El mapa los lee de aca en tiempo de
+  ejecucion (ver leerMateriales en src/lib/paleta.ts): Leaflet escribe el color
+  como atributo de presentacion del SVG y ahi var() no resuelve, asi que
+  necesita el literal —pero resolverlo desde el CSS es mejor que mantener una
+  segunda copia en TypeScript, que es justo lo que se habia desincronizado.
 */
-@theme {
-  --color-basalto: #131a20;
-  --color-basalto-alto: #1b242c;
-  --color-basalto-borde: #2a353f;
-  --color-niebla: #f4f2ed;
-  --color-niebla-honda: #e6e2d9;
-  --color-anil: #2b3a67;
-  --color-anil-claro: #4a5d96;
-  --color-cafe: #8c5a35;
-  --color-verde: #3f7a5e;
-  --color-ocre: #b8863f;
+:root {
+  --basalto: #131a20;
+  --basalto-alto: #1b242c;
+  --basalto-borde: #2a353f;
+  --niebla: #f4f2ed;
+  --niebla-alta: #fdfcfa;
+  --niebla-honda: #e6e2d9;
+  --niebla-borde: #dcd7cc;
+  --grafito: #1f2429;
 
-  /*
-    El panel es oscuro y el mapa claro, al reves de lo que decia el PLAN.md.
-    El principio es el mismo —el contraste separa el territorio del plan— pero
-    con el mapa en sus colores naturales, el panel claro no contrastaba contra
-    nada. Territorio claro y real, plan oscuro.
-  */
-  --color-tinta: #f4f2ed;
-  --color-tinta-suave: #a4adb6;
-  --color-tinta-tenue: #78838d;
+  --anil: #2b3a67;
+  --anil-claro: #546aab;
+  --cafe: #8c5a35;
+  --verde: #3f7a5e;
+  --ocre: #b8863f;
+  --ocre-honda: #8d6630;
 
-  /* Para lo poco que va sobre superficie clara: el campo del mapa. */
-  --color-grafito: #1f2429;
+  /* Grises con temperatura: los neutros puros al lado del anil se ven verdes. */
+  --acero-claro: #a4adb6;
+  --acero: #818b95;
+  --acero-medio: #586f84;
+  --acero-honda: #666f7a;
+  --acero-profundo: #5a646f;
+  --acero-panel: #828d99;
+}
 
-  /* Las pide layout.tsx con <link>; ver el comentario de ahi. */
+/* ─────────────────────── 2. Roles ─────────────────────── */
+/*
+  El tema por defecto es el oscuro, y no por moda: la pantalla principal es un
+  panel oscuro contra el mapa en sus colores reales, y ese contraste es lo que
+  separa el territorio del plan. Salir en claro por defecto dejaria la
+  identidad del proyecto como el caso excepcional.
+
+  Aun asi se respeta prefers-color-scheme: light, y el interruptor manda sobre
+  las dos cosas. Los valores del tema claro aparecen dos veces —una para la
+  preferencia del sistema y otra para la eleccion explicita— porque CSS no deja
+  compartir un bloque de declaraciones entre una media query y un selector.
+*/
+:root {
+  color-scheme: dark;
+
+  --superficie: var(--basalto);
+  --superficie-alta: var(--basalto-alto);
+  --superficie-mapa: var(--niebla-honda);
+
+  /* Dos bordes con trabajos distintos: uno divide, el otro delimita un control.
+     El que delimita un control tiene que llegar a 3:1 (WCAG 1.4.11); el que
+     solo divide secciones no, y forzarlo dejaria el panel rayado. */
+  --borde: var(--basalto-borde);
+  --borde-fuerte: var(--acero-medio);
+  /* La costura entre el panel y el mapa. En oscuro no necesita ayuda: el salto
+     de luminosidad ya separa el plan del territorio. En claro es lo unico que
+     los separa, y ahi tiene que llegar a contraste. */
+  --borde-lienzo: var(--basalto-borde);
+
+  --tinta: var(--niebla);
+  --tinta-suave: var(--acero-claro);
+  --tinta-tenue: var(--acero);
+
+  --acento: var(--anil-claro);
+  --sobre-acento: var(--niebla);
+  --aviso: var(--ocre);
+
+  --cat-food: var(--cafe);
+  --cat-nature: var(--verde);
+  --cat-culture: var(--ocre);
+  --cat-attraction: var(--anil-claro);
+  --cat-lodging: var(--acero-claro);
+
+  --sombra-panel: 0 24px 60px -12px rgb(19 26 32 / 0.6);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
+    --superficie: var(--niebla);
+    --superficie-alta: var(--niebla-alta);
+
+    --borde: var(--niebla-borde);
+    --borde-fuerte: var(--acero-panel);
+    --borde-lienzo: var(--acero-panel);
+
+    --tinta: var(--grafito);
+    --tinta-suave: var(--acero-profundo);
+    --tinta-tenue: var(--acero-honda);
+
+    --acento: var(--anil);
+    --aviso: var(--ocre-honda);
+
+    --cat-culture: var(--ocre-honda);
+    --cat-lodging: var(--acero-profundo);
+
+    /* El panel claro sobre el mapa claro no se separa por luminosidad, asi que
+       se separa por elevacion: la sombra es mas cerrada y el borde hace el
+       resto. Es el problema que hundio la primera version de esta pantalla. */
+    --sombra-panel: 0 18px 44px -14px rgb(31 36 41 / 0.28);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --superficie: var(--niebla);
+  --superficie-alta: var(--niebla-alta);
+
+  --borde: var(--niebla-borde);
+  --borde-fuerte: var(--acero-panel);
+  --borde-lienzo: var(--acero-panel);
+
+  --tinta: var(--grafito);
+  --tinta-suave: var(--acero-profundo);
+  --tinta-tenue: var(--acero-honda);
+
+  --acento: var(--anil);
+  --aviso: var(--ocre-honda);
+
+  --cat-culture: var(--ocre-honda);
+  --cat-lodging: var(--acero-profundo);
+
+  --sombra-panel: 0 18px 44px -14px rgb(31 36 41 / 0.28);
+}
+
+/* ─────────────────────── 3. Utilidades ─────────────────────── */
+/*
+  `inline` es lo que hace posible el tema: sin el, Tailwind congela el valor del
+  token al compilar y redefinirlo en tiempo de ejecucion no cambia nada.
+*/
+@theme inline {
+  --color-superficie: var(--superficie);
+  --color-superficie-alta: var(--superficie-alta);
+  --color-superficie-mapa: var(--superficie-mapa);
+  --color-borde: var(--borde);
+  --color-borde-fuerte: var(--borde-fuerte);
+  --color-borde-lienzo: var(--borde-lienzo);
+  --color-tinta: var(--tinta);
+  --color-tinta-suave: var(--tinta-suave);
+  --color-tinta-tenue: var(--tinta-tenue);
+  --color-acento: var(--acento);
+  --color-sobre-acento: var(--sobre-acento);
+  --color-aviso: var(--aviso);
+
+  --shadow-panel: var(--sombra-panel);
+
+  /* Las familias las pide layout.tsx con <link>; ver el comentario de ahi. */
   --font-sans: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "DM Mono", ui-monospace, "SF Mono", monospace;
 
@@ -50,24 +179,28 @@
     apartan de la escala a proposito: 13 y 15 px son medidas de lectura, no
     puntos de una progresion geometrica.
   */
-  --text-obra: 4.2rem;
-  --text-titulo: 2.1rem;
-  --text-guia: 1.35rem;
+  /*
+    Los dos tamanos grandes son fluidos. A 4.2rem fijos el titular del estado
+    vacio ocupaba cinco lineas en un telefono y la tarjeta salia mas alta que
+    la pantalla: el contenedor recorta arriba y abajo, asi que se perdian la
+    primera linea del titulo y los ejemplos. El maximo es el tamano de diseno y
+    el minimo el que cabe en 390px.
+  */
+  --text-obra: clamp(2.5rem, 8.5vw, 4.2rem);
+  --text-titulo: clamp(1.7rem, 5vw, 2.1rem);
+  --text-guia: clamp(1.1rem, 3.6vw, 1.35rem);
   --text-cuerpo: 0.9375rem;
   --text-menudo: 0.8125rem;
   --text-dato: 0.75rem;
 }
 
+/* ─────────────────────── Base ─────────────────────── */
 /*
   Bricolage Grotesque es variable y trae un eje de tamano optico. Se usa: a 67px
   es un titular con caracter y a 13px una interfaz legible, sin cambiar de
   familia. DM Mono queda reservada para horas, kilometros y altitudes, donde
   alinear por digito es funcion y no estilo.
 */
-:root {
-  color-scheme: dark;
-}
-
 html,
 body {
   height: 100%;
@@ -75,8 +208,8 @@ body {
 
 body {
   margin: 0;
-  background: var(--color-basalto);
-  color: var(--color-niebla);
+  background: var(--superficie);
+  color: var(--tinta);
   font-family: var(--font-sans);
   font-size: var(--text-cuerpo);
   line-height: 1.55;
@@ -86,17 +219,19 @@ body {
 
 /*
   Foco visible en todo elemento interactivo. Es piso de calidad y no una
-  opcion: el PLAN.md no considera terminada esta fase sin el.
+  opcion: el PLAN.md no considera terminada esta fase sin el. El acento llega a
+  3:1 contra las dos superficies del tema, medido; el halo interior lo despega
+  cuando el control tiene fondo propio.
 */
 :focus-visible {
-  outline: 2px solid var(--color-anil-claro);
+  outline: 2px solid var(--acento);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 
 ::selection {
-  background: var(--color-anil-claro);
-  color: var(--color-niebla);
+  background: var(--acento);
+  color: var(--sobre-acento);
 }
 
 /*
@@ -111,7 +246,10 @@ body {
 
 /*
   Sin espera para quien la pidio: el resultado aparece completo y ya. El
-  PLAN.md lo pone entre los criterios de aceptacion de esta fase.
+  PLAN.md lo pone entre los criterios de aceptacion de esta fase. Las
+  animaciones de Motion no las alcanza esta regla porque las escribe en el
+  estilo del elemento desde JS; de esas se encarga <MotionConfig reducedMotion>
+  en page.tsx.
 */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -124,42 +262,97 @@ body {
   }
 }
 
+/* ─────────────────────── Mapa ─────────────────────── */
 /*
-  OpenStreetMap solo publica teselas claras. Invertir y rotar el matiz da un
-  mapa oscuro sin depender de ningun proveedor con llave: el negro se vuelve
-  claro, el claro negro, y la rotacion devuelve los colores a su lado del
-  circulo para que el agua siga siendo azulada y no naranja.
+  El mapa no cambia con el tema: OpenStreetMap solo publica teselas claras, y
+  las dos alternativas que se probaron para oscurecerlo salieron peor. El
+  filtro de invertir y rotar el matiz devolvia parques verde oliva y carreteras
+  salmon; las teselas de CARTO pasaron a exigir llave. El mapa natural ya
+  distingue bosque de ciudad y rio de carretera, y eso es informacion que no
+  vale la pena cambiar por que combine con una paleta.
 
-  Va en el panel de teselas y no en el contenedor: invertir el contenedor
-  invertiria tambien los pines y la ruta.
+  Lo que si cambia es el cromo que flota encima —controles, compositor,
+  interruptor—, y por eso ese cromo usa roles y no literales.
 */
-/* Leaflet trae su propio aspecto; se lo apaga para que no imponga el suyo. */
 .leaflet-container {
-  background: var(--color-niebla-honda);
+  background: var(--superficie-mapa);
   font-family: var(--font-sans);
   outline: none;
 }
 
+/* La atribucion vive sobre las teselas, que siempre son claras: literales. */
 .leaflet-control-attribution {
   background: color-mix(in srgb, white 82%, transparent);
-  color: #5b6570;
+  color: var(--acero-profundo);
   font-family: var(--font-sans);
   font-size: 10px;
   padding: 2px 6px;
 }
 
 .leaflet-control-attribution a {
-  color: var(--color-anil);
+  color: var(--anil);
 }
 
 .leaflet-control-zoom a {
-  background: var(--color-basalto);
-  color: var(--color-niebla);
-  border-color: var(--color-basalto-borde);
+  background: var(--superficie);
+  color: var(--tinta);
+  border-color: var(--borde-fuerte);
 }
 
 .leaflet-control-zoom a:hover {
-  background: var(--color-basalto-alto);
+  background: var(--superficie-alta);
+  color: var(--tinta);
+}
+
+/*
+  El territorio entra en foco cuando el plan aterriza.
+  ─────────────────────────────────────────────────────
+  Antes de que haya plan el mapa esta en foco suave y el compositor es lo
+  nitido. Cuando los pines caen, el desenfoque se retira: la pantalla pasa a
+  ser del itinerario. Es una de las cosas que el PLAN.md permite animar —
+  responde a una accion y muestra algo que acaba de cambiar— y de paso vuelve
+  parte del momento memorable en vez de un efecto suelto.
+
+  **Desenfoque graduado y no uniforme.** El estado vacio existe para mostrar
+  que hay material y donde esta: los 5.652 puntos del catalogo. Un desenfoque
+  plano los borra a todos y deja la misma pantalla generica que el velo oscuro
+  que ya se habia descartado. Con la mascara radial el foco se pierde detras
+  del compositor, que es donde no hay nada que leer, y se conserva en la
+  periferia, que es donde estan los puntos. El desenfoque incluso ayuda ahi:
+  agrupa las motas y se lee la densidad mejor que con el detalle.
+
+  **Se atenua con opacity y no bajando el radio.** Un elemento con
+  backdrop-filter y opacity < 1 compone el fondo desenfocado sobre el nitido,
+  asi que la opacidad funciona como mando del desenfoque —y opacity se anima en
+  todas partes, mientras que backdrop-filter no—. El filtro se apaga del todo
+  al terminar la transicion para no dejar una capa compuesta por gusto.
+
+  Los prefijos los pone Lightning CSS segun los objetivos de Next. Escribirlos
+  a mano fue un error: colapsaba las dos declaraciones y emitia solo la version
+  -webkit-, que deja fuera a cualquier navegador sin ese alias.
+
+  z-index 750: encima de todos los paneles de Leaflet, que llegan a 700, y
+  debajo de sus controles, que van a 800 y 1000. Asi el mapa se desenfoca pero
+  los botones de zoom y la atribucion siguen nitidos —la atribucion tiene que
+  poder leerse, es la licencia de las teselas.
+*/
+.waypoint-desenfoque {
+  position: absolute;
+  inset: 0;
+  z-index: 750;
+  pointer-events: none;
+  backdrop-filter: blur(12px);
+  mask-image: radial-gradient(ellipse 82% 78% at 50% 50%, #000 28%, transparent 100%);
+  transition: opacity 1000ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.waypoint-desenfoque[data-nitido="true"] {
+  opacity: 0;
+  /* Con la capa ya invisible; el retraso es la duracion de la transicion. */
+  backdrop-filter: none;
+  transition:
+    opacity 1000ms cubic-bezier(0.22, 1, 0.36, 1),
+    backdrop-filter 0s 1000ms;
 }
 
 /*
@@ -173,7 +366,7 @@ body {
   height: 26px;
   border-radius: 50%;
   background: var(--pin);
-  border: 2px solid var(--color-niebla);
+  border: 2px solid var(--niebla);
   box-shadow: 0 1px 6px rgb(31 36 41 / 0.35);
   animation: caer 520ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   animation-delay: var(--retraso, 0ms);
@@ -183,8 +376,33 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
-  color: var(--color-niebla);
+  color: var(--niebla);
   line-height: 1;
+}
+
+/*
+  El pin de la parada elegida.
+  ────────────────────────────
+  Crece y se le pone un anillo. El anillo va con --niebla y no con el acento
+  porque el pin vive sobre el mapa, que no sigue al tema: un anillo anil sobre
+  un bosque verde oscuro no se ve, y sobre satelite menos. Claro contra
+  cualquier tesela, que es el mismo criterio que el borde de los pines.
+
+  No se anima el transform con transicion: Leaflet coloca los marcadores con
+  transform y animarlo desde afuera pelea con el mapa en cada zoom. Se cambia
+  el tamano y ya.
+*/
+.waypoint-pin-elegido {
+  width: 34px;
+  height: 34px;
+  box-shadow:
+    0 0 0 3px var(--niebla),
+    0 2px 10px rgb(31 36 41 / 0.5);
+  z-index: 1;
+}
+
+.waypoint-pin-elegido .waypoint-pin-num {
+  font-size: 13px;
 }
 
 @keyframes caer {
@@ -202,15 +420,24 @@ body {
   La ruta se dibuja de parada en parada siguiendo el orden real del recorrido,
   en vez de aparecer entera. Se hace con el trazo del SVG y no con opacidad:
   dibujar es lo que describe el recorrido, aparecer no describe nada.
+
+  **Las clases las pone Mapa y no un selector de elemento.** La version
+  anterior apuntaba a `.leaflet-overlay-pane path`, y no habia ninguno: el mapa
+  se crea con preferCanvas y las polilineas iban al canvas, asi que estas
+  animaciones no se ejecutaron nunca. Ahora el plan usa un renderizador SVG
+  propio y cada tramo recibe su clase, con su longitud y su retraso medidos:
+  var(--largo) lo escribe animarTramo leyendo getTotalLength del propio nodo,
+  porque con geometria real un tramo puede medir cuarenta veces mas que otro.
 */
-.leaflet-overlay-pane path {
+.waypoint-tramo-traza {
+  stroke-dasharray: var(--largo);
   animation: trazar 900ms cubic-bezier(0.65, 0, 0.35, 1) backwards;
-  stroke-dasharray: 1200;
+  animation-delay: var(--retraso, 0ms);
 }
 
 @keyframes trazar {
   from {
-    stroke-dashoffset: 1200;
+    stroke-dashoffset: var(--largo);
   }
   to {
     stroke-dashoffset: 0;
@@ -218,12 +445,13 @@ body {
 }
 
 /*
-  Salvo cuando la ruta es punteada, donde el guion codifica informacion: ahi el
-  dasharray es el dato y no se puede usar para animar.
+  El tramo estimado aparece, no se dibuja: ahi el guion codifica informacion
+  —dice que la distancia salio de la linea recta— y animar el trazado tendria
+  que sobrescribir el dasharray, que es borrar el dato.
 */
-.leaflet-overlay-pane path[stroke-dasharray="1 7"] {
+.waypoint-tramo-aparece {
   animation: revelar 700ms ease-out backwards;
-  stroke-dasharray: 1 7;
+  animation-delay: var(--retraso, 0ms);
 }
 
 @keyframes revelar {
@@ -242,6 +470,6 @@ body {
   height: 10px;
   border-radius: 50%;
   background: var(--pin);
-  border: 1.5px solid var(--color-niebla);
+  border: 1.5px solid var(--niebla);
   opacity: 0.85;
 }

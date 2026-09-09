@@ -19,7 +19,7 @@ def _to_list(hits) -> PlaceList:
         items=[
             PlaceOut(
                 id=h.id,
-                name=h.name,
+                name=servicio.nombre_legible(h.name),
                 category=h.category,
                 subcategory=h.subcategory,
                 lat=h.lat,

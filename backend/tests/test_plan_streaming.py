@@ -51,11 +51,32 @@ def catalogo():
 
 
 class ClienteFalso:
-    """Cliente de ORS que anota cuando lo llamaron."""
+    """Cliente de ORS que anota cuando lo llamaron.
+
+    Implementa las dos capacidades del cliente real, matriz y direcciones,
+    porque el pipeline usa las dos: la matriz para las distancias y las
+    direcciones para el trazo de cada dia. Un doble que solo sepa una de las
+    dos deja sin cubrir la mitad del costo en peticiones.
+    """
 
     def __init__(self, falla_con=None):
         self.falla_con = falla_con
         self.request_count = 0
+        self.directions_count = 0
+
+    def directions(self, coords, profile):
+        self.request_count += 1
+        self.directions_count += 1
+        if self.falla_con is not None:
+            raise self.falla_con
+        # Un trazo recto entre paradas: alcanza para que el troceo funcione.
+        trazo = []
+        for a, b in zip(coords, coords[1:], strict=False):
+            for paso in range(5):
+                t = paso / 5
+                trazo.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+        trazo.append(coords[-1])
+        return trazo
 
     def matrix(self, coords, profile, sources=None, destinations=None):
         self.request_count += 1
@@ -105,8 +126,18 @@ class TestFases:
         assert isinstance(borrador, DraftReady)
 
         final = next(fases)
-        assert cliente.request_count == 1
         assert isinstance(final, PlanReady)
+
+        # Una peticion de matriz para las distancias del itinerario entero, y
+        # una de direcciones por cada dia que tenga tramos que dibujar. El
+        # desglose se fija aparte porque el numero de peticiones es el recurso
+        # escaso: son 45 diarias, y que este total suba sin querer se paga en
+        # itinerarios que ya no se pueden armar.
+        #
+        # Un dia de una sola parada no tiene tramos, asi que no gasta nada.
+        con_tramos = sum(1 for dia in final.itinerary.days if len(dia.stops) > 1)
+        assert cliente.directions_count == con_tramos
+        assert cliente.request_count == 1 + con_tramos
 
     def test_los_candidatos_llegan_separados_en_destinos_y_comidas(
         self, catalogo_fijo, restricciones

@@ -26,6 +26,18 @@ export interface Place {
   lon: number;
   quality_score: number;
   distance_m: number | null;
+
+  /*
+    Los cuatro datos de OSM que existen en cantidad suficiente para valer la
+    pena, medidos sobre el catalogo: alguno de ellos aparece en el 45% de los
+    comedores, el 31% de los alojamientos y el 24% de los lugares naturales.
+    En miradores y cultura no hay casi nada, asi que la interfaz tiene que
+    verse bien sin ninguno.
+  */
+  cuisine: string | null;
+  elevation_m: number | null;
+  phone: string | null;
+  website: string | null;
 }
 
 export interface Stop {
@@ -35,6 +47,15 @@ export interface Stop {
   travel_minutes_from_previous: number;
   travel_km_from_previous: number;
   meal: "lunch" | "dinner" | null;
+
+  /**
+   * El trazo por carretera del tramo que llega a esta parada, en [lat, lon].
+   *
+   * Nulo cuando ese tramo no se pudo enrutar, y eso es informacion: el mapa
+   * dibuja la recta punteada y con eso dice que la distancia es estimada. La
+   * primera parada de cada dia nunca lo tiene, porque no llega de ningun lado.
+   */
+  geometry_from_previous: [number, number][] | null;
 }
 
 export interface Day {
@@ -101,12 +122,29 @@ export interface Constraints {
   real_routes: boolean;
 }
 
+/**
+ * Una foto libre de la zona, con su credito.
+ *
+ * El autor y la licencia no son opcionales: las imagenes son de Wikimedia
+ * Commons y sus licencias exigen atribucion. El backend las declara
+ * obligatorias en el schema por lo mismo.
+ */
+export interface AreaPhoto {
+  /** Nombre del archivo en Commons; la URL se arma con Special:FilePath. */
+  file: string;
+  author: string;
+  license: string;
+  page: string;
+}
+
 export interface Area {
   name: string;
   lat: number;
   lon: number;
   radius_m: number;
   source: "zone" | "catalog";
+  /** Solo las zonas del nomenclator, y dos de ellas tampoco tienen. */
+  photo: AreaPhoto | null;
 }
 
 export interface Interpretation {
@@ -147,39 +185,3 @@ export type PlanEvent =
   | { phase: "draft"; data: Itinerary }
   | { phase: "plan"; data: Itinerary }
   | { phase: "error"; data: { message: string; unmapped?: string[]; notes?: string[] } };
-
-/**
- * Los mismos valores que declara globals.css, pero literales.
- *
- * Leaflet escribe el color como atributo de presentacion del SVG, y ahi var()
- * no resuelve de forma fiable. Duplicarlos es feo; que la ruta salga negra en
- * un navegador es peor. El comentario en globals.css avisa de la pareja.
- */
-export const PALETA = {
-  basalto: "#131a20",
-  niebla: "#f4f2ed",
-  anil: "#2b3a67",
-  anilClaro: "#4a5d96",
-  cafe: "#8c5a35",
-  verde: "#3f7a5e",
-  ocre: "#b8863f",
-  tintaSuave: "#5b6570",
-} as const;
-
-export const CATEGORY_COLOR: Record<Category, string> = {
-  food: PALETA.cafe,
-  nature: PALETA.verde,
-  culture: PALETA.ocre,
-  viewpoint: PALETA.ocre,
-  attraction: PALETA.anilClaro,
-  lodging: PALETA.tintaSuave,
-};
-
-export const CATEGORY_LABEL: Record<Category, string> = {
-  food: "Comida",
-  nature: "Naturaleza",
-  culture: "Cultura",
-  viewpoint: "Mirador",
-  attraction: "Atracción",
-  lodging: "Alojamiento",
-};

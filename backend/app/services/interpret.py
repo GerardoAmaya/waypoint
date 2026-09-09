@@ -76,8 +76,16 @@ representar: repetirlo en "unmapped" le dice a la persona que lo ignoraste \
 cuando en realidad lo aplicaste. Antes de poner algo en "unmapped", revisa si \
 alguno de los campos de arriba lo cubre.
 
+**Una frase puede estar cubierta a medias, y entonces se parte.** Pone en los \
+campos la parte que si podes representar y en "unmapped" solo lo que sobra. \
+"quiero comer bien" son dos cosas: que le importa la comida, que si es \
+preferred_categories ["food"], y que la quiere buena, que NO se puede \
+representar porque el catalogo no tiene valoraciones de nadie. Entonces va \
+food en preferred_categories y "comer bien" en unmapped. Mandar la frase \
+entera a "unmapped" le dice que ignoraste hasta la parte que si aplicaste.
+
 Ejemplos de lo que va en "unmapped": "algo tranquilo", "romantico", \
-"presupuesto bajo", "vamos con ninos", "que no llueva".
+"presupuesto bajo", "vamos con ninos", "que no llueva", "comida rica".
 Ejemplos de lo que NO va: "odio madrugar" (es earliest_start), "sin museos" \
 (es avoided_categories), "poco carro" (es max_travel_km_per_day), "tres dias" \
 (es days).
