@@ -104,18 +104,45 @@ NOT_A_DESTINATION = re.compile(
 )
 
 # En OpenStreetMap pasa seguido que alguien usa "name" como campo libre y le
-# mete el horario, el telefono o una descripcion. Un itinerario que diga
-# "visita Feria Gastronomica sabado y domingo 0800 a 1700" se delata solo.
+# mete el horario o una descripcion. Un itinerario que diga "visita Feria
+# Gastronomica sabado y domingo 0800 a 1700" se delata solo.
 #
 # Se detecta por el horario y no por el largo: hay nombres legitimos igual de
 # largos ("Finca y Mirador La Providencia de Concepcion de Ataco") y contar
 # palabras los tiraria junto con la basura.
-LOOKS_LIKE_SCHEDULE = re.compile(
-    r"\d{1,2}:\d{2}"
-    r"|\b\d{3,4}\s*(a|-|hasta)\s*\d{3,4}\b"
-    r"|\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b",
-    re.IGNORECASE,
-)
+CLOCK_TIME = re.compile(r"\d{1,2}:\d{2}")
+
+# "0800 a 1700", "0900-1600".
+HOUR_RANGE = re.compile(r"\b\d{3,4}\s*(?:a|-|hasta)\s*\d{3,4}\b", re.IGNORECASE)
+
+WEEKDAYS = ("lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo")
+WEEKDAY_PATTERN = re.compile(r"\b(" + "|".join(WEEKDAYS) + r")\b", re.IGNORECASE)
+
+# Numero suelto de tres o cuatro cifras, que junto a un dia es una hora.
+BARE_HOUR = re.compile(r"\b\d{3,4}\b")
+
+
+def looks_like_schedule(name: str) -> bool:
+    """Si el nombre es en realidad un horario y no un nombre.
+
+    **Un dia de la semana suelto no alcanza como evidencia.** La primera
+    version rechazaba cualquier nombre que contuviera uno, y en un pais
+    catolico eso se lleva medio santoral por delante: "Hostal Villa Santo
+    Domingo" y "Cerro Santo Domingo" son lugares reales. Lo detecto la corrida
+    en seco del reetiquetado, que es para lo que existe.
+
+    Hace falta una hora explicita, o dos dias distintos, o un dia acompanado
+    de un numero que parezca hora.
+    """
+    if CLOCK_TIME.search(name) or HOUR_RANGE.search(name):
+        return True
+
+    dias = {d.lower() for d in WEEKDAY_PATTERN.findall(name)}
+    if len(dias) >= 2:
+        return True
+
+    return bool(dias) and bool(BARE_HOUR.search(name))
+
 
 MIN_NAME_LENGTH = 4
 
@@ -218,7 +245,7 @@ def evaluate(tags: dict) -> Verdict:
     # Se comprueba sobre el nombre sin acentos pero CON puntuacion. normalize()
     # borra los dos puntos, y sin ellos "8:00" queda como "8 00" y deja de
     # parecer una hora.
-    if LOOKS_LIKE_SCHEDULE.search(_deaccent(name)):
+    if looks_like_schedule(_deaccent(name)):
         return Verdict(False, reason="nombre_es_horario")
 
     # Un nombre sin ninguna letra ("2001", "km 45") no identifica un lugar.

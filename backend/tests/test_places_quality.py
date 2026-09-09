@@ -161,6 +161,7 @@ class TestNombresQueSonDescripciones:
             "Restaurante abierto de 8:00 a 17:00",
             "Comedor abierto lunes a viernes",
             "Tour 0900 a 1600",
+            "Cafe domingo 0800",
         ],
     )
     def test_rechaza_los_horarios_metidos_en_el_nombre(self, nombre):
@@ -187,6 +188,25 @@ class TestNombresQueSonDescripciones:
         """normalize() borra los dos puntos, asi que la hora se busca aparte."""
         veredicto = evaluate({"name": "Museo sábado 9:00", "tourism": "museum"})
         assert veredicto.reason == "nombre_es_horario"
+
+    @pytest.mark.parametrize(
+        "nombre",
+        [
+            "Hostal Villa Santo Domingo",
+            "Cerro Santo Domingo",
+            "Hostal Las Terrazas de Santo Domingo",
+            "Iglesia Santo Domingo de Guzman",
+            "Restaurante Los Martes",
+        ],
+    )
+    def test_un_dia_suelto_no_es_evidencia_de_horario(self, nombre):
+        """La primera version se llevaba medio santoral por delante.
+
+        En un pais catolico "Santo Domingo" esta en todos lados. Rechazar por
+        contener un dia de la semana borraba lugares reales, y lo encontro la
+        corrida en seco de refilter_places antes de escribir nada.
+        """
+        assert evaluate({"name": nombre, "tourism": "attraction"}).accepted
 
 
 class TestGenericosQueFaltaban:
