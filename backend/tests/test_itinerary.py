@@ -237,8 +237,15 @@ class TestVerificacion:
         return Itinerary(days=[dia]), restricciones
 
     def test_un_itinerario_correcto_no_reporta_violaciones(self):
+        # Sin comidas pedidas: el itinerario se arma a mano y no las lleva, y
+        # desde que validate() reporta la comida que falta, pedirlas aqui
+        # seria un incumplimiento legitimo.
         restricciones = Constraints(
-            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(10, 0)
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(10, 0),
+            include_meals=False,
         )
         stops = [
             Stop(lugar("A", 13.70, -89.22), time(10, 0), time(11, 0)),
@@ -362,6 +369,88 @@ class TestFranjasDeComida:
 
         nombres = [p.name for p, tipo in secuencia if tipo]
         assert len(nombres) == len(set(nombres))
+
+
+class TestComidaQueFalta:
+    """Pedir comida y no recibirla tiene que verse.
+
+    Pasa donde el catalogo no tiene restaurantes: dentro de un parque
+    nacional, por ejemplo. Enterarse a la una de la tarde no es opcion.
+    """
+
+    def _dia(self, stops, restricciones):
+        dia = Day(number=1)
+        dia.stops.extend(stops)
+        return Itinerary(days=[dia])
+
+    def test_reporta_el_almuerzo_que_no_se_pudo_dar(self):
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+        stops = [
+            Stop(lugar("A", 13.70, -89.22), time(9, 0), time(10, 30)),
+            Stop(lugar("B", 13.705, -89.22), time(10, 40), time(12, 40), 10, 1.0),
+        ]
+        violaciones = validate(self._dia(stops, restricciones), restricciones)
+
+        assert any(v.constraint == "include_meals" for v in violaciones)
+
+    def test_un_dia_que_termina_antes_del_almuerzo_no_reporta_nada(self):
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+        stops = [
+            Stop(lugar("A", 13.70, -89.22), time(9, 0), time(10, 0)),
+            Stop(lugar("B", 13.705, -89.22), time(10, 10), time(11, 0), 10, 1.0),
+        ]
+        violaciones = validate(self._dia(stops, restricciones), restricciones)
+
+        assert not any(v.constraint == "include_meals" for v in violaciones)
+
+    def test_con_almuerzo_puesto_no_reporta_nada(self):
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+        stops = [
+            Stop(lugar("A", 13.70, -89.22), time(9, 0), time(11, 30)),
+            Stop(
+                lugar("Comedor", 13.702, -89.221, Category.food),
+                time(11, 40),
+                time(12, 40),
+                10,
+                1.0,
+                meal="lunch",
+            ),
+        ]
+        violaciones = validate(self._dia(stops, restricciones), restricciones)
+
+        assert not any(v.constraint == "include_meals" for v in violaciones)
+
+    def test_si_no_se_pidieron_comidas_no_se_reclaman(self):
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, include_meals=False
+        )
+        stops = [
+            Stop(lugar("A", 13.70, -89.22), time(9, 0), time(13, 0)),
+        ]
+        violaciones = validate(self._dia(stops, restricciones), restricciones)
+
+        assert not any(v.constraint == "include_meals" for v in violaciones)
+
+    def test_el_almuerzo_entra_aunque_ninguna_llegada_lo_dispare(self):
+        """El caso real del Parque El Imposible.
+
+        Las tres llegadas del dia caian antes de las 11:30 pero la ultima
+        parada duraba hora y media, asi que el dia cruzaba el almuerzo entero
+        sin evaluarlo ni una vez.
+        """
+        from app.services.itinerary import _insert_meals
+
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+        ruta = [
+            lugar("A", 13.700, -89.220),
+            lugar("B", 13.702, -89.222),
+            lugar("C", 13.704, -89.224),
+        ]
+        comidas = [lugar("Comedor", 13.703, -89.223, Category.food)]
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+
+        assert any(comida == "lunch" for _, comida in secuencia)
 
 
 class TestAtractivo:

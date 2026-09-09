@@ -534,3 +534,76 @@ class TestClienteCompartido:
         # Otra "peticion HTTP" pide el cliente de nuevo y encuentra la cuenta.
         assert routing.client_from_settings().quota.try_spend() is False
         routing.client_from_settings.cache_clear()
+
+
+class TestPlausibilidad:
+    """Una ruta por carretera no puede medir menos que la linea recta.
+
+    El caso real: tres paradas dentro del Parque El Imposible, todas lejos de
+    camino, engancharon al mismo nodo de la red vial. ORS devolvio 0.0 km
+    entre puntos separados por 1.89 km. No es un nulo, es una medida valida de
+    un viaje que no existe, asi que el manejo de nulos no la atrapaba.
+    """
+
+    def test_descarta_una_distancia_cero_entre_puntos_distintos(self):
+        a = lugar("Parque Nacional El Imposible", 13.8308664, -89.9589112)
+        b = lugar("Mirador El Mulo", 13.8288039, -89.9415312)
+        cliente = ClienteFalso(
+            km_por_par={
+                ((a.lat, a.lon), (b.lat, b.lon)): 0.0,
+                ((b.lat, b.lon), (a.lat, a.lon)): 0.0,
+            }
+        )
+
+        aristas = fetch_edges([a, b], "driving", cliente)
+
+        assert aristas == {}, "una medida imposible no puede entrar a la cache"
+
+    def test_el_par_descartado_cae_a_la_estimacion(self):
+        a = lugar("Parque Nacional El Imposible", 13.8308664, -89.9589112)
+        b = lugar("Mirador El Mulo", 13.8288039, -89.9415312)
+        cliente = ClienteFalso(
+            km_por_par={
+                ((a.lat, a.lon), (b.lat, b.lon)): 0.0,
+                ((b.lat, b.lon), (a.lat, a.lon)): 0.0,
+            }
+        )
+
+        matriz = load_travel_matrix([a, b], "driving", client=cliente)
+        km, minutos = matriz.between(a, b)
+
+        assert matriz.stats.estimated == 2
+        assert km >= haversine_km(a.lat, a.lon, b.lat, b.lon)
+        assert minutos >= 1
+
+    def test_una_medida_apenas_menor_pasa_por_redondeo(self):
+        """El margen existe para la proyeccion, no para tapar ceros."""
+        a = lugar("A", 13.700, -89.220)
+        b = lugar("B", 13.800, -89.220)
+        recta = haversine_km(a.lat, a.lon, b.lat, b.lon)
+        cliente = ClienteFalso(
+            km_por_par={
+                ((a.lat, a.lon), (b.lat, b.lon)): recta * 0.99,
+                ((b.lat, b.lon), (a.lat, a.lon)): recta * 0.99,
+            }
+        )
+
+        aristas = fetch_edges([a, b], "driving", cliente)
+        assert len(aristas) == 2
+
+    def test_un_par_imposible_no_contamina_a_los_demas(self):
+        a = lugar("En el parque", 13.8308664, -89.9589112)
+        b = lugar("Tambien en el parque", 13.8288039, -89.9415312)
+        c = lugar("En el pueblo", 13.8697, -89.8467)
+        cliente = ClienteFalso(
+            km_por_par={
+                ((a.lat, a.lon), (b.lat, b.lon)): 0.0,
+                ((b.lat, b.lon), (a.lat, a.lon)): 0.0,
+            }
+        )
+
+        aristas = fetch_edges([a, b, c], "driving", cliente)
+
+        assert (a.id, b.id) not in aristas
+        assert (a.id, c.id) in aristas
+        assert (c.id, b.id) in aristas

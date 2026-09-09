@@ -409,6 +409,18 @@ def _insert_meals(
         duracion = DEFAULT_DURATIONS.get(Category(parada.category), 60)
         momento = _add_minutes(momento, duracion)
 
+    # El bucle de arriba solo mira la hora de LLEGADA a cada parada. Un dia
+    # cuya ultima llegada es 11:17 pero que termina a las 12:47 cruza la franja
+    # de almuerzo entera sin evaluarla nunca, y el usuario se queda sin comer
+    # aunque lo haya pedido. Aqui se cierra ese caso.
+    if not almuerzo_puesto and disponibles and LUNCH_WINDOW[0] <= momento <= LUNCH_WINDOW[1]:
+        referencia = resultado[-1][0] if resultado else ruta[-1]
+        comida = min(disponibles, key=lambda c: medidor.between(referencia, c)[0])
+        disponibles.remove(comida)
+        resultado.append((comida, "lunch"))
+        almuerzo_puesto = True
+        momento = _add_minutes(momento, DEFAULT_DURATIONS[Category.food])
+
     # La cena solo se agrega si el dia llega de verdad a la tarde. Sin esta
     # comprobacion, un dia que termina a las tres cierra con una "cena" que en
     # realidad es un segundo almuerzo.
@@ -523,6 +535,22 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
                     f"{len(dia.stops)} paradas, el limite era {constraints.max_stops_per_day}",
                 )
             )
+
+        # Pedir comidas y no recibir ninguna es un incumplimiento, no un
+        # detalle. Suele pasar donde el catalogo no tiene restaurantes: dentro
+        # de un parque nacional, por ejemplo. El usuario tiene que enterarse
+        # para llevar almuerzo, no descubrirlo a la una de la tarde.
+        if constraints.include_meals and dia.start and dia.end:
+            cruza_almuerzo = dia.start <= LUNCH_WINDOW[1] and dia.end >= LUNCH_WINDOW[0]
+            if cruza_almuerzo and not any(p.meal == "lunch" for p in dia.stops):
+                violaciones.append(
+                    Violation(
+                        "include_meals",
+                        dia.number,
+                        "el dia cruza la hora de almuerzo y no hay ningun lugar "
+                        "para comer en la zona",
+                    )
+                )
 
         evitadas = {c.value for c in constraints.avoided_categories}
         for parada in dia.stops:

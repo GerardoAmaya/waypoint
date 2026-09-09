@@ -35,6 +35,7 @@ from app.services.geo import (
     SOURCE_ORS,
     EstimatedTravel,
     Waypoint,
+    haversine_km,
 )
 
 logger = logging.getLogger(__name__)
@@ -326,6 +327,7 @@ def fetch_edges(
     profile = ORS_PROFILES.get(mode, ORS_PROFILES["driving"])
     resultado: dict[tuple[uuid.UUID, uuid.UUID], tuple[float, int]] = {}
     bloques = _blocks(places, chunk_size)
+    implausibles = 0
 
     for origenes in bloques:
         for destinos in bloques:
@@ -361,12 +363,43 @@ def fetch_edges(
                     # lejos del camino no invalida los otros treinta pares.
                     if km is None or minutos is None:
                         continue
+                    if not _is_plausible(origen, destino, float(km)):
+                        implausibles += 1
+                        continue
                     resultado[(origen.id, destino.id)] = (
                         round(float(km), 3),
                         max(1, round(float(minutos))),
                     )
 
+    if implausibles:
+        logger.warning(
+            "%d pares descartados por medir menos que la linea recta: puntos "
+            "enganchados al mismo nodo de la red vial",
+            implausibles,
+        )
+
     return resultado
+
+
+# Margen para diferencias entre la geodesica y la proyeccion que usa ORS. Por
+# debajo de esto, la medida es imposible y no un redondeo.
+PLAUSIBILITY_MARGIN = 0.98
+
+
+def _is_plausible(origen, destino, km: float) -> bool:
+    """Una ruta por carretera no puede ser mas corta que la linea recta.
+
+    Parece obvio y sin embargo ORS lo viola a diario: cuando dos puntos estan
+    lejos de todo camino y enganchan al mismo nodo de la red, la matriz
+    devuelve cero. No es un nulo, es una medida valida de un viaje que no
+    existe, asi que el manejo de nulos no la atrapa.
+
+    Sin esta comprobacion un itinerario dentro de un parque nacional sale con
+    tres paradas separadas por cero kilometros, presentado como medicion real.
+    Estar equivocado asi es peor que estimar: la estimacion al menos avisa.
+    """
+    recta = haversine_km(origen.lat, origen.lon, destino.lat, destino.lon)
+    return km >= recta * PLAUSIBILITY_MARGIN
 
 
 def _cell(matriz: list[list[float | None]], i: int, j: int) -> float | None:
