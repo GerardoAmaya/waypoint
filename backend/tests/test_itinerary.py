@@ -885,3 +885,51 @@ class TestListaDePermitidos:
             sitio = lugar("X", 13.81, -89.63, Category.culture)
             sitio.subcategory = subcategoria
             assert appeal_of(sitio) >= MIN_APPEAL, f"{subcategoria} deberia entrar"
+
+
+class TestSeleccionDeRestaurantes:
+    """Eran cuatro, anclados en la primera parada. Las dos cosas estaban mal."""
+
+    def test_mide_contra_la_parada_mas_cercana_del_dia(self):
+        """Un dia que arranca lejos y termina en el pueblo.
+
+        Anclado en la primera parada, los restaurantes del pueblo quedaban
+        fuera de los candidatos y el dia se iba sin almorzar.
+        """
+        from app.services.itinerary import _meal_candidates
+
+        grupo = [
+            lugar("Cerro remoto", 13.700, -89.900, Category.nature),
+            lugar("Pueblo", 13.870, -89.850),
+        ]
+        del_pueblo = lugar("Comedor del pueblo", 13.871, -89.851, Category.food)
+        del_medio = lugar("Comedor lejano", 13.780, -89.700, Category.food)
+
+        elegidos = _meal_candidates(grupo, [del_medio, del_pueblo], EstimatedTravel())
+
+        assert elegidos[0].name == "Comedor del pueblo"
+
+    def test_considera_mas_de_cuatro(self):
+        """Con cuatro, el almuerzo consume uno y a la cena le quedan tres."""
+        from app.services.itinerary import MEAL_CANDIDATES_PER_DAY, _meal_candidates
+
+        grupo = [lugar("A", 13.700, -89.220)]
+        comidas = [
+            lugar(f"C{i}", 13.700 + i * 0.002, -89.220, Category.food) for i in range(20)
+        ]
+
+        elegidos = _meal_candidates(grupo, comidas, EstimatedTravel())
+
+        assert len(elegidos) == MEAL_CANDIDATES_PER_DAY
+        assert MEAL_CANDIDATES_PER_DAY > 4
+
+    def test_sin_restaurantes_devuelve_vacio(self):
+        from app.services.itinerary import _meal_candidates
+
+        assert _meal_candidates([lugar("A", 13.7, -89.2)], [], EstimatedTravel()) == []
+
+    def test_sin_paradas_devuelve_vacio(self):
+        from app.services.itinerary import _meal_candidates
+
+        comidas = [lugar("C", 13.7, -89.2, Category.food)]
+        assert _meal_candidates([], comidas, EstimatedTravel()) == []

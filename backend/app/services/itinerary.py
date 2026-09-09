@@ -470,6 +470,36 @@ def _arrival_times(
 # se queda esperando de brazos cruzados a que sirvan.
 MEAL_EARLY_TOLERANCE_MINUTES = 30
 
+# Cuantos restaurantes se consideran por dia. Eran cuatro, elegidos por
+# cercania a la PRIMERA parada del dia, y las dos cosas estaban mal.
+#
+# Cuatro es poco: el almuerzo consume uno y a la cena le quedan tres. Y la
+# primera parada es un ancla arbitraria: si el dia arranca en un cerro remoto,
+# los cuatro mas cercanos a ese cerro pueden estar todos lejos del resto del
+# recorrido, y la insercion los rechaza a todos por presupuesto.
+MEAL_CANDIDATES_PER_DAY = 8
+
+
+def _meal_candidates(
+    grupo: list[PlaceHit],
+    comidas: list[PlaceHit],
+    travel: TravelProvider,
+    limit: int = MEAL_CANDIDATES_PER_DAY,
+) -> list[PlaceHit]:
+    """Los restaurantes mas convenientes para un dia.
+
+    Se mide contra la parada MAS CERCANA del dia, no contra la primera. Un dia
+    que empieza lejos y termina en el pueblo tiene restaurantes convenientes
+    al final, y anclarse en el arranque no los ve.
+    """
+    if not grupo or not comidas:
+        return []
+
+    def cercania(comida: PlaceHit) -> float:
+        return min(travel.between(parada, comida)[0] for parada in grupo)
+
+    return sorted(comidas, key=cercania)[:limit]
+
 
 def _best_meal_insertion(
     secuencia: list[tuple[PlaceHit, str | None]],
@@ -869,7 +899,7 @@ def assemble(
             continue
         # Cada dia toma las comidas mas cercanas a su primera parada, para no
         # repetir restaurante entre dias.
-        cercanas = sorted(comidas_restantes, key=lambda c: medidor.between(grupo[0], c)[0])[:4]
+        cercanas = _meal_candidates(grupo, comidas_restantes, medidor)
         secuencia = _trim_to_budget(grupo, cercanas, constraints, medidor)
         for lugar, comida in secuencia:
             if comida and lugar in comidas_restantes:
@@ -973,10 +1003,11 @@ def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterat
 
     estimado = EstimatedTravel(constraints.mode)
     grupos = build_days(destinos, constraints, estimado, meal_options=len(comidas))
-    yield DraftReady(itinerary=assemble(comidas, destinos, constraints, estimado, grupos))
+    borrador = assemble(comidas, destinos, constraints, estimado, grupos)
+    yield DraftReady(itinerary=borrador)
 
     matriz = load_travel_matrix(
-        _places_to_measure(grupos, comidas, estimado),
+        _places_to_measure(borrador),
         constraints.mode,
         db=db,
         client=client if client is not None else client_from_settings(),
@@ -990,21 +1021,20 @@ def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterat
     )
 
 
-def _places_to_measure(
-    grupos: list[list[PlaceHit]], comidas: list[PlaceHit], travel: TravelProvider
-) -> list[PlaceHit]:
-    """Los lugares que de verdad pueden entrar al itinerario.
+def _places_to_measure(borrador: Itinerary) -> list[PlaceHit]:
+    """Los lugares que el borrador realmente eligio.
 
-    Las paradas elegidas mas los restaurantes cercanos a cada dia. Medir los
-    ciento cincuenta candidatos gastaria nueve peticiones sobre lugares que
-    nunca se van a usar.
+    Se derivan del borrador y no se adivinan antes. Adivinarlos obligaba a
+    incluir varios restaurantes por dia por si acaso, y con ocho candidatos
+    diarios un viaje de siete dias pasaria de cincuenta lugares: la matriz se
+    partiria en bloques y costaria cuatro peticiones en vez de una.
+
+    El precio es que las rutas reales no pueden hacer que se elija OTRO
+    restaurante, solo corregir las distancias del que ya se eligio. Con
+    cincuenta peticiones diarias, pagar cuatro por refinar una eleccion que
+    la estimacion ya hizo razonablemente no vale la pena.
     """
-    lugares = [lugar for grupo in grupos for lugar in grupo]
-    for grupo in grupos:
-        if not grupo:
-            continue
-        lugares.extend(sorted(comidas, key=lambda c: travel.between(grupo[0], c)[0])[:4])
-    return lugares
+    return [parada.place for dia in borrador.days for parada in dia.stops]
 
 
 def plan_with_routing(
@@ -1107,7 +1137,8 @@ def revise_day(
     dias: list[Day] = []
     for dia in sorted(state, key=lambda d: d.number):
         if dia.number == target:
-            secuencia = _trim_to_budget(nuevo, comidas_libres[:4], restricciones_dia, medidor)
+            cercanas = _meal_candidates(nuevo, comidas_libres, medidor)
+            secuencia = _trim_to_budget(nuevo, cercanas, restricciones_dia, medidor)
             dias.append(schedule_day(dia.number, secuencia, restricciones_dia, medidor))
             continue
 

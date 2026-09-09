@@ -163,8 +163,8 @@ class TestAlcanceDeLaMatriz:
     def test_solo_se_miden_los_lugares_que_pueden_entrar(self, monkeypatch):
         """Medir los ciento cincuenta candidatos gastaria nueve peticiones.
 
-        El grueso de ellos nunca entra al itinerario, asi que la matriz se
-        acota a las paradas elegidas mas los restaurantes cercanos a cada dia.
+        La matriz se acota a lo que el borrador realmente eligio, que ademas
+        deja el conteo por debajo de cincuenta y lo resuelve en una peticion.
         """
         muchos = [lugar(f"D{i}", 13.70 + i * 0.01, -89.22) for i in range(60)]
         comidas = [lugar(f"C{i}", 13.70 + i * 0.01, -89.23, Category.food) for i in range(20)]

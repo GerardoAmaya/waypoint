@@ -154,14 +154,24 @@ def main() -> int:
             print(f"  {check:<24} {cuantos:>4}")
 
     if marginales:
-        print("\nCosto de la parada mas cara de cada dia, como fraccion del dia:")
+        print(
+            "\nAhorro de quitar la parada intermedia mas cara "
+            f"(solo dias de {MIN_STOPS_FOR_MARGIN}+ paradas):"
+        )
         print(
             f"  mediana {statistics.median(marginales):.0%}   "
             f"peor {max(marginales):.0%}   "
             f"dias medidos {len(marginales)}"
         )
+        caros = [f for f in marginales if f >= 0.30]
+        print(f"  dias donde una sola parada cuesta 30% o mas: {len(caros)}")
+    else:
+        print(
+            f"\nNingun dia llego a {MIN_STOPS_FOR_MARGIN} paradas: "
+            "la metrica del rebote no aplica."
+        )
 
-    return 0 if cumplidos == len(casos) else 0
+    return 0
 
 
 if __name__ == "__main__":
