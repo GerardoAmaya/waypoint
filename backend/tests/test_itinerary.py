@@ -30,6 +30,7 @@ from app.services.itinerary import (
     _route_km,
     _sequence_end,
     _trim_to_budget,
+    advise,
     assemble,
     build_days,
     estimate_travel,
@@ -1827,3 +1828,60 @@ class TestTiempoPorCategoria:
         )
         dia = schedule_day(1, secuencia, restricciones)
         assert self._minutos(dia.stops[0]) == 90
+
+
+class TestElAnclaNoSeComeElCupoDeLaComida:
+    """El dia que sale de un hotel tambien almuerza.
+
+    build_days reserva un cupo para la comida y le da al ancla uno aparte. La
+    insercion de comidas contaba la secuencia entera contra el mismo tope, asi
+    que el hotel ocupaba el sitio reservado y el dia salia sin comer: cuatro
+    destinos, ningun restaurante, y un aviso que culpaba al horario.
+    """
+
+    def _mundo(self, destinos: int, tope: int):
+        hotel = lugar("Hotel", 13.6900, -89.2100, Category.lodging, 0.1)
+        ruta = [hotel] + [
+            lugar(f"P{i}", 13.6900 + (i + 1) * 0.002, -89.2100, Category.viewpoint, 0.6)
+            for i in range(destinos)
+        ]
+        comidas = [lugar("Comedor", 13.6905, -89.2098, Category.food, 0.6)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.69,
+            center_lon=-89.21,
+            start_place=hotel,
+            return_to_start=True,
+            max_stops_per_day=tope,
+            earliest_start=time(11, 0),
+        )
+        return ruta, comidas, restricciones
+
+    def test_el_cupo_reservado_llega_a_la_comida(self):
+        """Tope de 3: dos destinos y el almuerzo, que es lo que reserva."""
+        ruta, comidas, restricciones = self._mundo(destinos=2, tope=3)
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+
+        assert [c for _, c in secuencia if c] == ["lunch"]
+
+    def test_el_tope_sigue_mandando_cuando_de_verdad_esta_lleno(self):
+        """La exencion es del ancla, no de la comida."""
+        ruta, comidas, restricciones = self._mundo(destinos=3, tope=3)
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+
+        assert [c for _, c in secuencia if c] == []
+
+    def test_el_aviso_dice_que_falto_cupo_y_no_que_falto_horario(self):
+        """Las dos causas se arreglan distinto: una subiendo el tope de
+        paradas, la otra llevando comida."""
+        ruta, comidas, restricciones = self._mundo(destinos=3, tope=3)
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+        dia = schedule_day(1, secuencia, restricciones)
+
+        consejos = advise(Itinerary(days=[dia]), restricciones, comidas)
+        mensajes = " ".join(c.detail for c in consejos)
+
+        assert "No queda parada libre" in mensajes
+        assert "horario" not in mensajes

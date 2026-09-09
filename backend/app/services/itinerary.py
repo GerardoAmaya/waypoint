@@ -16,7 +16,7 @@ restricciones, se puede comprobar automaticamente si el resultado las cumple.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import time, timedelta
 
@@ -524,6 +524,22 @@ REPEAT_PENALTY_KM = 12.0
 REQUIRED_BONUS_KM = 60.0
 
 
+def _visit_count(lugares: Iterable[PlaceHit], numero: int, constraints: Constraints) -> int:
+    """Cuantas de esas paradas cuentan contra max_stops_per_day.
+
+    **El punto de partida no cuenta, ni cuando aparece dos veces por el
+    regreso.** Es la misma regla que aplica build_days al repartir los cupos,
+    y estaba escrita tres veces con tres criterios distintos: build_days le
+    daba un cupo aparte al ancla, validate() la descontaba, y la insercion de
+    comidas la contaba como una parada mas. Esa tercera copia se comia el cupo
+    reservado para el almuerzo en todos los dias con hotel.
+    """
+    ancla = constraints.start_place if constraints.anchors_day(numero) else None
+    if ancla is None:
+        return sum(1 for _ in lugares)
+    return sum(1 for lugar in lugares if lugar.id != ancla.id)
+
+
 def _fill_cost(
     dia: list[PlaceHit],
     candidato: PlaceHit,
@@ -840,7 +856,15 @@ def _best_meal_insertion(
     # estimacion dice una y despues la cena tambien entra por hora, el dia
     # termina con seis paradas y el limite era cinco. Una restriccion dura no
     # se puede predecir, se hace cumplir donde se puede garantizar.
-    if len(secuencia) >= constraints.max_stops_per_day:
+    #
+    # Se cuenta con la misma regla que el resto: el punto de partida no gasta
+    # cupo. Contando la secuencia entera, el hotel se comia el sitio que
+    # build_days habia reservado para el almuerzo, y el dia salia sin comida
+    # aunque el restaurante estuviera al lado y dentro del presupuesto.
+    if (
+        _visit_count((lugar for lugar, _ in secuencia), numero, constraints)
+        >= constraints.max_stops_per_day
+    ):
         return secuencia, None, 0.0
 
     base_km = _sequence_km(secuencia, travel)
@@ -957,7 +981,13 @@ def schedule_day(
         and constraints.anchors_day(numero)
         and constraints.start_place is not None
         and secuencia
-        and secuencia[-1][0] is not constraints.start_place
+        # **Se compara por identificador y no por identidad.** Al rehacer un
+        # dia, los otros se reconstruyen desde el catalogo, asi que su hotel
+        # final es otro objeto con el mismo id: con `is not`, el regreso se
+        # agregaba encima del que ya estaba y el dia terminaba llegando dos
+        # veces al hotel. Solo se veia con punto de partida y revision, que es
+        # justo lo que antes se perdia por el camino.
+        and secuencia[-1][0].id != constraints.start_place.id
     ):
         secuencia = [*secuencia, (constraints.start_place, None)]
 
@@ -1052,14 +1082,10 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
             )
 
         # El punto de partida no cuenta contra el limite, ni cuando aparece dos
-        # veces por el regreso. El motor le da un cupo aparte al armar el dia,
+        # veces por el regreso: el motor le da un cupo aparte al armar el dia,
         # asi que contarlo aca lo haria reportar como violacion un limite que
-        # el mismo decidio no aplicarle: se contradeciria solo.
-        visitas = len(dia.stops)
-        if constraints.anchors_day(dia.number) and constraints.start_place is not None:
-            visitas -= sum(
-                1 for parada in dia.stops if parada.place.id == constraints.start_place.id
-            )
+        # el mismo decidio no aplicarle.
+        visitas = _visit_count((parada.place for parada in dia.stops), dia.number, constraints)
 
         if visitas > constraints.max_stops_per_day:
             violaciones.append(
@@ -1180,6 +1206,23 @@ def _meal_advice(
         )
 
     secuencia = [(p.place, p.meal) for p in dia.stops]
+
+    # **Sin cupo no hay nada que buscar, y decirlo importa.** La insercion
+    # devuelve lo mismo —None— cuando no queda sitio y cuando ningun comedor
+    # cae en la franja, y el aviso daba siempre la segunda explicacion. En un
+    # dia lleno eso era falso: el restaurante existia, estaba en hora y dentro
+    # del presupuesto, y lo que faltaba era una parada. Ademas la salida es
+    # distinta: aca se sube el tope de paradas, alla se lleva comida.
+    visitas = _visit_count((p.place for p in dia.stops), dia.number, constraints)
+    if visitas >= constraints.max_stops_per_day:
+        return Advice(
+            kind,
+            dia.number,
+            f"No queda parada libre para {nombre}: el día ya tiene {visitas} y "
+            f"pediste {constraints.max_stops_per_day}. Subí el límite de paradas "
+            f"o llevá {nombre}",
+        )
+
     candidatos = _meal_candidates([p.place for p in dia.stops], comidas, travel)
 
     # Se busca la mejor insercion SIN respetar el presupuesto, justamente para
@@ -1696,8 +1739,27 @@ def revise_day(
     usan los otros dias, para que no aparezca dos veces el mismo lugar.
     """
     excluidos = set(exclude or ())
-    medidor = _travel_or_estimate(travel, constraints.mode)
     restricciones_dia = day_constraints or constraints
+
+    # **El dia que se rehace lleva su propio modo, no el del itinerario.**
+    # Se armaba con un medidor resuelto una sola vez desde constraints.mode y
+    # se repartia como "dia 1" de un itinerario de un dia, asi que el dia 2 a
+    # pie de "el primero en coche y el segundo caminando" se reconstruia con
+    # la red del coche y con sus veinticinco kilometros. Es el mismo error que
+    # ya se habia corregido en assemble(), que aqui habia sobrevivido.
+    modo = restricciones_dia.mode_for(target)
+    medidor = _travel_or_estimate(travel, modo)
+
+    # build_days reparte dias numerados desde 1, asi que el dia objetivo tiene
+    # que viajar ahi como un itinerario de un solo dia que ya trae puestos el
+    # modo y el presupuesto que le tocan.
+    del_objetivo = replace(
+        restricciones_dia,
+        days=1,
+        mode=modo,
+        max_travel_km_per_day=restricciones_dia.budget_for(target),
+        day_modes={},
+    )
 
     referencias = [par[0] for dia in state for par in dia.stops]
     catalogo = places_by_ids(db, referencias)
@@ -1718,8 +1780,8 @@ def revise_day(
 
     grupos = build_days(
         disponibles,
-        replace(restricciones_dia, days=1),
-        medidor,
+        del_objetivo,
+        travel,
         meal_options=len(comidas_libres),
     )
     nuevo = grupos[0] if grupos else []
@@ -1728,13 +1790,15 @@ def revise_day(
     for dia in sorted(state, key=lambda d: d.number):
         if dia.number == target:
             cercanas = _meal_candidates(nuevo, comidas_libres, medidor)
-            secuencia = _trim_to_budget(nuevo, cercanas, restricciones_dia, medidor)
-            dias.append(schedule_day(dia.number, secuencia, restricciones_dia, medidor))
+            secuencia = _trim_to_budget(nuevo, cercanas, restricciones_dia, travel, target)
+            dias.append(schedule_day(dia.number, secuencia, restricciones_dia, travel))
             continue
 
+        # Los demas dias tambien se reprograman con `travel` y no con un
+        # medidor ya resuelto: cada uno tiene su modo y su red.
         secuencia = [(catalogo[ref], comida) for ref, comida in dia.stops if ref in catalogo]
         if secuencia:
-            dias.append(schedule_day(dia.number, secuencia, constraints, medidor))
+            dias.append(schedule_day(dia.number, secuencia, constraints, travel))
 
     itinerario = Itinerary(days=dias)
     itinerario.violations = validate(itinerario, constraints)
@@ -1760,7 +1824,9 @@ def revise_with_routing(
     """
     from app.services.routing import client_from_settings, load_travel_matrix
 
-    estimado = EstimatedTravel(constraints.mode)
+    # Sin proveedor, cada dia cae en la estimacion de SU modo: pasar
+    # EstimatedTravel(constraints.mode) medía el dia a pie con la velocidad
+    # del coche antes siquiera de llegar a la matriz.
     borrador = revise_day(
         db,
         constraints,
@@ -1768,16 +1834,22 @@ def revise_with_routing(
         target,
         day_constraints=day_constraints,
         exclude=exclude,
-        travel=estimado,
+        travel=None,
     )
 
-    lugares = [parada.place for dia in borrador.itinerary.days for parada in dia.stops]
-    matriz = load_travel_matrix(
-        lugares,
-        constraints.mode,
-        db=db,
-        client=client if client is not None else client_from_settings(),
-    )
+    # Una matriz por modo distinto, igual que plan_streaming: a pie y en carro
+    # no son la misma red, y medir el dia a pie con la del coche seria
+    # inventar. Cuesta una peticion mas solo cuando el viaje mezcla modos.
+    lugares_por_modo: dict[str, list[PlaceHit]] = {}
+    for dia in borrador.itinerary.days:
+        modo = constraints.mode_for(dia.number)
+        lugares_por_modo.setdefault(modo, []).extend(parada.place for parada in dia.stops)
+
+    cliente = client if client is not None else client_from_settings()
+    matrices = {
+        modo: load_travel_matrix(lugares, modo, db=db, client=cliente)
+        for modo, lugares in lugares_por_modo.items()
+    }
 
     final = revise_day(
         db,
@@ -1786,9 +1858,13 @@ def revise_with_routing(
         target,
         day_constraints=day_constraints,
         exclude=exclude,
-        travel=matriz,
+        travel=matrices,
     )
-    return RevisionResult(itinerary=final.itinerary, stats=matriz.stats, missing=final.missing)
+    return RevisionResult(
+        itinerary=final.itinerary,
+        stats=_merge_matrix_stats(matrices, constraints.mode),
+        missing=final.missing,
+    )
 
 
 def used_place_ids(itinerario: Itinerary) -> set[uuid.UUID]:

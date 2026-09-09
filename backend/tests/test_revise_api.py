@@ -176,3 +176,42 @@ class TestValidacion:
 
     def test_rechaza_un_itinerario_sin_dias(self, cliente):
         assert cliente.post("/plan/revise", json=cuerpo(days=[])).status_code == 422
+
+
+class TestLasRestriccionesLleganEnteras:
+    """El cliente devuelve las restricciones y el servidor las reconstruye.
+
+    Se reconstruian campo por campo y faltaban tres, los tres duros: sin
+    day_modes el dia a pie se rehacia en coche, sin must_include_categories
+    "minimo un museo" dejaba de exigirse, y sin el punto de partida el dia
+    revisado ya no salia ni volvia al hotel. Nada de eso lo pidio quien
+    revisa, y ninguna prueba lo miraba porque el olvido esta en la copia.
+    """
+
+    def test_ningun_limite_duro_se_queda_por_el_camino(self, monkeypatch):
+        from app.api.plan import _to_constraints
+        from app.schemas import ItineraryRequest
+
+        casa = lugar("Casa", 13.72, -89.24, Category.lodging, "hotel")
+        monkeypatch.setattr("app.api.plan.places_by_ids", lambda db, ids: {casa.id: casa})
+
+        peticion = ItineraryRequest(
+            days=2,
+            center_lat=13.72,
+            center_lon=-89.24,
+            must_include_categories=[Category.culture],
+            day_modes={"2": "walking"},
+            start_place_id=casa.id,
+            return_to_start=True,
+        )
+
+        restricciones = _to_constraints(peticion, None)
+
+        assert restricciones.must_include_categories == [Category.culture]
+        assert restricciones.start_place is not None
+        assert restricciones.return_to_start is True
+        # La consecuencia, que es lo que de verdad importaba: el dia 2 se
+        # rehace a pie y con el presupuesto de a pie.
+        assert restricciones.mode_for(2) == "walking"
+        assert restricciones.budget_for(2) == 8.0
+        assert restricciones.anchors_day(2) is True

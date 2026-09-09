@@ -125,9 +125,25 @@ export interface Constraints {
   mode: Mode;
   preferred_categories: Category[];
   avoided_categories: Category[];
+  /** Categorias exigidas, no preferidas: "minimo un museo". */
+  must_include_categories: Category[];
+  /** Modo de cada dia cuando no todos van igual. La clave es el numero en texto. */
+  day_modes: Record<string, Mode>;
   include_meals: boolean;
+  meal_minutes: number;
+  /** Minutos por categoria cuando se piden: "dos horas en el parque". */
+  category_minutes: Partial<Record<Category, number>>;
   max_stops_per_day: number;
   min_quality: number;
+  /**
+   * El punto de partida y si se vuelve a el.
+   *
+   * Estan aca porque este objeto se devuelve tal cual al pedir una revision,
+   * y el dia rehecho tiene que salir del mismo sitio. Faltaban, y el backend
+   * los perdia: revisar un dia le quitaba el hotel.
+   */
+  start_place_id: string | null;
+  return_to_start: boolean;
   real_routes: boolean;
 }
 

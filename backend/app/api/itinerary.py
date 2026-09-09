@@ -29,6 +29,7 @@ from app.schemas import (
 )
 from app.services import itinerary as motor
 from app.services.places import altitud_m, cocina_legible, contacto, nombre_legible
+from app.services.places import by_ids as places_by_ids
 from app.services.routing import client_from_settings
 
 router = APIRouter(prefix="/itinerary", tags=["itinerary"])
@@ -44,7 +45,7 @@ _limiter = RateLimiter(
 limitar = limiter_dependency(_limiter, settings.trust_proxy_header)
 
 
-def _to_constraints(peticion: ItineraryRequest) -> motor.Constraints:
+def _to_constraints(peticion: ItineraryRequest, db: Session) -> motor.Constraints:
     return motor.Constraints(
         days=peticion.days,
         center_lat=peticion.center_lat,
@@ -63,6 +64,12 @@ def _to_constraints(peticion: ItineraryRequest) -> motor.Constraints:
         category_minutes=dict(peticion.category_minutes),
         max_stops_per_day=peticion.max_stops_per_day,
         min_quality=peticion.min_quality,
+        start_place=(
+            places_by_ids(db, [peticion.start_place_id]).get(peticion.start_place_id)
+            if peticion.start_place_id is not None
+            else None
+        ),
+        return_to_start=peticion.return_to_start,
     )
 
 
@@ -178,7 +185,7 @@ def build(peticion: ItineraryRequest, db: Session = Depends(get_db)) -> Itinerar
     sin el, de la estimacion geodesica calibrada. En ninguno de los dos casos
     falla por quedarse sin cupo: degrada y lo dice en `travel`.
     """
-    restricciones = _to_constraints(peticion)
+    restricciones = _to_constraints(peticion, db)
 
     if not peticion.real_routes:
         return _to_out(motor.plan(db, restricciones), None)

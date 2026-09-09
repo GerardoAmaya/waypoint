@@ -6,12 +6,13 @@ que no deja retocar nada, porque rompe lo que ya habias aceptado.
 """
 
 import uuid
+from dataclasses import replace
 
 import pytest
 
 from app.models import Category
 from app.services import itinerary as motor
-from app.services.itinerary import Constraints, DayState, revise_day
+from app.services.itinerary import BUDGET_BY_MODE, Constraints, DayState, revise_day
 from app.services.places import PlaceHit
 
 
@@ -168,3 +169,126 @@ class TestVerificacion:
         assert any(
             v.constraint == "max_travel_km_per_day" for v in resultado.itinerary.violations
         )
+
+
+CASA = lugar("Casa", 13.720, -89.240, Category.lodging, "hotel")
+TODOS[CASA.id] = CASA
+
+
+class TestLaRevisionNoPierdeLasRestriccionesDelDia:
+    """Rehacer un dia no es rehacerlo con otras reglas.
+
+    El dia objetivo se repartia como "dia 1" de un itinerario de un dia, y el
+    dia 1 de {2: "walking"} va en coche: el dia a pie se reconstruia con la
+    red y con el presupuesto del coche. Solo se notaba al verificarlo, porque
+    validate() si miraba el modo del dia de verdad.
+    """
+
+    # Una cadena de lugares separados: con presupuesto de coche caben los
+    # cuatro y el dia pasa de veinte kilometros; con el de a pie, no.
+    LEJOS = [
+        lugar("Uno", 13.700, -89.220, Category.culture, "museum"),
+        lugar("Dos", 13.740, -89.220, Category.culture, "theatre"),
+        lugar("Tres", 13.780, -89.220, Category.nature, "waterfall"),
+        lugar("Cuatro", 13.820, -89.220, Category.nature, "volcano"),
+    ]
+
+    @pytest.fixture
+    def catalogo_disperso(self, monkeypatch):
+        todos = {p.id: p for p in self.LEJOS}
+        monkeypatch.setattr(motor, "select_candidates", lambda db, c: ([], self.LEJOS))
+        monkeypatch.setattr(
+            motor, "places_by_ids", lambda db, ids: {i: todos[i] for i in ids if i in todos}
+        )
+
+    def _restricciones(self, **extra):
+        return Constraints(
+            days=2,
+            center_lat=13.75,
+            center_lon=-89.22,
+            max_travel_km_per_day=80,
+            include_meals=False,
+            max_stops_per_day=4,
+            **extra,
+        )
+
+    def _estado(self):
+        return [
+            DayState(1, [(self.LEJOS[0].id, None)]),
+            DayState(2, [(self.LEJOS[1].id, None)]),
+        ]
+
+    def test_el_dia_a_pie_se_rehace_con_su_presupuesto(self, catalogo_disperso):
+        restricciones = self._restricciones(day_modes={2: "walking"})
+
+        resultado = revise_day(None, restricciones, self._estado(), target=2)
+        dia = next(d for d in resultado.itinerary.days if d.number == 2)
+
+        assert dia.travel_km <= BUDGET_BY_MODE["walking"], (
+            f"el dia a pie se rehizo con {dia.travel_km} km"
+        )
+
+    def test_en_coche_el_mismo_dia_llega_mas_lejos(self, catalogo_disperso):
+        """La cota de arriba no se cumple sola: sin modo por dia, ese mismo
+        dia se lleva los cuatro lugares y pasa de veinte kilometros."""
+        resultado = revise_day(None, self._restricciones(), self._estado(), target=2)
+        dia = next(d for d in resultado.itinerary.days if d.number == 2)
+
+        assert dia.travel_km > BUDGET_BY_MODE["walking"]
+
+    def test_el_dia_revisado_no_viola_su_propio_presupuesto(self, catalogo_disperso):
+        """Lo que el motor construye y lo que validate() reporta tienen que
+        estar de acuerdo: antes construia en coche y verificaba a pie."""
+        restricciones = self._restricciones(day_modes={2: "walking"})
+
+        resultado = revise_day(None, restricciones, self._estado(), target=2)
+
+        assert [v.constraint for v in resultado.itinerary.violations] == []
+
+
+class TestElRegresoNoSeDuplica:
+    """Los otros dias vienen del cliente con su regreso ya puesto.
+
+    schedule_day comparaba el ultimo lugar con el punto de partida por
+    identidad, y al reconstruir un dia desde el catalogo ese hotel es otro
+    objeto con el mismo id: el regreso se agregaba encima del que ya estaba y
+    el dia terminaba llegando dos veces al hotel.
+    """
+
+    @pytest.fixture
+    def catalogo_de_la_base(self, monkeypatch):
+        """Devuelve copias, como hace la base de datos.
+
+        Con los mismos objetos el test no reproduce nada: la comparacion por
+        identidad acierta por casualidad y el bug no aparece.
+        """
+        todos = {p.id: p for p in [*DESTINOS, *COMIDAS, CASA]}
+        monkeypatch.setattr(motor, "select_candidates", lambda db, c: (COMIDAS, DESTINOS))
+        monkeypatch.setattr(
+            motor,
+            "places_by_ids",
+            lambda db, ids: {i: replace(todos[i]) for i in ids if i in todos},
+        )
+
+    def test_el_dia_que_no_se_toca_conserva_un_solo_regreso(self, catalogo_de_la_base):
+        restricciones = Constraints(
+            days=2,
+            center_lat=13.72,
+            center_lon=-89.24,
+            max_travel_km_per_day=80,
+            include_meals=False,
+            max_stops_per_day=2,
+            start_place=CASA,
+            return_to_start=True,
+        )
+        # El dia 1 llega tal como lo emitio el servidor: sale de la casa,
+        # visita, y vuelve.
+        con_regreso = [
+            DayState(1, [(CASA.id, None), (DESTINOS[0].id, None), (CASA.id, None)]),
+            DayState(2, [(CASA.id, None), (DESTINOS[2].id, None), (CASA.id, None)]),
+        ]
+
+        resultado = revise_day(None, restricciones, con_regreso, target=2)
+        dia1 = next(d for d in resultado.itinerary.days if d.number == 1)
+
+        assert [s.place.name for s in dia1.stops].count("Casa") == 2

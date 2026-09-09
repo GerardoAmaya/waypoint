@@ -22,6 +22,7 @@ from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 
 from app.api.itinerary import _to_out
 from app.core.config import settings
@@ -191,7 +192,23 @@ def plan(peticion: PlanMessage) -> StreamingResponse:
     )
 
 
-def _to_constraints(peticion) -> motor.Constraints:
+def _to_constraints(peticion, db: Session) -> motor.Constraints:
+    """Las restricciones que el cliente devuelve, tal cual las mando.
+
+    **Copiar campo por campo se paga con los que uno olvida.** Faltaban tres, y
+    los tres eran limites duros: sin day_modes, revisar el segundo dia de "el
+    primero en coche y el segundo a pie" lo rehacia en coche y con presupuesto
+    de coche; sin must_include_categories, "minimo un museo" dejaba de exigirse
+    justo cuando el dia se rehace; sin el punto de partida, el dia revisado ya
+    no salia ni volvia al hotel. Nada de eso lo habia pedido quien revisaba.
+    """
+    partida = None
+    if peticion.start_place_id is not None:
+        # Se resuelve contra el catalogo y no se reconstruye de lo que mando el
+        # cliente: es la misma regla que el resto de /revise, donde cada
+        # identificador se valida antes de usarse.
+        partida = places_by_ids(db, [peticion.start_place_id]).get(peticion.start_place_id)
+
     return motor.Constraints(
         days=peticion.days,
         center_lat=peticion.center_lat,
@@ -203,11 +220,15 @@ def _to_constraints(peticion) -> motor.Constraints:
         mode=peticion.mode,
         preferred_categories=list(peticion.preferred_categories),
         avoided_categories=list(peticion.avoided_categories),
+        must_include_categories=list(peticion.must_include_categories),
+        day_modes={int(numero): modo for numero, modo in peticion.day_modes.items()},
         include_meals=peticion.include_meals,
         meal_minutes=peticion.meal_minutes,
         category_minutes=dict(peticion.category_minutes),
         max_stops_per_day=peticion.max_stops_per_day,
         min_quality=peticion.min_quality,
+        start_place=partida,
+        return_to_start=peticion.return_to_start,
     )
 
 
@@ -249,7 +270,7 @@ def revise(peticion: ReviseRequest) -> RevisionOut:
             )
             raise HTTPException(status_code=422, detail=" ".join(partes))
 
-        base = _to_constraints(peticion.constraints)
+        base = _to_constraints(peticion.constraints, db)
         del_dia = replace(base, **cambio.changes) if cambio.changes else base
 
         por_nombre = {hit.name: ref for ref, hit in catalogo.items()}

@@ -152,7 +152,7 @@ export default function Compositor({ fase, error, onSubmit }: Props) {
         jerarquia se sostiene, asi que ahi se queda grande.
       */}
       <p className="mt-4 text-cuerpo leading-relaxed font-light text-pretty text-tinta-suave sm:mt-5 sm:text-guia sm:leading-snug">
-        Cuéntanos cuantos días tenés, desde donde salis (lugar o hotel), si deseas ir en carro o caminando, si querés madrugar o no y te armamos un itinerario con los lugares que podés visitar.
+        Te armamos la mejor recomendación de lugares a visitar según tus preferencias. Número de días a planificar, tu lugar de partida (hotel o lugar de origen), si te transportas en carro o caminando, y si querés incluir comidas. Nosotros nos encargamos de buscar los mejores lugares para vos y armar un itinerario completo.
       </p>
 
       <div className="mt-6 sm:mt-8">

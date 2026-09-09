@@ -123,6 +123,17 @@ class ItineraryRequest(BaseModel):
     max_stops_per_day: int = Field(default=5, ge=1, le=12)
     min_quality: float = Field(default=0.0, ge=0.0, le=1.0)
 
+    # De donde sale el dia, por identificador del catalogo y no por
+    # coordenadas: asi el punto de partida sobrevive al viaje de ida y vuelta
+    # de /revise sin abrir la puerta a inyectar lugares que no existen. Lo
+    # resuelve resolve_start_place(), que siempre devuelve un lugar del
+    # catalogo, de modo que el identificador existe siempre.
+    #
+    # Sin esto, revisar un dia perdia el hotel: el dia rehecho ya no salia ni
+    # volvia a el, y el usuario no habia cambiado nada de eso.
+    start_place_id: uuid.UUID | None = None
+    return_to_start: bool = False
+
     # Con rutas reales el itinerario consume cupo de ORS. Se puede apagar para
     # probar o para ahorrar, y la respuesta dice siempre cual se uso.
     real_routes: bool = True

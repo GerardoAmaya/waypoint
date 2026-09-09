@@ -482,6 +482,11 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             ),
             day_modes=_day_modes(datos.get("day_modes"), notes),
             category_minutes=_category_minutes(datos.get("category_minutes"), notes),
+            # Van tambien en la peticion y no solo en la interpretacion: es lo
+            # que el cliente devuelve al pedir una revision, y sin ellos el dia
+            # rehecho pierde su ancla.
+            start_place_id=partida.id if partida is not None else None,
+            return_to_start=bool(datos.get("return_to_start", False)),
         )
     except ValidationError as exc:
         # Red de seguridad: los campos se recortan uno por uno mas arriba, pero
