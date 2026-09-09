@@ -125,8 +125,14 @@ export default function Home() {
           fondo. Cuando el plan llega, se retira a un boton en la esquina: la
           pantalla pasa a ser del itinerario.
         */}
+        {/*
+          z-[1000] no es un numero magico: los paneles de Leaflet van de 200 a
+          700 y sus controles a 800. Sin un indice explicito, esta capa queda
+          por debajo del mapa y no se ve nada. Es el bug que dejo la primera
+          version sin compositor en pantalla.
+        */}
         <div
-          className={`pointer-events-none absolute inset-0 flex ${
+          className={`pointer-events-none absolute inset-0 z-[1000] flex ${
             conPlan
               ? "items-start justify-end p-4"
               : "items-center justify-center bg-basalto/55 p-6 backdrop-blur-[2px]"

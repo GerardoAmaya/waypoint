@@ -7,6 +7,33 @@ import "leaflet/dist/leaflet.css";
 import { FieldLayer } from "./FieldLayer";
 import { CATEGORY_COLOR, PALETA, type Day, type TravelSourceKind } from "@/lib/types";
 
+/**
+ * De donde salen las teselas.
+ *
+ * Por defecto, OpenStreetMap oscurecido por CSS. CARTO pasó a exigir llave en
+ * agosto de 2026 y estampa "API KEY REQUIRED" sobre cada tesela sin ella; la
+ * llave es gratis y sin cuenta, pero el PLAN.md eligió el stack sin llaves a
+ * propósito, y una que haya que pedir es un paso más para quien clone el repo.
+ *
+ * Con NEXT_PUBLIC_CARTO_KEY puesta se usa Dark Matter, que se ve mejor que
+ * cualquier inversión por filtro. Sin ella el mapa funciona igual.
+ */
+const LLAVE_CARTO = process.env.NEXT_PUBLIC_CARTO_KEY;
+
+const TESELAS = LLAVE_CARTO
+  ? {
+      url: `https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png?key=${LLAVE_CARTO}`,
+      credito:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      invertir: false,
+    }
+  : {
+      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      credito:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      invertir: true,
+    };
+
 /** El Salvador entero, que es el encuadre de arranque. */
 const PAIS: L.LatLngBoundsExpression = [
   [13.1, -90.15],
@@ -48,21 +75,17 @@ export default function Mapa({
     });
     map.fitBounds(PAIS, { padding: [24, 24] });
 
-    L.tileLayer(
-      "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png",
-      {
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        maxZoom: 18,
-      },
-    ).addTo(map);
+    L.tileLayer(TESELAS.url, {
+      attribution: TESELAS.credito,
+      maxZoom: 18,
+    }).addTo(map);
 
-    // Las etiquetas van en una capa aparte, por encima de la ruta, para que los
-    // nombres de pueblo se lean sin que el trazo los tape.
-    L.tileLayer(
-      "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png",
-      { maxZoom: 18, pane: "shadowPane" },
-    ).addTo(map);
+    // El filtro que oscurece OpenStreetMap se aplica al panel de teselas y no
+    // al mapa entero: invertir el contenedor invertiria tambien los pines y la
+    // ruta, y el anil saldria naranja.
+    if (TESELAS.invertir) {
+      map.getPane("tilePane")?.classList.add("teselas-oscuras");
+    }
 
     L.control.zoom({ position: "bottomright" }).addTo(map);
     capaPlan.current = L.layerGroup().addTo(map);

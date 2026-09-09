@@ -121,6 +121,20 @@ body {
   }
 }
 
+/*
+  OpenStreetMap solo publica teselas claras. Invertir y rotar el matiz da un
+  mapa oscuro sin depender de ningun proveedor con llave: el negro se vuelve
+  claro, el claro negro, y la rotacion devuelve los colores a su lado del
+  circulo para que el agua siga siendo azulada y no naranja.
+
+  Va en el panel de teselas y no en el contenedor: invertir el contenedor
+  invertiria tambien los pines y la ruta.
+*/
+.teselas-oscuras {
+  filter: invert(1) hue-rotate(180deg) brightness(0.86) contrast(0.92)
+    saturate(0.45);
+}
+
 /* Leaflet trae su propio aspecto; se lo apaga para que no imponga el suyo. */
 .leaflet-container {
   background: var(--color-basalto);
