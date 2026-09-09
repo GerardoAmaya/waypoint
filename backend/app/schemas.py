@@ -145,3 +145,37 @@ class ItineraryOut(BaseModel):
     total_stops: int
     unused_candidates: int
     travel: TravelSourceOut
+
+
+# --------------------------------------------------------------------------
+# Capa conversacional
+# --------------------------------------------------------------------------
+
+
+class PlanMessage(BaseModel):
+    """Lo que el usuario escribe, sin estructura."""
+
+    message: str = Field(min_length=1, max_length=600)
+
+
+class AreaOut(BaseModel):
+    name: str
+    lat: float
+    lon: float
+    radius_m: int
+    # "zone" si vino del nomenclator, "catalog" si de la busqueda por nombre.
+    source: str
+
+
+class InterpretationOut(BaseModel):
+    """Lo que se entendio de la frase, antes de armar nada.
+
+    `unmapped` y `notes` son la parte importante y no un adorno: dicen que
+    quedo afuera y que hubo que recortar. Un planificador que silenciosamente
+    ignora la mitad de lo que le pediste es peor que uno que lo admite.
+    """
+
+    area: AreaOut | None = None
+    constraints: ItineraryRequest | None = None
+    unmapped: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
