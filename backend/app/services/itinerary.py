@@ -27,14 +27,19 @@ from app.services.geo import EstimatedTravel, TravelProvider
 from app.services.places import PlaceHit, search_in_area
 from app.services.places import by_ids as places_by_ids
 
-# Cuanto se queda uno en cada tipo de lugar, en minutos. Son estimaciones de
-# sentido comun, no datos: un mirador es una parada corta y un parque nacional
-# ocupa media manana.
 # Kilometros por dia por defecto segun el modo. Solo se usan cuando un dia va
 # en otro modo que el itinerario: es el numero que el prompt ya le sugiere al
 # modelo para "caminando" y para "en carro", puesto donde el motor lo necesita.
 BUDGET_BY_MODE: dict[str, float] = {"driving": 25.0, "walking": 8.0}
 
+# Cuanto se queda uno en cada tipo de lugar, en minutos. Son estimaciones de
+# sentido comun, no datos: un mirador es una parada corta y un parque nacional
+# ocupa media manana.
+#
+# La entrada de comida es para un comedor que NO es la comida del dia: el
+# unico caso es el de quien sale y vuelve a un restaurante, donde la vuelta no
+# es otra comida. Lo que se tarda comiendo esta en Constraints.meal_minutes,
+# porque eso el usuario lo puede decir y esto no.
 DEFAULT_DURATIONS: dict[Category, int] = {
     Category.viewpoint: 30,
     Category.food: 60,
@@ -43,6 +48,18 @@ DEFAULT_DURATIONS: dict[Category, int] = {
     Category.nature: 105,
     Category.lodging: 0,
 }
+
+# Cuanto dura una comida cuando nadie dice lo contrario.
+#
+# Era una hora, heredada de la tabla de arriba, y una hora es lo que se tarda
+# en comer rapido: sentarse, pedir, esperar, comer, pagar y salir no cabe ahi,
+# y menos en una cena. Hora y media es el almuerzo normal de un dia que no
+# tiene prisa, que es justo el dia que esto planifica.
+#
+# El numero se puede decir en el prompt —"almuerzo tranquilo de dos horas"—
+# porque es de las pocas duraciones que uno sabe de si mismo. Cuanto se queda
+# uno en un museo, no.
+DEFAULT_MEAL_MINUTES = 90
 
 # La geometria y las velocidades viven en geo.py. El motor ya no las toca
 # directamente: pide traslados al proveedor y no sabe como se midieron.
@@ -207,6 +224,21 @@ class Constraints:
         return BUDGET_BY_MODE.get(modo, self.max_travel_km_per_day)
 
     include_meals: bool = True
+
+    # Minutos que se pasa uno en cada comida. Ver DEFAULT_MEAL_MINUTES.
+    meal_minutes: int = DEFAULT_MEAL_MINUTES
+
+    # Cuanto quiere quedarse en cada tipo de lugar, cuando lo dice: "quiero
+    # pasar dos horas en el parque" son {nature: 120}. Lo que no aparece usa
+    # DEFAULT_DURATIONS.
+    #
+    # **Es por categoria y no por lugar, y la diferencia se nota.** Quien pide
+    # dos horas de parque las recibe en todos los parques del viaje, porque
+    # cuando lo pide todavia no sabe cual le va a tocar: los lugares los elige
+    # el motor despues. Pedirlo de un sitio concreto es otra cosa y necesita
+    # resolver el nombre y fijar el lugar en el plan.
+    category_minutes: dict[Category, int] = field(default_factory=dict)
+
     max_stops_per_day: int = 5
     min_quality: float = 0.0
 
@@ -695,6 +727,25 @@ def _sequence_km(
     )
 
 
+def _stop_minutes(lugar: PlaceHit, comida: str | None, constraints: Constraints) -> int:
+    """Cuanto dura la parada.
+
+    Tres escalones, del mas especifico al mas general: la etiqueta de comida,
+    lo que el usuario pidio para esa categoria, y la tabla por defecto.
+
+    La etiqueta va primero y no la categoria del lugar: lo que hace larga a
+    una parada es que uno se siente a comer, y eso lo dice la etiqueta que
+    puso _insert_meals. Por categoria, el restaurante al que se vuelve a
+    cerrar el dia contaria como una segunda cena.
+    """
+    if comida is not None:
+        return constraints.meal_minutes
+    categoria = Category(lugar.category)
+    if categoria in constraints.category_minutes:
+        return constraints.category_minutes[categoria]
+    return DEFAULT_DURATIONS.get(categoria, 60)
+
+
 def _arrival_times(
     secuencia: list[tuple[PlaceHit, str | None]],
     constraints: Constraints,
@@ -717,7 +768,7 @@ def _arrival_times(
         elif comida == "dinner" and momento < DINNER_WINDOW[0]:
             momento = DINNER_WINDOW[0]
         horas.append(momento)
-        momento = _add_minutes(momento, DEFAULT_DURATIONS.get(Category(lugar.category), 60))
+        momento = _add_minutes(momento, _stop_minutes(lugar, comida, constraints))
 
     return horas
 
@@ -924,7 +975,7 @@ def schedule_day(
         elif comida == "dinner" and momento < DINNER_WINDOW[0]:
             momento = DINNER_WINDOW[0]
 
-        duracion = DEFAULT_DURATIONS.get(Category(lugar.category), 60)
+        duracion = _stop_minutes(lugar, comida, constraints)
         salida = _add_minutes(momento, duracion)
 
         dia.stops.append(
@@ -1193,9 +1244,11 @@ def _sequence_end(
     if not secuencia:
         return None
     horas = _arrival_times(secuencia, constraints, travel)
-    ultimo, _ = secuencia[-1]
-    duracion = DEFAULT_DURATIONS.get(Category(ultimo.category), 60)
-    return _add_minutes(horas[-1], duracion)
+    # La etiqueta de la ultima parada no se descarta: un dia que termina
+    # cenando dura lo que dura la cena, y con la duracion de la categoria se
+    # calculaba media hora de menos justo donde se comprueba latest_end.
+    ultimo, comida = secuencia[-1]
+    return _add_minutes(horas[-1], _stop_minutes(ultimo, comida, constraints))
 
 
 def _fits_the_day(

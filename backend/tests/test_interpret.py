@@ -328,3 +328,33 @@ class TestLoAplicadoNoSeReportaComoIntraducible:
         resultado = interpret(None, "odio madrugar", modelo(payload))
 
         assert resultado.unmapped == ["no le gusta madrugar"]
+
+
+class TestTiempoPorCategoria:
+    def test_traduce_las_dos_horas_en_el_parque(self):
+        payload = {**BASE, "category_minutes": {"nature": 120, "culture": 40}}
+        resultado = interpret(None, "dos horas en el parque", modelo(payload))
+
+        assert resultado.request.category_minutes == {
+            Category.nature: 120,
+            Category.culture: 40,
+        }
+
+    def test_una_categoria_inventada_se_descarta_con_aviso(self):
+        payload = {**BASE, "category_minutes": {"playas": 120, "nature": 90}}
+        resultado = interpret(None, "dos horas en la playa", modelo(payload))
+
+        assert resultado.request.category_minutes == {Category.nature: 90}
+        assert any("playas" in n for n in resultado.notes)
+
+    def test_un_valor_absurdo_se_descarta_en_vez_de_recortarse(self):
+        """Sin entrada, la categoria usa su duracion normal.
+
+        Recortar a un tope daria un numero que nadie pidio y que ademas
+        parece deliberado.
+        """
+        payload = {**BASE, "category_minutes": {"nature": 5000}}
+        resultado = interpret(None, "todo el mes en el parque", modelo(payload))
+
+        assert resultado.request.category_minutes == {}
+        assert any("nature" in n for n in resultado.notes)

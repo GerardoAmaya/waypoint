@@ -21,12 +21,14 @@ from app.services.geo import (
 )
 from app.services.itinerary import (
     BUDGET_BY_MODE,
+    DEFAULT_MEAL_MINUTES,
     Constraints,
     Day,
     Itinerary,
     Stop,
     _insert_meals,
     _route_km,
+    _sequence_end,
     _trim_to_budget,
     assemble,
     build_days,
@@ -1699,3 +1701,129 @@ class TestModoPorDia:
 
         assert {restricciones.mode_for(n) for n in (1, 2, 3)} == {"driving"}
         assert {restricciones.budget_for(n) for n in (1, 2, 3)} == {25.0}
+
+
+class TestDuracionDeLasComidas:
+    """Lo que se tarda comiendo.
+
+    Ningun test fijaba este numero, y por eso se pudo pasar de una hora a hora
+    y media sin que nada protestara. Una duracion que cambia el horario de
+    todos los dias merece estar sujeta.
+    """
+
+    def _minutos(self, parada):
+        return (parada.departure.hour * 60 + parada.departure.minute) - (
+            parada.arrival.hour * 60 + parada.arrival.minute
+        )
+
+    def _dia(self, **extra):
+        secuencia = [
+            (lugar("Mirador", 13.70, -89.22, Category.viewpoint), None),
+            (lugar("Restaurante", 13.7005, -89.22, Category.food), "lunch"),
+        ]
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(11, 0), **extra
+        )
+        return schedule_day(1, secuencia, restricciones)
+
+    def test_una_comida_dura_hora_y_media_por_defecto(self):
+        comida = next(p for p in self._dia().stops if p.is_meal)
+        assert self._minutos(comida) == DEFAULT_MEAL_MINUTES == 90
+
+    def test_el_usuario_puede_decir_cuanto_tarda_comiendo(self):
+        """ "almuerzo tranquilo de dos horas" tiene que llegar al horario."""
+        comida = next(p for p in self._dia(meal_minutes=120).stops if p.is_meal)
+        assert self._minutos(comida) == 120
+
+    def test_el_comedor_del_regreso_no_es_otra_comida(self):
+        """Quien sale de una pupuseria y vuelve a ella no cena ahi de nuevo.
+
+        Es la razon por la que la duracion se decide por la etiqueta de comida
+        y no por la categoria del lugar.
+        """
+        comedor = lugar("Pupuseria", 13.70, -89.22, Category.food)
+        secuencia = [
+            (comedor, "lunch"),
+            (lugar("Mirador", 13.7005, -89.22, Category.viewpoint), None),
+            (comedor, None),
+        ]
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(12, 0)
+        )
+        dia = schedule_day(1, secuencia, restricciones)
+
+        assert self._minutos(dia.stops[0]) == 90, "el almuerzo dura lo que dura"
+        assert self._minutos(dia.stops[-1]) == 60, "la vuelta no es una segunda comida"
+
+    def test_el_dia_que_termina_cenando_dura_lo_que_dura_la_cena(self):
+        """El limite de latest_end se comprueba contra este numero.
+
+        Con la duracion de la categoria se calculaban treinta minutos de
+        menos, y un dia que se pasaba de la hora parecia entrar.
+        """
+        secuencia = [
+            (lugar("Mirador", 13.70, -89.22, Category.viewpoint), None),
+            (lugar("Restaurante", 13.7005, -89.22, Category.food), "dinner"),
+        ]
+        base = dict(days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(17, 0))
+        medidor = EstimatedTravel("driving")
+
+        # La cena espera a las 18:00 y dura lo suyo.
+        assert _sequence_end(secuencia, Constraints(**base), medidor) == time(19, 30)
+        assert _sequence_end(secuencia, Constraints(meal_minutes=45, **base), medidor) == time(
+            18, 45
+        )
+
+
+class TestTiempoPorCategoria:
+    """ "quiero pasar dos horas en el parque".
+
+    Es por categoria y no por lugar porque cuando alguien lo pide todavia no
+    sabe que parque le va a tocar: los lugares los elige el motor despues.
+    """
+
+    def _dia(self, **extra):
+        secuencia = [
+            (lugar("Reserva", 13.70, -89.22, Category.nature), None),
+            (lugar("Mirador", 13.7005, -89.22, Category.viewpoint), None),
+        ]
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(9, 0), **extra
+        )
+        return schedule_day(1, secuencia, restricciones)
+
+    def _minutos(self, parada):
+        return (parada.departure.hour * 60 + parada.departure.minute) - (
+            parada.arrival.hour * 60 + parada.arrival.minute
+        )
+
+    def test_dos_horas_en_el_parque_son_dos_horas(self):
+        dia = self._dia(category_minutes={Category.nature: 120})
+        assert self._minutos(dia.stops[0]) == 120
+
+    def test_lo_que_no_se_pide_conserva_su_duracion(self):
+        """Pedir tiempo de una categoria no reescribe las demas."""
+        dia = self._dia(category_minutes={Category.nature: 120})
+        assert self._minutos(dia.stops[1]) == 30
+
+    def test_sin_pedir_nada_manda_la_tabla(self):
+        dia = self._dia()
+        assert self._minutos(dia.stops[0]) == 105
+
+    def test_la_comida_gana_sobre_la_categoria(self):
+        """Un almuerzo dura lo que dura un almuerzo.
+
+        Si mandara la categoria, quien pide "los restaurantes rapido" estaria
+        cambiando meal_minutes por la puerta de atras y con otro nombre.
+        """
+        secuencia = [(lugar("Comedor", 13.70, -89.22, Category.food), "lunch")]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(12, 0),
+            meal_minutes=90,
+            category_minutes={Category.food: 20},
+        )
+        dia = schedule_day(1, secuencia, restricciones)
+        assert self._minutos(dia.stops[0]) == 90

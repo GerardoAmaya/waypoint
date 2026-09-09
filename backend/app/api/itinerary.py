@@ -59,6 +59,8 @@ def _to_constraints(peticion: ItineraryRequest) -> motor.Constraints:
         must_include_categories=list(peticion.must_include_categories),
         day_modes={int(numero): modo for numero, modo in peticion.day_modes.items()},
         include_meals=peticion.include_meals,
+        meal_minutes=peticion.meal_minutes,
+        category_minutes=dict(peticion.category_minutes),
         max_stops_per_day=peticion.max_stops_per_day,
         min_quality=peticion.min_quality,
     )

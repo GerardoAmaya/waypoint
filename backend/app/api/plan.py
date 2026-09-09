@@ -124,6 +124,8 @@ def _stream(mensaje: str) -> Iterator[str]:
                 int(numero): modo for numero, modo in resultado.request.day_modes.items()
             },
             include_meals=resultado.request.include_meals,
+            meal_minutes=resultado.request.meal_minutes,
+            category_minutes=dict(resultado.request.category_minutes),
             max_stops_per_day=resultado.request.max_stops_per_day,
             min_quality=resultado.request.min_quality,
             start_place=resultado.start_place,
@@ -202,6 +204,8 @@ def _to_constraints(peticion) -> motor.Constraints:
         preferred_categories=list(peticion.preferred_categories),
         avoided_categories=list(peticion.avoided_categories),
         include_meals=peticion.include_meals,
+        meal_minutes=peticion.meal_minutes,
+        category_minutes=dict(peticion.category_minutes),
         max_stops_per_day=peticion.max_stops_per_day,
         min_quality=peticion.min_quality,
     )

@@ -81,6 +81,13 @@ los museos" o "prefiero naturaleza" son preferencias y van en \
 preferred_categories. La diferencia es que un requisito se cumple o se \
 incumple, y una preferencia solo sube las probabilidades.
 - "include_meals": booleano. Por defecto true.
+- "meal_minutes": entero de 20 a 240. Cuanto dura cada comida, en minutos. \
+Por defecto 90. "almuerzo tranquilo de dos horas" es 120; "comemos algo \
+rapido" o "no quiero perder tiempo comiendo" es cerca de 40. Solo si lo dice.
+- "category_minutes": objeto de categoria a minutos, SOLO cuando dice cuanto \
+tiempo quiere pasar en un tipo de lugar. "quiero pasar dos horas en el parque" \
+es {"nature": 120}; "los museos rapido" es {"culture": 40}. Las claves son las \
+mismas seis categorias. Si no dice ningun tiempo, dejalo vacio.
 - "max_stops_per_day": entero de 1 a 12. Por defecto 5. Son los lugares que \
 quiere visitar; el sitio de donde sale no cuenta.
 - "start_place": string. El lugar concreto de donde arranca el dia, tal como lo \
@@ -246,6 +253,42 @@ def _day_modes(valores, notes: list[str]) -> dict[str, str]:
             salida[str(int(numero))] = modo
         except (TypeError, ValueError):
             notes.append(f"no reconocí el día {numero!r} para el modo de viaje")
+    return salida
+
+
+def _category_minutes(valores, notes: list[str]) -> dict[Category, int]:
+    """Limpia los minutos por categoria que devolvio el modelo.
+
+    Una categoria que no existe se descarta con aviso y no tumba la peticion:
+    el resto de lo que pidio la persona sigue siendo valido, y perder un viaje
+    entero porque el modelo escribio "parque" en vez de "nature" seria una
+    mala forma de fallar.
+    """
+    if not isinstance(valores, dict):
+        return {}
+
+    salida: dict[Category, int] = {}
+    for nombre, minutos in valores.items():
+        try:
+            categoria = Category(str(nombre).strip().lower())
+        except ValueError:
+            notes.append(f"no reconocí la categoría {nombre!r} para el tiempo de visita")
+            continue
+        try:
+            entero = int(minutos)
+        except (TypeError, ValueError):
+            notes.append(f"no entendí {minutos!r} como minutos de {categoria.value}")
+            continue
+        # Fuera de rango se descarta en vez de recortarse a un numero
+        # inventado: sin entrada, la categoria usa la duracion por defecto del
+        # motor, que es mejor respuesta que un valor que nadie pidio.
+        if not 10 <= entero <= 480:
+            notes.append(
+                f"{entero} minutos en {categoria.value} está fuera de lo razonable; "
+                "se usó la duración normal"
+            )
+            continue
+        salida[categoria] = entero
     return salida
 
 
@@ -433,10 +476,12 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             avoided_categories=evitadas,
             must_include_categories=exigidas,
             include_meals=bool(datos.get("include_meals", True)),
+            meal_minutes=_clamp(datos.get("meal_minutes"), 20, 240, 90, notes, "meal_minutes"),
             max_stops_per_day=_clamp(
                 datos.get("max_stops_per_day"), 1, 12, 5, notes, "max_stops_per_day"
             ),
             day_modes=_day_modes(datos.get("day_modes"), notes),
+            category_minutes=_category_minutes(datos.get("category_minutes"), notes),
         )
     except ValidationError as exc:
         # Red de seguridad: los campos se recortan uno por uno mas arriba, pero
@@ -486,6 +531,10 @@ bajarlo bastante; "no me importa manejar" es subirlo.
 "attraction", "lodging", o null.
 - "avoided_categories": la misma lista, o null.
 - "include_meals": booleano o null.
+- "meal_minutes": entero de 20 a 240, o null. Minutos por comida. "dame mas \
+tiempo para almorzar" es subirlo.
+- "category_minutes": objeto de categoria a minutos, o null. "mas rato en el \
+parque" es {"nature": 120}.
 - "remove": lista con los nombres de las paradas de ESE dia que la persona \
 quiere sacar, copiados tal cual de la lista que se te da. Lista vacia si no \
 pidio sacar ninguna.
@@ -587,6 +636,12 @@ def interpret_revision(frase: str, stops: list[str], client=None) -> Revision:
         )
     if isinstance(datos.get("include_meals"), bool):
         cambios["include_meals"] = datos["include_meals"]
+    if datos.get("meal_minutes") is not None:
+        cambios["meal_minutes"] = _clamp(
+            datos["meal_minutes"], 20, 240, 90, notes, "meal_minutes"
+        )
+    if datos.get("category_minutes") is not None:
+        cambios["category_minutes"] = _category_minutes(datos["category_minutes"], notes)
 
     # Solo se aceptan nombres que existan en ese dia. Un nombre inventado se
     # descarta con aviso: sacar "el museo" de un dia que no tiene museo no es

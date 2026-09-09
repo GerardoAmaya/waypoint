@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import time
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -108,6 +108,18 @@ class ItineraryRequest(BaseModel):
     # claves numericas. Los dias que no aparecen usan `mode`.
     day_modes: dict[str, str] = Field(default_factory=dict)
     include_meals: bool = True
+    # Minutos por comida. El tope de cuatro horas no es un caso de uso, es una
+    # barrera: un modelo que devuelva 600 no deja un dia largo, deja un dia de
+    # una sola parada.
+    meal_minutes: int = Field(default=90, ge=20, le=240)
+
+    # Minutos por categoria cuando el usuario los pide: {"nature": 120} es
+    # "quiero pasar dos horas en el parque". Las que no aparecen usan la tabla
+    # por defecto del motor. Ocho horas de tope: mas que eso no es una parada
+    # larga, es el dia entero, y para eso estan los dias.
+    category_minutes: dict[Category, Annotated[int, Field(ge=10, le=480)]] = Field(
+        default_factory=dict
+    )
     max_stops_per_day: int = Field(default=5, ge=1, le=12)
     min_quality: float = Field(default=0.0, ge=0.0, le=1.0)
 
