@@ -22,6 +22,7 @@ from datetime import time, timedelta
 from sqlalchemy.orm import Session
 
 from app.models import Category
+from app.services.geo import EstimatedTravel, TravelProvider
 from app.services.places import PlaceHit, search_in_area
 
 # Cuanto se queda uno en cada tipo de lugar, en minutos. Son estimaciones de
@@ -36,11 +37,8 @@ DEFAULT_DURATIONS: dict[Category, int] = {
     Category.lodging: 0,
 }
 
-# Los caminos reales no van en linea recta. Multiplicamos la distancia
-# geodesica por este factor mientras no tengamos rutas reales (fase 4).
-DETOUR_FACTOR = 1.35
-
-SPEED_KMH = {"walking": 4.5, "driving": 40.0}
+# La geometria y las velocidades viven en geo.py. El motor ya no las toca
+# directamente: pide traslados al proveedor y no sabe como se midieron.
 
 # Cuanto vale la pena visitar cada tipo de lugar, mas alla de que tan completo
 # este su registro. Son cosas distintas: quality_score mide si el dato tiene
@@ -196,27 +194,24 @@ class Itinerary:
 # --------------------------------------------------------------------------
 
 
-def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Distancia en linea recta entre dos puntos, en kilometros."""
-    from math import asin, cos, radians, sin, sqrt
-
-    radio_tierra = 6371.0088
-    dlat = radians(lat2 - lat1)
-    dlon = radians(lon2 - lon1)
-    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
-    return 2 * radio_tierra * asin(sqrt(a))
-
-
 def estimate_travel(origen: PlaceHit, destino: PlaceHit, mode: str) -> tuple[float, int]:
     """Kilometros y minutos estimados entre dos paradas.
 
-    Es una aproximacion a proposito: la fase 4 la reemplaza por tiempos reales
-    de OpenRouteService. La firma se mantiene para que el cambio sea sustituir
-    esta funcion y nada mas.
+    Desde la fase 4 esto es el respaldo, no la fuente principal: se usa cuando
+    no hay rutas reales disponibles. Se conserva como funcion porque es la
+    forma mas corta de medir un traslado suelto sin construir un proveedor.
     """
-    km = haversine_km(origen.lat, origen.lon, destino.lat, destino.lon) * DETOUR_FACTOR
-    velocidad = SPEED_KMH.get(mode, SPEED_KMH["driving"])
-    return round(km, 3), max(1, round(km / velocidad * 60))
+    return EstimatedTravel(mode).between(origen, destino)
+
+
+def _travel_or_estimate(travel: TravelProvider | None, mode: str) -> TravelProvider:
+    """El proveedor dado, o la estimacion geodesica si no hay ninguno.
+
+    Que el respaldo sea el valor por defecto y no una rama de emergencia es
+    deliberado: el camino degradado se ejercita en cada test del motor, asi que
+    no puede pudrirse sin que alguien se entere.
+    """
+    return travel if travel is not None else EstimatedTravel(mode)
 
 
 # --------------------------------------------------------------------------
@@ -245,59 +240,78 @@ def score_candidate(hit: PlaceHit, constraints: Constraints) -> float:
     return puntaje
 
 
-def order_by_proximity(paradas: list[PlaceHit]) -> list[PlaceHit]:
+def order_by_proximity(
+    paradas: list[PlaceHit], travel: TravelProvider | None = None
+) -> list[PlaceHit]:
     """Ordena las paradas para recorrerlas sin zigzaguear.
 
     Vecino mas cercano y despues 2-opt. Con cinco paradas por dia el optimo se
     podria calcular por fuerza bruta, pero 2-opt escala si algun dia crece y
     en la practica llega al mismo resultado.
+
+    Con rutas reales el orden puede diferir del que da la linea recta, y es
+    justamente el punto: dos lugares separados por un volcan estan cerca en el
+    mapa y lejos en la carretera.
     """
     if len(paradas) <= 2:
         return paradas
 
+    medidor = _travel_or_estimate(travel, "driving")
     restantes = paradas[1:]
     ruta = [paradas[0]]
     while restantes:
         actual = ruta[-1]
-        siguiente = min(
-            restantes,
-            key=lambda p: haversine_km(actual.lat, actual.lon, p.lat, p.lon),
-        )
+        siguiente = min(restantes, key=lambda p: medidor.between(actual, p)[0])
         ruta.append(siguiente)
         restantes.remove(siguiente)
 
-    return _two_opt(ruta)
+    return _two_opt(ruta, medidor)
 
 
-def _route_km(ruta: list[PlaceHit]) -> float:
-    return sum(
-        haversine_km(a.lat, a.lon, b.lat, b.lon) for a, b in zip(ruta, ruta[1:], strict=False)
-    )
+def _route_km(ruta: list[PlaceHit], travel: TravelProvider | None = None) -> float:
+    """Kilometros de recorrido de la ruta completa.
+
+    Devuelve distancia de traslado, no distancia en linea recta. Quien use
+    este valor no debe multiplicarlo por ningun factor de correccion: antes de
+    la fase 4 habia dos convenciones conviviendo y el limite diario se
+    comprobaba contra una y se reportaba contra la otra.
+    """
+    medidor = _travel_or_estimate(travel, "driving")
+    return sum(medidor.between(a, b)[0] for a, b in zip(ruta, ruta[1:], strict=False))
 
 
-def _two_opt(ruta: list[PlaceHit]) -> list[PlaceHit]:
+def _two_opt(ruta: list[PlaceHit], travel: TravelProvider | None = None) -> list[PlaceHit]:
     """Deshace los cruces de la ruta invirtiendo tramos."""
+    medidor = _travel_or_estimate(travel, "driving")
     mejorada = True
     while mejorada:
         mejorada = False
         for i in range(1, len(ruta) - 1):
             for j in range(i + 1, len(ruta)):
                 candidata = ruta[:i] + ruta[i : j + 1][::-1] + ruta[j + 1 :]
-                if _route_km(candidata) < _route_km(ruta) - 0.001:
+                if _route_km(candidata, medidor) < _route_km(ruta, medidor) - 0.001:
                     ruta = candidata
                     mejorada = True
     return ruta
 
 
 def _fits_travel_budget(
-    ruta: list[PlaceHit], nueva: PlaceHit, constraints: Constraints
+    ruta: list[PlaceHit],
+    nueva: PlaceHit,
+    constraints: Constraints,
+    travel: TravelProvider | None = None,
 ) -> bool:
     """Comprueba si agregar una parada mantiene el dia dentro del limite."""
-    tentativa = order_by_proximity([*ruta, nueva])
-    return _route_km(tentativa) * DETOUR_FACTOR <= constraints.max_travel_km_per_day
+    medidor = _travel_or_estimate(travel, constraints.mode)
+    tentativa = order_by_proximity([*ruta, nueva], medidor)
+    return _route_km(tentativa, medidor) <= constraints.max_travel_km_per_day
 
 
-def build_days(candidatos: list[PlaceHit], constraints: Constraints) -> list[list[PlaceHit]]:
+def build_days(
+    candidatos: list[PlaceHit],
+    constraints: Constraints,
+    travel: TravelProvider | None = None,
+) -> list[list[PlaceHit]]:
     """Reparte los candidatos en dias agrupados geograficamente.
 
     Cada dia arranca por el mejor lugar sin usar y se completa con los mas
@@ -305,6 +319,7 @@ def build_days(candidatos: list[PlaceHit], constraints: Constraints) -> list[lis
     compactos sin necesidad de un algoritmo de agrupamiento aparte: la
     cercania es el criterio de llenado.
     """
+    medidor = _travel_or_estimate(travel, constraints.mode)
     disponibles = sorted(
         candidatos, key=lambda h: score_candidate(h, constraints), reverse=True
     )
@@ -325,11 +340,11 @@ def build_days(candidatos: list[PlaceHit], constraints: Constraints) -> list[lis
         while len(dia) < cupo:
             cercanos = sorted(
                 (h for h in disponibles if h.category != Category.food.value),
-                key=lambda h: haversine_km(semilla.lat, semilla.lon, h.lat, h.lon),
+                key=lambda h: medidor.between(semilla, h)[0],
             )
             agregado = False
             for candidato in cercanos[:15]:
-                if _fits_travel_budget(dia, candidato, constraints):
+                if _fits_travel_budget(dia, candidato, constraints, medidor):
                     dia.append(candidato)
                     disponibles.remove(candidato)
                     agregado = True
@@ -337,7 +352,7 @@ def build_days(candidatos: list[PlaceHit], constraints: Constraints) -> list[lis
             if not agregado:
                 break
 
-        dias.append(order_by_proximity(dia))
+        dias.append(order_by_proximity(dia, medidor))
 
     return dias
 
@@ -357,7 +372,10 @@ def _minutes_between(desde: time, hasta: time) -> int:
 
 
 def _insert_meals(
-    ruta: list[PlaceHit], comidas: list[PlaceHit], constraints: Constraints
+    ruta: list[PlaceHit],
+    comidas: list[PlaceHit],
+    constraints: Constraints,
+    travel: TravelProvider | None = None,
 ) -> list[tuple[PlaceHit, str | None]]:
     """Intercala almuerzo y cena entre las paradas del dia.
 
@@ -367,6 +385,7 @@ def _insert_meals(
     if not constraints.include_meals or not comidas:
         return [(p, None) for p in ruta]
 
+    medidor = _travel_or_estimate(travel, constraints.mode)
     resultado: list[tuple[PlaceHit, str | None]] = []
     disponibles = list(comidas)
     momento = constraints.earliest_start
@@ -374,16 +393,13 @@ def _insert_meals(
 
     for indice, parada in enumerate(ruta):
         if indice:
-            _, minutos = estimate_travel(ruta[indice - 1], parada, constraints.mode)
+            _, minutos = medidor.between(ruta[indice - 1], parada)
             momento = _add_minutes(momento, minutos)
 
         # Si al llegar a esta parada ya paso la hora de almorzar, primero se come.
         if not almuerzo_puesto and disponibles and momento >= LUNCH_WINDOW[0]:
             referencia = resultado[-1][0] if resultado else parada
-            comida = min(
-                disponibles,
-                key=lambda c: haversine_km(referencia.lat, referencia.lon, c.lat, c.lon),
-            )
+            comida = min(disponibles, key=lambda c: medidor.between(referencia, c)[0])
             disponibles.remove(comida)
             resultado.append((comida, "lunch"))
             almuerzo_puesto = True
@@ -402,19 +418,20 @@ def _insert_meals(
 
     if disponibles and llega_a_la_tarde and hay_tiempo:
         referencia = resultado[-1][0]
-        cena = min(
-            disponibles,
-            key=lambda c: haversine_km(referencia.lat, referencia.lon, c.lat, c.lon),
-        )
+        cena = min(disponibles, key=lambda c: medidor.between(referencia, c)[0])
         resultado.append((cena, "dinner"))
 
     return resultado
 
 
 def schedule_day(
-    numero: int, secuencia: list[tuple[PlaceHit, str | None]], constraints: Constraints
+    numero: int,
+    secuencia: list[tuple[PlaceHit, str | None]],
+    constraints: Constraints,
+    travel: TravelProvider | None = None,
 ) -> Day:
     """Asigna horas de llegada y salida respetando la hora minima de inicio."""
+    medidor = _travel_or_estimate(travel, constraints.mode)
     dia = Day(number=numero)
     momento = constraints.earliest_start
 
@@ -423,7 +440,7 @@ def schedule_day(
         minutos = 0
         if indice:
             anterior = secuencia[indice - 1][0]
-            km, minutos = estimate_travel(anterior, lugar, constraints.mode)
+            km, minutos = medidor.between(anterior, lugar)
             momento = _add_minutes(momento, minutos)
 
         # Cada comida espera a que abra su propia franja.
@@ -537,11 +554,16 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
 # --------------------------------------------------------------------------
 
 
-def _day_travel_km(secuencia: list[tuple[PlaceHit, str | None]], mode: str) -> float:
-    """Kilometros reales de un dia, comidas incluidas."""
+def _day_travel_km(
+    secuencia: list[tuple[PlaceHit, str | None]],
+    mode: str,
+    travel: TravelProvider | None = None,
+) -> float:
+    """Kilometros de traslado de un dia, comidas incluidas."""
+    medidor = _travel_or_estimate(travel, mode)
     return round(
         sum(
-            estimate_travel(a, b, mode)[0]
+            medidor.between(a, b)[0]
             for (a, _), (b, _) in zip(secuencia, secuencia[1:], strict=False)
         ),
         2,
@@ -549,7 +571,10 @@ def _day_travel_km(secuencia: list[tuple[PlaceHit, str | None]], mode: str) -> f
 
 
 def _trim_to_budget(
-    grupo: list[PlaceHit], comidas: list[PlaceHit], constraints: Constraints
+    grupo: list[PlaceHit],
+    comidas: list[PlaceHit],
+    constraints: Constraints,
+    travel: TravelProvider | None = None,
 ) -> list[tuple[PlaceHit, str | None]]:
     """Arma el dia y le quita paradas hasta que entre en el presupuesto.
 
@@ -560,30 +585,47 @@ def _trim_to_budget(
     Se descarta la parada que mas traslado aporta, no la ultima, porque la
     culpable del exceso suele estar en el medio.
     """
+    medidor = _travel_or_estimate(travel, constraints.mode)
     restantes = list(grupo)
 
     while restantes:
-        secuencia = _insert_meals(order_by_proximity(restantes), comidas, constraints)
-        if _day_travel_km(secuencia, constraints.mode) <= constraints.max_travel_km_per_day:
+        secuencia = _insert_meals(
+            order_by_proximity(restantes, medidor), comidas, constraints, medidor
+        )
+        if (
+            _day_travel_km(secuencia, constraints.mode, medidor)
+            <= constraints.max_travel_km_per_day
+        ):
             return secuencia
         if len(restantes) == 1:
             break
 
         # Costo de cada destino: lo que se ahorraria quitandolo.
-        ordenadas = order_by_proximity(restantes)
-        base = _route_km(ordenadas)
+        ordenadas = order_by_proximity(restantes, medidor)
+        base = _route_km(ordenadas, medidor)
         peor = max(
             restantes,
-            key=lambda p: base
-            - _route_km(order_by_proximity([x for x in restantes if x is not p])),
+            key=lambda p: (
+                base
+                - _route_km(
+                    order_by_proximity([x for x in restantes if x is not p], medidor), medidor
+                )
+            ),
         )
         restantes.remove(peor)
 
-    return _insert_meals(order_by_proximity(restantes), comidas, constraints)
+    return _insert_meals(order_by_proximity(restantes, medidor), comidas, constraints, medidor)
 
 
-def plan(db: Session, constraints: Constraints) -> Itinerary:
-    """Arma un itinerario que respeta las restricciones dadas."""
+def select_candidates(
+    db: Session, constraints: Constraints
+) -> tuple[list[PlaceHit], list[PlaceHit]]:
+    """Los lugares utilizables de la zona, separados en comidas y destinos.
+
+    Se extrajo de plan() para que la fase 4 pueda saber que lugares entran en
+    juego antes de armar el itinerario: sin esa lista no se puede pedir la
+    matriz de traslados, y pedirla despues de armar el plan llegaria tarde.
+    """
     candidatos = search_in_area(
         db,
         constraints.center_lat,
@@ -606,23 +648,39 @@ def plan(db: Session, constraints: Constraints) -> Itinerary:
 
     comidas = [c for c in candidatos if c.category == Category.food.value]
     destinos = [c for c in candidatos if c.category != Category.food.value]
+    return comidas, destinos
 
-    grupos = build_days(destinos, constraints)
+
+def assemble(
+    comidas: list[PlaceHit],
+    destinos: list[PlaceHit],
+    constraints: Constraints,
+    travel: TravelProvider | None = None,
+    grupos: list[list[PlaceHit]] | None = None,
+) -> Itinerary:
+    """Arma el itinerario a partir de candidatos ya seleccionados.
+
+    `grupos` permite reutilizar un reparto de dias hecho antes con otro
+    medidor. Es lo que usa plan_with_routing: agrupa con estimaciones sobre
+    todos los candidatos, y refina solo los elegidos con rutas reales.
+    """
+    medidor = _travel_or_estimate(travel, constraints.mode)
+    if grupos is None:
+        grupos = build_days(destinos, constraints, medidor)
 
     dias: list[Day] = []
     comidas_restantes = list(comidas)
     for numero, grupo in enumerate(grupos, start=1):
+        if not grupo:
+            continue
         # Cada dia toma las comidas mas cercanas a su primera parada, para no
         # repetir restaurante entre dias.
-        cercanas = sorted(
-            comidas_restantes,
-            key=lambda c: haversine_km(grupo[0].lat, grupo[0].lon, c.lat, c.lon),
-        )[:4]
-        secuencia = _trim_to_budget(grupo, cercanas, constraints)
+        cercanas = sorted(comidas_restantes, key=lambda c: medidor.between(grupo[0], c)[0])[:4]
+        secuencia = _trim_to_budget(grupo, cercanas, constraints, medidor)
         for lugar, comida in secuencia:
             if comida and lugar in comidas_restantes:
                 comidas_restantes.remove(lugar)
-        dias.append(schedule_day(numero, secuencia, constraints))
+        dias.append(schedule_day(numero, secuencia, constraints, medidor))
 
     itinerario = Itinerary(
         days=dias,
@@ -630,6 +688,64 @@ def plan(db: Session, constraints: Constraints) -> Itinerary:
     )
     itinerario.violations = validate(itinerario, constraints)
     return itinerario
+
+
+def plan(
+    db: Session, constraints: Constraints, travel: TravelProvider | None = None
+) -> Itinerary:
+    """Arma un itinerario que respeta las restricciones dadas.
+
+    Sin proveedor de traslados usa distancias estimadas y no toca la red. Para
+    rutas reales de OpenRouteService, plan_with_routing.
+    """
+    comidas, destinos = select_candidates(db, constraints)
+    return assemble(comidas, destinos, constraints, travel)
+
+
+def plan_with_routing(
+    db: Session, constraints: Constraints, client=None
+) -> tuple[Itinerary, object]:
+    """Igual que plan(), pero con distancias reales de carretera.
+
+    **Agrupa con estimaciones y refina con rutas reales.** La busqueda puede
+    devolver ciento cincuenta candidatos, y pedir su matriz completa serian
+    veintidos mil pares repartidos en nueve peticiones, casi todas sobre
+    lugares que nunca entran al itinerario. Repartir los dias con la
+    estimacion cuesta cero y acota el problema a las paradas elegidas mas sus
+    restaurantes cercanos: menos de cincuenta lugares, una sola peticion.
+
+    Lo que se decide con rutas reales es lo que el usuario ve: el orden del
+    recorrido, los kilometros del dia, las horas de llegada, y si el limite de
+    traslado se respeta o se reporta como violado.
+
+    Devuelve el itinerario y las estadisticas de la matriz, que dicen cuantos
+    pares salieron de cache, cuantos de ORS y cuantos hubo que estimar.
+    """
+    from app.services.routing import client_from_settings, load_travel_matrix
+
+    comidas, destinos = select_candidates(db, constraints)
+
+    estimado = EstimatedTravel(constraints.mode)
+    grupos = build_days(destinos, constraints, estimado)
+
+    elegidos = [lugar for grupo in grupos for lugar in grupo]
+    cercanas: list[PlaceHit] = []
+    for grupo in grupos:
+        if not grupo:
+            continue
+        cercanas.extend(sorted(comidas, key=lambda c: estimado.between(grupo[0], c)[0])[:4])
+
+    matriz = load_travel_matrix(
+        elegidos + cercanas,
+        constraints.mode,
+        db=db,
+        client=client if client is not None else client_from_settings(),
+    )
+
+    # El reparto de dias se rehace con distancias reales: dos lugares que la
+    # linea recta pone en el mismo dia pueden estar separados por un cerro.
+    itinerario = assemble(comidas, destinos, constraints, matriz)
+    return itinerario, matriz.stats
 
 
 def used_place_ids(itinerario: Itinerary) -> set[uuid.UUID]:

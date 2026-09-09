@@ -13,7 +13,9 @@ from sqlalchemy import (
     DateTime,
     Enum,
     Float,
+    ForeignKey,
     Index,
+    Integer,
     String,
     UniqueConstraint,
     func,
@@ -114,4 +116,47 @@ class Place(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+class TravelEdge(Base):
+    """Un traslado ya medido entre dos lugares del catalogo.
+
+    Es la cache de OpenRouteService. La distancia entre dos puntos fijos no
+    cambia, asi que se paga cupo una vez por par y no una vez por itinerario.
+
+    **La clave incluye el sentido y el perfil, y las tres partes importan.** El
+    sentido, porque las calles de un solo sentido y los retornos hacen que ir
+    no cueste lo mismo que volver; asumir simetria para ahorrar la mitad de las
+    filas mete un error que despues nadie encuentra. El perfil, porque a pie y
+    en carro son redes distintas: un sendero que el peaton cruza no existe para
+    el carro.
+    """
+
+    __tablename__ = "travel_edges"
+    __table_args__ = (
+        Index("ix_travel_edges_origin", "origin_id"),
+        Index("ix_travel_edges_profile", "profile"),
+    )
+
+    origin_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("places.id", ondelete="CASCADE"), primary_key=True
+    )
+    destination_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("places.id", ondelete="CASCADE"), primary_key=True
+    )
+    # "driving-car" o "foot-walking", tal como los nombra OpenRouteService.
+    profile: Mapped[str] = mapped_column(String(24), primary_key=True)
+
+    distance_km: Mapped[float] = mapped_column(Float, nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # "ors" o "estimated". Solo se guardan las de ORS: cachear una estimacion
+    # seria enterrar para siempre un valor que la proxima vez podria ser real.
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="ors", default="ors"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

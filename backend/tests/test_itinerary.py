@@ -10,6 +10,7 @@ from datetime import time
 import pytest
 
 from app.models import Category
+from app.services.geo import haversine_km
 from app.services.itinerary import (
     Constraints,
     Day,
@@ -18,7 +19,6 @@ from app.services.itinerary import (
     _route_km,
     build_days,
     estimate_travel,
-    haversine_km,
     order_by_proximity,
     schedule_day,
     validate,
@@ -110,7 +110,10 @@ class TestArmadoDeDias:
             days=1, center_lat=13.70, center_lon=-89.22, max_travel_km_per_day=20
         )
         dias = build_days(candidatos, restricciones)
-        assert _route_km(dias[0]) * 1.35 <= 20
+        # _route_km devuelve kilometros de traslado, con el desvio ya aplicado.
+        # Antes de la fase 4 este test multiplicaba otra vez por 1.35 y seguia
+        # pasando por casualidad, porque el resultado quedaba lejos del limite.
+        assert _route_km(dias[0]) <= 20
 
     def test_con_pocos_lugares_arma_menos_dias(self):
         candidatos = [lugar("Unico", 13.70, -89.22)]
