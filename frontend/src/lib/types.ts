@@ -64,6 +64,15 @@ export interface Day {
   travel_km: number;
   start: string | null;
   end: string | null;
+
+  /**
+   * El modo de ESTE dia, que puede no ser el del itinerario.
+   *
+   * Va por dia porque el icono del traslado dice como se va, y en un viaje
+   * mixto —"el primer dia en coche y el segundo a pie"— poner el coche en el
+   * dia que se camina es decir algo falso.
+   */
+  mode: Mode;
 }
 
 /** Un limite que el usuario puso y el itinerario no pudo respetar. */

@@ -16,7 +16,7 @@ restricciones, se puede comprobar automaticamente si el resultado las cumple.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import time, timedelta
 
@@ -30,6 +30,11 @@ from app.services.places import by_ids as places_by_ids
 # Cuanto se queda uno en cada tipo de lugar, en minutos. Son estimaciones de
 # sentido comun, no datos: un mirador es una parada corta y un parque nacional
 # ocupa media manana.
+# Kilometros por dia por defecto segun el modo. Solo se usan cuando un dia va
+# en otro modo que el itinerario: es el numero que el prompt ya le sugiere al
+# modelo para "caminando" y para "en carro", puesto donde el motor lo necesita.
+BUDGET_BY_MODE: dict[str, float] = {"driving": 25.0, "walking": 8.0}
+
 DEFAULT_DURATIONS: dict[Category, int] = {
     Category.viewpoint: 30,
     Category.food: 60,
@@ -159,6 +164,48 @@ class Constraints:
 
     preferred_categories: list[Category] = field(default_factory=list)
     avoided_categories: list[Category] = field(default_factory=list)
+
+    # Categorias que el itinerario TIENE que incluir al menos una vez.
+    #
+    # **Es distinto de preferred_categories, y la diferencia importa.** Preferir
+    # es un empujon en el puntaje: sube las probabilidades y no garantiza nada.
+    # "quiero ver minimo un museo" no es una preferencia, es un requisito, y
+    # cumplirlo a medias es no cumplirlo.
+    #
+    # La cuenta es del itinerario entero y no de cada dia: quien pide un museo
+    # en dos dias quiere un museo, no dos.
+    must_include_categories: list[Category] = field(default_factory=list)
+
+    # Modo de cada dia, cuando no todos van igual: "el primer dia en coche, el
+    # segundo a pie". La clave es el numero de dia; los que no aparecen usan
+    # `mode`.
+    #
+    # A pie y en carro no son la misma red —un sendero que el peaton cruza no
+    # existe para el carro— asi que el modo cambia las distancias, los tiempos
+    # y el presupuesto del dia, no solo el icono.
+    day_modes: dict[int, str] = field(default_factory=dict)
+
+    def mode_for(self, numero: int) -> str:
+        """El modo del dia `numero`."""
+        return self.day_modes.get(numero, self.mode)
+
+    def budget_for(self, numero: int) -> float:
+        """Los kilometros que puede recorrer el dia `numero`.
+
+        **El presupuesto sigue al modo y no se puede no hacerlo.** Veinticinco
+        kilometros son un dia normal en coche y cinco horas caminando: dejar el
+        limite del itinerario en un dia a pie no seria una imprecision, seria
+        un dia imposible.
+
+        Solo se sustituye cuando el dia va en otro modo que el itinerario: si
+        todo el viaje es a pie, el numero que puso el usuario ya es el de a pie
+        y manda sobre el valor por defecto.
+        """
+        modo = self.mode_for(numero)
+        if modo == self.mode:
+            return self.max_travel_km_per_day
+        return BUDGET_BY_MODE.get(modo, self.max_travel_km_per_day)
+
     include_meals: bool = True
     max_stops_per_day: int = 5
     min_quality: float = 0.0
@@ -281,13 +328,22 @@ def estimate_travel(origen: PlaceHit, destino: PlaceHit, mode: str) -> tuple[flo
     return EstimatedTravel(mode).between(origen, destino)
 
 
-def _travel_or_estimate(travel: TravelProvider | None, mode: str) -> TravelProvider:
+def _travel_or_estimate(
+    travel: TravelProvider | Mapping[str, TravelProvider] | None, mode: str
+) -> TravelProvider:
     """El proveedor dado, o la estimacion geodesica si no hay ninguno.
 
     Que el respaldo sea el valor por defecto y no una rama de emergencia es
     deliberado: el camino degradado se ejercita en cada test del motor, asi que
     no puede pudrirse sin que alguien se entere.
+
+    Acepta tambien un diccionario de modo a proveedor, que es lo que hace
+    posible un itinerario con dias en coche y dias a pie: cada red tiene su
+    matriz medida y el dia usa la suya. Un proveedor suelto se usa tal cual, y
+    ahi la responsabilidad de que corresponda al modo es de quien lo paso.
     """
+    if isinstance(travel, Mapping):
+        return travel.get(mode) or EstimatedTravel(mode)
     return travel if travel is not None else EstimatedTravel(mode)
 
 
@@ -426,15 +482,29 @@ def _two_opt(ruta: list[PlaceHit], travel: TravelProvider | None = None) -> list
 REPEAT_PENALTY_KM = 12.0
 
 
+# Descuento para una categoria que el usuario exigio y todavia no aparece.
+#
+# Va en kilometros como la penalizacion por repetir, para que las tres cosas que
+# ordenan el llenado —cercania, variedad y requisitos— se comparen en la misma
+# unidad. El numero es grande a proposito: un requisito gana a la cercania salvo
+# que el candidato este absurdamente lejos, y si esta absurdamente lejos el
+# presupuesto de traslado lo rechaza igual.
+REQUIRED_BONUS_KM = 60.0
+
+
 def _fill_cost(
     dia: list[PlaceHit],
     candidato: PlaceHit,
     semilla: PlaceHit,
     medidor: TravelProvider,
+    faltantes: frozenset[str] = frozenset(),
 ) -> float:
-    """Lo que cuesta agregar un candidato: distancia mas repeticion."""
+    """Lo que cuesta agregar un candidato: distancia, repeticion y requisitos."""
     repetidas = sum(1 for parada in dia if parada.category == candidato.category)
-    return medidor.between(semilla, candidato)[0] + repetidas * REPEAT_PENALTY_KM
+    coste = medidor.between(semilla, candidato)[0] + repetidas * REPEAT_PENALTY_KM
+    if candidato.category in faltantes:
+        coste -= REQUIRED_BONUS_KM
+    return coste
 
 
 def _closing_km(
@@ -471,12 +541,12 @@ def _fits_travel_budget(
     eso, el dia se llena hasta el tope y el viaje de vuelta lo saca del
     presupuesto despues, cuando ya no hay nada que recortar.
     """
-    medidor = _travel_or_estimate(travel, constraints.mode)
+    medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
     tentativa = _pinned_order(ancla, [*ruta, nueva], medidor)
     total = _route_km(tentativa, medidor) + _closing_km(
         tentativa, numero, constraints, medidor
     )
-    return total <= constraints.max_travel_km_per_day
+    return total <= constraints.budget_for(numero)
 
 
 def build_days(
@@ -492,7 +562,8 @@ def build_days(
     compactos sin necesidad de un algoritmo de agrupamiento aparte: la
     cercania es el criterio de llenado.
     """
-    medidor = _travel_or_estimate(travel, constraints.mode)
+    # El medidor se crea por dia dentro del bucle: cada dia puede ir en su
+    # propio modo y las distancias cambian con la red.
 
     # **Lo que se pidio evitar se descarta, no se penaliza.** Restarle puntos
     # en el ranking solo lo manda al final de la lista, y basta con que sobre
@@ -507,7 +578,15 @@ def build_days(
     )
     dias: list[list[PlaceHit]] = []
 
+    # Los requisitos se llevan como cuenta del itinerario entero: quien pide un
+    # museo en dos dias quiere un museo, no dos.
+    requeridas = {c.value for c in constraints.must_include_categories}
+    cubiertas: set[str] = set()
+    if constraints.start_place is not None:
+        cubiertas.add(constraints.start_place.category)
+
     for numero in range(1, constraints.days + 1):
+        medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
         anclado = constraints.anchors_day(numero)
         ancla = constraints.start_place if anclado else None
 
@@ -522,7 +601,13 @@ def build_days(
             # Puede estar en el catalogo de destinos: no se elige dos veces.
             disponibles = [h for h in disponibles if h.id != ancla.id]
         else:
-            semilla = disponibles.pop(0)
+            # La semilla cubre un requisito pendiente si hay con que: es la
+            # forma mas barata de garantizarlo, porque el resto del dia se
+            # llena alrededor de ella.
+            faltantes = requeridas - cubiertas
+            pendiente = next((h for h in disponibles if h.category in faltantes), None)
+            semilla = pendiente if pendiente is not None else disponibles[0]
+            disponibles.remove(semilla)
             dia = [semilla]
 
         # Sin comida los cupos son solo para destinos; con comida se reserva
@@ -555,9 +640,12 @@ def build_days(
         while len(dia) < cupo:
             # Se reordena en cada vuelta porque el coste depende de lo que
             # ya haya en el dia, y eso cambia con cada parada agregada.
+            # Se recalcula en cada vuelta: lo que falta cambia con cada
+            # parada que entra.
+            faltantes = frozenset(requeridas - cubiertas - {p.category for p in dia})
             cercanos = sorted(
                 (h for h in disponibles if h.category != Category.food.value),
-                key=lambda h: _fill_cost(dia, h, semilla, medidor),
+                key=lambda h: _fill_cost(dia, h, semilla, medidor, faltantes),
             )
             agregado = False
             for candidato in cercanos[:15]:
@@ -569,6 +657,16 @@ def build_days(
             if not agregado:
                 break
 
+        # **Un dia que solo tiene el punto de partida no es un dia.** Al
+        # anclar los dias hubo que aflojar la guarda de "sin candidatos, no
+        # hay dia", y eso dejaba pasar dias con el hotel y nada mas: parecian
+        # un error y encima escondian que el catalogo no daba para tantos dias.
+        # Cortando aca, el itinerario sale con menos dias y validate() reporta
+        # el faltante, que es lo que se pidio y no se pudo cumplir.
+        if ancla is not None and len(dia) == 1:
+            break
+
+        cubiertas |= {p.category for p in dia}
         dias.append(_pinned_order(ancla, dia, medidor))
 
     return dias
@@ -667,6 +765,7 @@ def _best_meal_insertion(
     constraints: Constraints,
     travel: TravelProvider,
     enforce_budget: bool = True,
+    numero: int = 1,
 ) -> tuple[list[tuple[PlaceHit, str | None]], PlaceHit | None, float]:
     """Mete la comida donde menos kilometros cueste, entre las posiciones que dan la hora.
 
@@ -716,7 +815,7 @@ def _best_meal_insertion(
                 continue
 
             total = _sequence_km(tentativa, travel)
-            if enforce_budget and total > constraints.max_travel_km_per_day:
+            if enforce_budget and total > constraints.budget_for(numero):
                 continue
 
             costo = total - base_km
@@ -733,6 +832,7 @@ def _insert_meals(
     comidas: list[PlaceHit],
     constraints: Constraints,
     travel: TravelProvider | None = None,
+    numero: int = 1,
 ) -> list[tuple[PlaceHit, str | None]]:
     """Intercala almuerzo y cena entre las paradas del dia.
 
@@ -757,18 +857,24 @@ def _insert_meals(
     if not comidas:
         return secuencia
 
-    medidor = _travel_or_estimate(travel, constraints.mode)
+    medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
     disponibles = list(comidas)
 
     secuencia, almuerzo, _ = _best_meal_insertion(
-        secuencia, disponibles, "lunch", LUNCH_WINDOW, constraints, medidor
+        secuencia, disponibles, "lunch", LUNCH_WINDOW, constraints, medidor, numero=numero
     )
     if almuerzo is not None:
         disponibles.remove(almuerzo)
 
     if disponibles:
         secuencia, _, _ = _best_meal_insertion(
-            secuencia, disponibles, "dinner", DINNER_WINDOW, constraints, medidor
+            secuencia,
+            disponibles,
+            "dinner",
+            DINNER_WINDOW,
+            constraints,
+            medidor,
+            numero=numero,
         )
 
     return secuencia
@@ -791,7 +897,7 @@ def schedule_day(
     hicieron su trabajo: mientras el ancla esta en la lista dos veces, todo lo
     que la recorre se confunde.
     """
-    medidor = _travel_or_estimate(travel, constraints.mode)
+    medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
     dia = Day(number=numero)
     momento = constraints.earliest_start
 
@@ -841,6 +947,16 @@ def schedule_day(
 # --------------------------------------------------------------------------
 
 
+ETIQUETA_CATEGORIA = {
+    Category.food: "comida",
+    Category.nature: "naturaleza",
+    Category.culture: "cultura",
+    Category.viewpoint: "mirador",
+    Category.attraction: "atraccion",
+    Category.lodging: "alojamiento",
+}
+
+
 def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]:
     """Comprueba el itinerario terminado contra cada restriccion.
 
@@ -874,22 +990,32 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
                 )
             )
 
-        if dia.travel_km > constraints.max_travel_km_per_day:
+        if dia.travel_km > constraints.budget_for(dia.number):
             violaciones.append(
                 Violation(
                     "max_travel_km_per_day",
                     dia.number,
                     f"{dia.travel_km} km recorridos, el limite era "
-                    f"{constraints.max_travel_km_per_day}",
+                    f"{constraints.budget_for(dia.number)}",
                 )
             )
 
-        if len(dia.stops) > constraints.max_stops_per_day:
+        # El punto de partida no cuenta contra el limite, ni cuando aparece dos
+        # veces por el regreso. El motor le da un cupo aparte al armar el dia,
+        # asi que contarlo aca lo haria reportar como violacion un limite que
+        # el mismo decidio no aplicarle: se contradeciria solo.
+        visitas = len(dia.stops)
+        if constraints.anchors_day(dia.number) and constraints.start_place is not None:
+            visitas -= sum(
+                1 for parada in dia.stops if parada.place.id == constraints.start_place.id
+            )
+
+        if visitas > constraints.max_stops_per_day:
             violaciones.append(
                 Violation(
                     "max_stops_per_day",
                     dia.number,
-                    f"{len(dia.stops)} paradas, el limite era {constraints.max_stops_per_day}",
+                    f"{visitas} paradas, el limite era {constraints.max_stops_per_day}",
                 )
             )
 
@@ -918,6 +1044,23 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
             )
         )
 
+    # **El requisito es del itinerario, no de cada dia.** Se comprueba aca
+    # aunque el motor ya lo prioriza al armar: priorizar no es garantizar, y si
+    # la zona no tiene ni un museo hay que decirlo en vez de dejar que el
+    # usuario lo descubra leyendo la lista.
+    presentes = {parada.place.category for dia in itinerario.days for parada in dia.stops}
+    for categoria in constraints.must_include_categories:
+        if categoria.value not in presentes:
+            violaciones.append(
+                Violation(
+                    "must_include_categories",
+                    None,
+                    f"pediste al menos una parada de "
+                    f"{ETIQUETA_CATEGORIA.get(categoria, categoria.value)} y no "
+                    "hay ninguna en la zona que entre en el dia",
+                )
+            )
+
     return violaciones
 
 
@@ -936,13 +1079,13 @@ def advise(
     "llevá almuerzo, el comedor mas cercano suma 14 km sobre tu limite de 25"
     es accionable donde "no hay donde comer" no lo es.
     """
-    medidor = _travel_or_estimate(travel, constraints.mode)
     consejos: list[Advice] = []
 
     if not constraints.include_meals:
         return consejos
 
     for dia in itinerario.days:
+        medidor = _travel_or_estimate(travel, constraints.mode_for(dia.number))
         if not dia.stops or not dia.start or not dia.end:
             continue
 
@@ -998,6 +1141,7 @@ def _meal_advice(
         constraints,
         travel,
         enforce_budget=False,
+        numero=dia.number,
     )
 
     if comida is None:
@@ -1014,7 +1158,7 @@ def _meal_advice(
         dia.number,
         f"El lugar para comer más conveniente es {comida.name}, que agrega "
         f"{costo:.1f} km y dejaría el día en {total:.1f} km, sobre tu límite de "
-        f"{constraints.max_travel_km_per_day:.0f}. Llevá {nombre}, o subí el "
+        f"{constraints.budget_for(dia.number):.0f}. Llevá {nombre}, o subí el "
         f"límite de traslado a {total:.0f} km",
     )
 
@@ -1066,10 +1210,10 @@ def _fits_the_day(
     nadie lo hacia cumplir: un dia con ventana de 10:00 a 15:00 salia
     terminando a las 16:13. Se recorta igual que por kilometros.
     """
-    km = _day_travel_km(secuencia, constraints.mode, travel) + _closing_km(
+    km = _day_travel_km(secuencia, constraints.mode_for(numero), travel) + _closing_km(
         [lugar for lugar, _ in secuencia], numero, constraints, travel
     )
-    if km > constraints.max_travel_km_per_day:
+    if km > constraints.budget_for(numero):
         return False
 
     fin = _sequence_end(secuencia, constraints, travel)
@@ -1099,7 +1243,7 @@ def _trim_to_budget(
     llevar almuerzo, con los kilometros que habria costado. Llevar comida es
     una solucion del mundo real; saltarse un volcan no lo es.
     """
-    medidor = _travel_or_estimate(travel, constraints.mode)
+    medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
     restantes = list(grupo)
     # El punto de partida no se recorta: es un dato del usuario y no una
     # eleccion del motor. Si el dia no entra, se quitan las paradas elegidas.
@@ -1107,7 +1251,11 @@ def _trim_to_budget(
 
     while restantes:
         secuencia = _insert_meals(
-            _pinned_order(ancla, restantes, medidor), comidas, constraints, medidor
+            _pinned_order(ancla, restantes, medidor),
+            comidas,
+            constraints,
+            medidor,
+            numero,
         )
         if _fits_the_day(secuencia, constraints, medidor, numero):
             return secuencia
@@ -1131,7 +1279,7 @@ def _trim_to_budget(
         restantes.remove(peor)
 
     return _insert_meals(
-        _pinned_order(ancla, restantes, medidor), comidas, constraints, medidor
+        _pinned_order(ancla, restantes, medidor), comidas, constraints, medidor, numero
     )
 
 
@@ -1199,23 +1347,27 @@ def assemble(
     medidor. Es lo que usa plan_with_routing: agrupa con estimaciones sobre
     todos los candidatos, y refina solo los elegidos con rutas reales.
     """
-    medidor = _travel_or_estimate(travel, constraints.mode)
+    # **Se pasa `travel` hacia abajo y no un medidor ya resuelto.** Resolverlo
+    # aca anulaba el modo por dia: cada funcion recibia un proveedor concreto y
+    # `_travel_or_estimate` lo devolvia tal cual, asi que el dia a pie se medía
+    # con la red del coche sin que nada lo delatara.
     if grupos is None:
-        grupos = build_days(destinos, constraints, medidor, meal_options=len(comidas))
+        grupos = build_days(destinos, constraints, travel, meal_options=len(comidas))
 
     dias: list[Day] = []
     comidas_restantes = list(comidas)
     for numero, grupo in enumerate(grupos, start=1):
         if not grupo:
             continue
+        medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
         # Cada dia toma las comidas mas cercanas a su primera parada, para no
         # repetir restaurante entre dias.
         cercanas = _meal_candidates(grupo, comidas_restantes, medidor)
-        secuencia = _trim_to_budget(grupo, cercanas, constraints, medidor, numero)
+        secuencia = _trim_to_budget(grupo, cercanas, constraints, travel, numero)
         for lugar, comida in secuencia:
             if comida and lugar in comidas_restantes:
                 comidas_restantes.remove(lugar)
-        dias.append(schedule_day(numero, secuencia, constraints, medidor))
+        dias.append(schedule_day(numero, secuencia, constraints, travel))
 
     itinerario = Itinerary(
         days=dias,
@@ -1332,33 +1484,78 @@ def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterat
     yield DraftReady(itinerary=borrador)
 
     cliente = client if client is not None else client_from_settings()
-    matriz = load_travel_matrix(
-        _places_to_measure(borrador),
-        constraints.mode,
-        db=db,
-        client=cliente,
-    )
+
+    # **Una matriz por modo distinto, no una por itinerario.** A pie y en carro
+    # son redes distintas —un sendero que el peaton cruza no existe para el
+    # carro— asi que medir un dia a pie con la matriz del coche seria inventar.
+    #
+    # Cuesta una peticion mas cuando el viaje mezcla modos, y solo entonces:
+    # un itinerario entero en coche sigue costando una. La alternativa era
+    # estimar los dias a pie, y la estimacion esta calibrada contra rutas en
+    # coche —DETOUR_FACTOR sale de 812 pares de ORS en carro— asi que para
+    # caminar esta doblemente mal.
+    lugares_por_modo: dict[str, list[PlaceHit]] = {}
+    for dia in borrador.days:
+        modo = constraints.mode_for(dia.number)
+        lugares_por_modo.setdefault(modo, []).extend(parada.place for parada in dia.stops)
+
+    matrices = {
+        modo: load_travel_matrix(lugares, modo, db=db, client=cliente)
+        for modo, lugares in lugares_por_modo.items()
+    }
+    # El resumen que ve el usuario es del itinerario entero: se suma lo de cada
+    # modo en vez de reportar solo el de uno.
+    matriz = _merge_matrix_stats(matrices, constraints.mode)
 
     # El reparto de dias se rehace con distancias reales: dos lugares que la
     # linea recta pone en el mismo dia pueden estar separados por un cerro.
-    final = assemble(comidas, destinos, constraints, matriz)
+    final = assemble(comidas, destinos, constraints, matrices)
 
     # El trazo se pide DESPUES del reparto final y no antes: con distancias
     # reales el orden del dia cambia, y una geometria pedida sobre el orden del
     # borrador dibujaria un recorrido que el itinerario ya no hace.
     geometria, geo_stats = load_route_geometry(
-        [[parada.place for parada in dia.stops] for dia in final.days],
-        constraints.mode,
+        [
+            (
+                constraints.mode_for(dia.number),
+                [parada.place for parada in dia.stops],
+            )
+            for dia in final.days
+        ],
         db=db,
         client=cliente,
     )
 
     yield PlanReady(
         itinerary=final,
-        stats=matriz.stats,
+        stats=matriz,
         geometry=geometria,
         geometry_stats=geo_stats,
     )
+
+
+def _merge_matrix_stats(matrices: dict, modo_principal: str):
+    """Junta las estadisticas de varias matrices en un solo resumen.
+
+    El usuario pregunta "de donde salieron estas distancias" por el itinerario
+    entero, no por modo. Con una sola matriz esto devuelve sus propias
+    estadisticas sin tocarlas.
+    """
+    if len(matrices) == 1:
+        return next(iter(matrices.values())).stats
+
+    principal = matrices.get(modo_principal) or next(iter(matrices.values()))
+    total = type(principal.stats)()
+    for matriz in matrices.values():
+        total.cached += matriz.stats.cached
+        total.fetched += matriz.stats.fetched
+        total.estimated += matriz.stats.estimated
+        total.requests += matriz.stats.requests
+        # El motivo del degradado se toma del primero que lo tenga: son la
+        # misma llave y el mismo cupo, asi que fallan por lo mismo.
+        if total.reason is None:
+            total.reason = matriz.stats.reason
+    return total
 
 
 def _places_to_measure(borrador: Itinerary) -> list[PlaceHit]:

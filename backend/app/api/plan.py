@@ -119,6 +119,10 @@ def _stream(mensaje: str) -> Iterator[str]:
             mode=resultado.request.mode,
             preferred_categories=list(resultado.request.preferred_categories),
             avoided_categories=list(resultado.request.avoided_categories),
+            must_include_categories=list(resultado.request.must_include_categories),
+            day_modes={
+                int(numero): modo for numero, modo in resultado.request.day_modes.items()
+            },
             include_meals=resultado.request.include_meals,
             max_stops_per_day=resultado.request.max_stops_per_day,
             min_quality=resultado.request.min_quality,
@@ -127,7 +131,7 @@ def _stream(mensaje: str) -> Iterator[str]:
         )
 
         for evento in motor.plan_streaming(db, restricciones):
-            yield _event(evento.phase, _phase_payload(evento))
+            yield _event(evento.phase, _phase_payload(evento, restricciones))
 
     except Exception:
         logger.exception("fallo armando el itinerario")
@@ -136,7 +140,7 @@ def _stream(mensaje: str) -> Iterator[str]:
         db.close()
 
 
-def _phase_payload(evento) -> dict:
+def _phase_payload(evento, restricciones: motor.Constraints | None = None) -> dict:
     if isinstance(evento, motor.CandidatesReady):
         # Solo lo que el mapa necesita para dibujar los pines. Mandar el
         # catalogo entero de la zona serian cientos de kilobytes que el cliente
@@ -156,10 +160,12 @@ def _phase_payload(evento) -> dict:
         }
 
     if isinstance(evento, motor.DraftReady):
-        return _to_out(evento.itinerary, None).model_dump(mode="json")
+        return _to_out(evento.itinerary, None, None, restricciones).model_dump(mode="json")
 
     # Aca el evento ya es PlanReady: la rama de arriba se llevo el borrador.
-    return _to_out(evento.itinerary, evento.stats, evento.geometry).model_dump(mode="json")
+    return _to_out(evento.itinerary, evento.stats, evento.geometry, restricciones).model_dump(
+        mode="json"
+    )
 
 
 @router.post("", dependencies=[Depends(limitar)])
@@ -250,7 +256,7 @@ def revise(peticion: ReviseRequest) -> RevisionOut:
         )
 
         return RevisionOut(
-            itinerary=_to_out(resultado.itinerary, resultado.stats),
+            itinerary=_to_out(resultado.itinerary, resultado.stats, None, base),
             applied={k: str(v) for k, v in cambio.changes.items()},
             removed=cambio.remove,
             missing=resultado.missing,

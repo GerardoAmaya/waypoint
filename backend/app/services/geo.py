@@ -88,6 +88,32 @@ class Waypoint(Protocol):
     lon: float
 
 
+# Minutos que cuesta llegar de verdad a una parada, mas alla de moverse.
+#
+# El modelo no tenia ninguno, y se veia: 0.7 km en coche daban "1 min", o sea
+# salir del hotel y estar dentro del museo sesenta segundos despues. Falta
+# estacionar, caminar del carro a la puerta y entrar. En un dia urbano de
+# saltos cortos el horario salia optimista por parada.
+#
+# No esta calibrado contra datos porque no hay datos que medir: es una
+# estimacion de sentido comun, igual que DEFAULT_DURATIONS. Lo que si esta
+# medido es su costo, que es lo que importa para elegir el numero.
+#
+# A pie es mucho menor: no hay donde estacionar, solo encontrar la entrada.
+ARRIVAL_OVERHEAD_MINUTES = {"driving": 8, "walking": 2}
+
+
+def with_arrival_overhead(minutos: int, mode: str) -> int:
+    """Suma la friccion de llegar a los minutos de moverse.
+
+    Se aplica al usar el dato y no al guardarlo. La cache de travel_edges
+    guarda lo que midio OpenRouteService —tiempo de conduccion puro— y meterle
+    la friccion ahi dejaria un numero que no es ni una cosa ni la otra, y que
+    ya no se podria comparar con la fuente.
+    """
+    return minutos + ARRIVAL_OVERHEAD_MINUTES.get(mode, 0)
+
+
 class TravelProvider(Protocol):
     """Cuanto cuesta ir de una parada a otra.
 
@@ -118,4 +144,5 @@ class EstimatedTravel:
         recta = haversine_km(origen.lat, origen.lon, destino.lat, destino.lon)
         km = recta * DETOUR_FACTOR
         velocidad = speed_kmh(self.mode, recta)
-        return round(km, 3), max(1, round(km / velocidad * 60))
+        minutos = max(1, round(km / velocidad * 60))
+        return round(km, 3), with_arrival_overhead(minutos, self.mode)

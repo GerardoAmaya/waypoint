@@ -37,6 +37,7 @@ from app.services.geo import (
     EstimatedTravel,
     Waypoint,
     haversine_km,
+    with_arrival_overhead,
 )
 
 logger = logging.getLogger(__name__)
@@ -373,7 +374,12 @@ class TravelMatrix:
         clave = (getattr(origen, "id", None), getattr(destino, "id", None))
         medida = self.edges.get(clave)
         if medida is not None:
-            return medida
+            # La friccion de llegar se suma aca y no en la cache: travel_edges
+            # guarda el tiempo de conduccion que midio ORS, y mezclarlos
+            # dejaria un numero que ya no se puede comparar con la fuente.
+            km, minutos = medida
+            return km, with_arrival_overhead(minutos, self.fallback.mode)
+        # El respaldo ya la trae: EstimatedTravel la aplica por su cuenta.
         return self.fallback.between(origen, destino)
 
 
@@ -772,15 +778,17 @@ class GeometryStats:
 
 
 def load_route_geometry(
-    days: list[list],
-    mode: str = "driving",
+    days: list[tuple[str, list]],
     *,
     db=None,
     client: ORSClient | None = None,
 ) -> tuple[dict[tuple[uuid.UUID, uuid.UUID], list[tuple[float, float]]], GeometryStats]:
     """El trazo por carretera de cada tramo del itinerario.
 
-    `days` es una lista de dias, cada uno con sus lugares ya ordenados. Se
+    `days` es una lista de (modo, lugares ordenados) por dia. El modo va por
+    dia porque el trazo depende de la red: el camino a pie entre dos plazas no
+    es el mismo que el del carro, y dibujar uno por el otro seria mentir sobre
+    el recorrido. Se
     pide **una peticion por dia**: ORS acepta varias paradas y devuelve una
     sola geometria que las recorre en orden, y despues se parte por tramos.
     Pedir tramo por tramo multiplicaria el costo por el numero de tramos.
@@ -796,53 +804,72 @@ def load_route_geometry(
     tira la linea recta. El degradado es por tramo y no por itinerario, que es
     lo que permite decir la verdad de cada uno por separado.
     """
-    profile = ORS_PROFILES.get(mode, ORS_PROFILES["driving"])
+    perfiles = {ORS_PROFILES.get(modo, ORS_PROFILES["driving"]) for modo, _ in days}
     stats = GeometryStats()
     trazos: dict[tuple[uuid.UUID, uuid.UUID], list[tuple[float, float]]] = {}
 
-    tramos = [(a.id, b.id) for dia in days for a, b in zip(dia, dia[1:], strict=False)]
+    tramos = [
+        (a.id, b.id) for _, lugares in days for a, b in zip(lugares, lugares[1:], strict=False)
+    ]
     if not tramos:
         return trazos, stats
 
     if db is not None:
-        ids = list({lugar.id for dia in days for lugar in dia})
-        trazos = {
-            par: trazo
-            for par, trazo in read_cached_geometry(db, ids, profile).items()
-            if par in set(tramos)
-        }
+        # Un perfil por modo presente: el trazo a pie y el del carro se
+        # guardan en filas distintas porque son recorridos distintos.
+        pendientes = set(tramos)
+        ids = list({lugar.id for _, lugares in days for lugar in lugares})
+        for perfil in perfiles:
+            trazos.update(
+                {
+                    par: trazo
+                    for par, trazo in read_cached_geometry(db, ids, perfil).items()
+                    if par in pendientes
+                }
+            )
         stats.cached = len(trazos)
 
     if client is not None:
         antes = client.request_count
         nuevos: dict[tuple[uuid.UUID, uuid.UUID], list[tuple[float, float]]] = {}
+        # El perfil con el que se midio cada tramo, para guardarlo en el suyo.
+        perfil_de: dict[tuple[uuid.UUID, uuid.UUID], str] = {}
 
-        for dia in days:
-            pares = list(zip(dia, dia[1:], strict=False))
+        for modo, lugares in days:
+            perfil = ORS_PROFILES.get(modo, ORS_PROFILES["driving"])
+            pares = list(zip(lugares, lugares[1:], strict=False))
             # Un dia entero ya en cache no se vuelve a pedir. Se comprueba el
             # dia completo y no tramo por tramo porque la peticion es del dia:
             # si falta un solo tramo hay que pedirlo igual.
-            if len(dia) < 2 or all((a.id, b.id) in trazos for a, b in pares):
+            if len(lugares) < 2 or all((a.id, b.id) in trazos for a, b in pares):
                 continue
 
             try:
-                trazo = client.directions([(p.lat, p.lon) for p in dia], profile)
+                trazo = client.directions([(p.lat, p.lon) for p in lugares], perfil)
             except (ORSError, ORSBudgetExhausted) as exc:
                 logger.info("sin geometria para un dia: %s", exc)
                 continue
 
             for (a, b), tramo in zip(
-                pares, split_by_stops(trazo, [(p.lat, p.lon) for p in dia]), strict=False
+                pares,
+                split_by_stops(trazo, [(p.lat, p.lon) for p in lugares]),
+                strict=False,
             ):
                 if len(tramo) >= 2:
                     nuevos[(a.id, b.id)] = tramo
+                    perfil_de[(a.id, b.id)] = perfil
 
         stats.fetched = len(nuevos)
         stats.requests = client.request_count - antes
         trazos.update(nuevos)
 
         if db is not None and nuevos:
-            persist_geometry(db, nuevos, profile)
+            for perfil in set(perfil_de.values()):
+                persist_geometry(
+                    db,
+                    {par: t for par, t in nuevos.items() if perfil_de[par] == perfil},
+                    perfil,
+                )
 
     stats.straight = len(tramos) - len(trazos)
     return trazos, stats

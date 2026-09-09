@@ -12,7 +12,12 @@ import pytest
 
 from app.models import Category
 from app.services import routing
-from app.services.geo import DETOUR_FACTOR, EstimatedTravel, haversine_km
+from app.services.geo import (
+    ARRIVAL_OVERHEAD_MINUTES,
+    DETOUR_FACTOR,
+    EstimatedTravel,
+    haversine_km,
+)
 from app.services.itinerary import Constraints, build_days
 from app.services.places import PlaceHit
 from app.services.routing import (
@@ -304,7 +309,12 @@ class TestTravelMatrix:
         b = lugar("B", *SANTA_ANA)
         matriz = TravelMatrix(edges={(a.id, b.id): (123.4, 99)})
 
-        assert matriz.between(a, b) == (123.4, 99)
+        # La cache guarda el tiempo de conduccion puro que midio ORS; between()
+        # devuelve lo que tarda llegar de verdad, o sea con la friccion de
+        # estacionar y entrar sumada. Son dos numeros distintos a proposito.
+        km, minutos = matriz.between(a, b)
+        assert km == 123.4
+        assert minutos == 99 + ARRIVAL_OVERHEAD_MINUTES["driving"]
 
     def test_no_asume_simetria(self):
         """Ir no cuesta lo mismo que volver, y la matriz tiene que permitirlo."""
@@ -363,7 +373,9 @@ class TestCache:
         assert cliente.request_count == 0
         assert matriz.stats.cached == 2
         assert matriz.stats.fetched == 0
-        assert matriz.between(a, b) == (5.5, 9)
+        km, minutos = matriz.between(a, b)
+        assert km == 5.5
+        assert minutos == 9 + ARRIVAL_OVERHEAD_MINUTES["driving"]
 
     def test_con_la_cache_a_medias_se_piden_los_que_faltan(self):
         a = lugar("A", 13.70, -89.20)
@@ -377,7 +389,9 @@ class TestCache:
         assert matriz.stats.cached == 1
         assert matriz.stats.fetched == 1
         # El valor cacheado no se pisa con el de ORS.
-        assert matriz.between(a, b) == (5.5, 9)
+        km, minutos = matriz.between(a, b)
+        assert km == 5.5
+        assert minutos == 9 + ARRIVAL_OVERHEAD_MINUTES["driving"]
 
 
 # --------------------------------------------------------------------------
@@ -782,11 +796,13 @@ class ClienteGeometriaFalso:
     def __init__(self, falla: bool = False) -> None:
         self.request_count = 0
         self.llamadas: list[list[tuple[float, float]]] = []
+        self.llamadas_con_perfil: list[tuple[list, str]] = []
         self.falla = falla
 
     def directions(self, coords, profile):
         self.request_count += 1
         self.llamadas.append(list(coords))
+        self.llamadas_con_perfil.append((list(coords), profile))
         if self.falla:
             raise ORSError("sin ruta")
         # Diez vertices por tramo, interpolados: se parece a un trazo real lo
@@ -812,7 +828,9 @@ class TestGeometriaDeLaRuta:
         dia2 = [LugarFalso(f"B{i}", 13.80 + i * 0.01, -89.30) for i in range(3)]
         cliente = ClienteGeometriaFalso()
 
-        trazos, stats = load_route_geometry([dia1, dia2], client=cliente)
+        trazos, stats = load_route_geometry(
+            [("driving", dia1), ("driving", dia2)], client=cliente
+        )
 
         assert cliente.request_count == 2, "una peticion por dia"
         assert stats.requests == 2
@@ -826,7 +844,7 @@ class TestGeometriaDeLaRuta:
         dia = [LugarFalso("A", 13.70, -89.22), LugarFalso("B", 13.75, -89.30)]
         cliente = ClienteGeometriaFalso()
 
-        load_route_geometry([dia], client=cliente)
+        load_route_geometry([("driving", dia)], client=cliente)
 
         assert cliente.llamadas[0] == [(13.70, -89.22), (13.75, -89.30)]
 
@@ -834,7 +852,7 @@ class TestGeometriaDeLaRuta:
         """Sin llave el mapa dibuja lo de siempre, no se queda vacio."""
         dia = [LugarFalso(f"A{i}", 13.70 + i * 0.01, -89.22) for i in range(3)]
 
-        trazos, stats = load_route_geometry([dia])
+        trazos, stats = load_route_geometry([("driving", dia)])
 
         assert trazos == {}
         assert stats.straight == 2
@@ -844,7 +862,7 @@ class TestGeometriaDeLaRuta:
         dia = [LugarFalso(f"A{i}", 13.70 + i * 0.01, -89.22) for i in range(3)]
         cliente = ClienteGeometriaFalso(falla=True)
 
-        trazos, stats = load_route_geometry([dia], client=cliente)
+        trazos, stats = load_route_geometry([("driving", dia)], client=cliente)
 
         assert trazos == {}
         assert stats.straight == 2
@@ -854,7 +872,7 @@ class TestGeometriaDeLaRuta:
         cliente = ClienteGeometriaFalso()
 
         trazos, stats = load_route_geometry(
-            [[LugarFalso("Solo", 13.70, -89.22)]], client=cliente
+            [("driving", [LugarFalso("Solo", 13.70, -89.22)])], client=cliente
         )
 
         assert cliente.request_count == 0
@@ -867,8 +885,40 @@ class TestGeometriaDeLaRuta:
         b = LugarFalso("B", 13.75, -89.22)
         cliente = ClienteGeometriaFalso()
 
-        trazos, _ = load_route_geometry([[a, b]], client=cliente)
+        trazos, _ = load_route_geometry([("driving", [a, b])], client=cliente)
 
         tramo = trazos[(a.id, b.id)]
         assert tramo[0][0] == pytest.approx(13.70, abs=1e-6)
         assert tramo[-1][0] == pytest.approx(13.75, abs=1e-6)
+
+
+class TestGeometriaPorModo:
+    """El trazo depende de la red, no solo de las coordenadas.
+
+    El camino a pie entre dos plazas no es el mismo que el del carro —un sendero
+    que el peaton cruza no existe para el vehiculo— asi que dibujar uno por el
+    otro seria mentir sobre el recorrido. Por eso el modo va por dia y no por
+    itinerario.
+    """
+
+    def test_pide_cada_dia_con_el_perfil_de_su_modo(self):
+        coche = [LugarFalso(f"C{i}", 13.70 + i * 0.01, -89.22) for i in range(3)]
+        pie = [LugarFalso(f"P{i}", 13.80 + i * 0.002, -89.30) for i in range(3)]
+        cliente = ClienteGeometriaFalso()
+
+        load_route_geometry([("driving", coche), ("walking", pie)], client=cliente)
+
+        perfiles = [perfil for _, perfil in cliente.llamadas_con_perfil]
+        assert perfiles == [
+            routing.ORS_PROFILES["driving"],
+            routing.ORS_PROFILES["walking"],
+        ]
+
+    def test_un_itinerario_de_un_solo_modo_no_cambia_nada(self):
+        dia = [LugarFalso(f"A{i}", 13.70 + i * 0.01, -89.22) for i in range(3)]
+        cliente = ClienteGeometriaFalso()
+
+        _, stats = load_route_geometry([("driving", dia)], client=cliente)
+
+        assert cliente.request_count == 1
+        assert stats.fetched == 2

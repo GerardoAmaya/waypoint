@@ -56,6 +56,8 @@ def _to_constraints(peticion: ItineraryRequest) -> motor.Constraints:
         mode=peticion.mode,
         preferred_categories=list(peticion.preferred_categories),
         avoided_categories=list(peticion.avoided_categories),
+        must_include_categories=list(peticion.must_include_categories),
+        day_modes={int(numero): modo for numero, modo in peticion.day_modes.items()},
         include_meals=peticion.include_meals,
         max_stops_per_day=peticion.max_stops_per_day,
         min_quality=peticion.min_quality,
@@ -122,6 +124,7 @@ def _to_out(
     itinerario: motor.Itinerary,
     stats,
     geometry: dict | None = None,
+    constraints: motor.Constraints | None = None,
 ) -> ItineraryOut:
     """Serializa el itinerario, con el trazo de cada tramo si se pidio.
 
@@ -147,6 +150,9 @@ def _to_out(
                 travel_km=dia.travel_km,
                 start=dia.start,
                 end=dia.end,
+                mode=(
+                    constraints.mode_for(dia.number) if constraints is not None else "driving"
+                ),
             )
             for dia in itinerario.days
         ],

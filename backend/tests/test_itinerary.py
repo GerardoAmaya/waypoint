@@ -8,15 +8,19 @@ import uuid
 from datetime import time
 
 import pytest
+from pydantic import ValidationError
 
 from app.models import Category
+from app.schemas import ItineraryRequest
 from app.services.geo import (
+    ARRIVAL_OVERHEAD_MINUTES,
     DETOUR_FACTOR,
     EstimatedTravel,
     haversine_km,
     speed_kmh,
 )
 from app.services.itinerary import (
+    BUDGET_BY_MODE,
     Constraints,
     Day,
     Itinerary,
@@ -24,6 +28,7 @@ from app.services.itinerary import (
     _insert_meals,
     _route_km,
     _trim_to_budget,
+    assemble,
     build_days,
     estimate_travel,
     order_by_proximity,
@@ -1326,3 +1331,371 @@ class TestPuntoDePartida:
         restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
 
         assert not restricciones.anchors_day(1)
+
+
+class TestDiasQueNoDanParaUnDia:
+    """Un dia que solo tiene el punto de partida no es un dia.
+
+    Al anclar los dias hubo que aflojar la guarda de "sin candidatos, no hay
+    dia", y eso dejo pasar dias con el hotel y nada mas. Se veian como un error
+    —"Hotel Barceló" solo, sin nada que visitar— y encima escondian el problema
+    de fondo: el catalogo no daba para tantos dias.
+
+    Reproducido con radio chico y muchos dias: cinco dias en 1.200 m alrededor
+    de un hotel daba tres dias completos y dos con solo el hotel.
+    """
+
+    def test_no_emite_un_dia_con_solo_el_ancla(self):
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        # Dos destinos para cinco dias: los ultimos no tienen con que llenarse.
+        candidatos = [
+            lugar("Uno", 13.6905, -89.2105, Category.nature, 0.6),
+            lugar("Dos", 13.6910, -89.2110, Category.culture, 0.6),
+        ]
+        restricciones = Constraints(
+            days=5,
+            center_lat=13.69,
+            center_lon=-89.21,
+            start_place=casa,
+            return_to_start=True,
+            include_meals=False,
+            max_stops_per_day=1,
+        )
+
+        dias = build_days(candidatos, restricciones)
+
+        assert dias, "no armo ningun dia"
+        for grupo in dias:
+            assert len(grupo) > 1, f"un dia salio con solo el ancla: {grupo}"
+
+    def test_el_faltante_de_dias_se_reporta(self):
+        """Salir con menos dias es correcto; hacerlo en silencio no.
+
+        La version con dias vacios pasaba la comprobacion de dias pedidos
+        porque los contaba, asi que el usuario no se enteraba de nada.
+        """
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        candidatos = [lugar("Uno", 13.6905, -89.2105, Category.nature, 0.6)]
+        restricciones = Constraints(
+            days=4,
+            center_lat=13.69,
+            center_lon=-89.21,
+            start_place=casa,
+            return_to_start=True,
+            include_meals=False,
+            max_stops_per_day=1,
+        )
+
+        itinerario = assemble([], candidatos, restricciones)
+        motivos = [v.constraint for v in itinerario.violations]
+
+        assert len(itinerario.days) < 4
+        assert "days" in motivos
+
+
+class TestElAnclaNoCuentaContraElLimite:
+    """El motor no puede contradecirse solo.
+
+    build_days le da al ancla un cupo aparte —quien pide tres paradas habla de
+    lugares que va a visitar— y validate() la contaba igual. El resultado era
+    una violacion de max_stops_per_day en todos los itinerarios con punto de
+    partida, por un limite que el propio motor decidio no aplicarle.
+    """
+
+    def test_no_reporta_violacion_por_el_ancla(self):
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.69,
+            center_lon=-89.21,
+            start_place=casa,
+            return_to_start=True,
+            max_stops_per_day=2,
+            include_meals=False,
+        )
+        # Dos visitas mas el ancla al principio y al final: cuatro entradas.
+        secuencia = [
+            (casa, None),
+            (lugar("Uno", 13.6905, -89.2105, Category.nature, 0.6), None),
+            (lugar("Dos", 13.6910, -89.2110, Category.culture, 0.6), None),
+        ]
+        dia = schedule_day(1, secuencia, restricciones)
+        itinerario = Itinerary(days=[dia])
+        itinerario.violations = validate(itinerario, restricciones)
+
+        assert len(dia.stops) == 4
+        assert "max_stops_per_day" not in [v.constraint for v in itinerario.violations]
+
+    def test_si_de_verdad_se_pasa_lo_reporta(self):
+        """La exencion es solo para el ancla, no una amnistia general."""
+        casa = lugar("Casa", 13.6900, -89.2100, Category.lodging, 0.1)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.69,
+            center_lon=-89.21,
+            start_place=casa,
+            max_stops_per_day=1,
+            include_meals=False,
+        )
+        secuencia = [
+            (casa, None),
+            (lugar("Uno", 13.6905, -89.2105, Category.nature, 0.6), None),
+            (lugar("Dos", 13.6910, -89.2110, Category.culture, 0.6), None),
+        ]
+        dia = schedule_day(1, secuencia, restricciones)
+        itinerario = Itinerary(days=[dia])
+
+        motivos = [v.constraint for v in validate(itinerario, restricciones)]
+
+        assert "max_stops_per_day" in motivos
+
+
+class TestCategoriasExigidas:
+    """ "Quiero ver minimo un museo" es un requisito, no una preferencia.
+
+    La diferencia importa y se veia en la practica: `preferred_categories` es
+    un empujon de 0.6 en el puntaje, asi que "minimo un museo" salia bien por
+    suerte y no por garantia. Cumplir a medias un requisito es no cumplirlo.
+
+    El motor lo prioriza al armar Y lo comprueba al terminar: priorizar no es
+    garantizar, y si la zona no tiene ni un museo hay que decirlo.
+    """
+
+    def _catalogo(self):
+        return [
+            # La naturaleza gana el puntaje: sin exigir nada, la semilla es esta.
+            lugar("Volcan", 13.7000, -89.2200, Category.nature, 0.9),
+            lugar("Cerro", 13.7010, -89.2210, Category.nature, 0.8),
+            lugar("Mirador", 13.7020, -89.2220, Category.viewpoint, 0.7),
+            # El museo esta mas lejos y puntua menos: sin exigirlo no entra.
+            lugar("Museo", 13.7300, -89.2500, Category.culture, 0.3),
+        ]
+
+    def test_sin_exigir_nada_la_categoria_puede_no_aparecer(self):
+        """La linea base: es lo que hacia que "minimo un museo" fuera suerte."""
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=2,
+            include_meals=False,
+        )
+
+        [dia] = build_days(self._catalogo(), restricciones)
+
+        assert Category.culture.value not in [p.category for p in dia]
+
+    def test_exigirla_la_pone_en_el_itinerario(self):
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=2,
+            include_meals=False,
+            must_include_categories=[Category.culture],
+        )
+
+        [dia] = build_days(self._catalogo(), restricciones)
+
+        assert Category.culture.value in [p.category for p in dia]
+
+    def test_el_requisito_es_del_itinerario_y_no_de_cada_dia(self):
+        """Quien pide un museo en dos dias quiere un museo, no dos."""
+        catalogo = [
+            *self._catalogo(),
+            lugar("Parque", 13.7040, -89.2240, Category.nature, 0.6),
+            lugar("Playa", 13.7050, -89.2250, Category.nature, 0.6),
+        ]
+        restricciones = Constraints(
+            days=2,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_stops_per_day=2,
+            include_meals=False,
+            must_include_categories=[Category.culture],
+        )
+
+        dias = build_days(catalogo, restricciones)
+        culturas = sum(1 for dia in dias for p in dia if p.category == Category.culture.value)
+
+        assert culturas == 1, f"salieron {culturas} paradas de cultura"
+
+    def test_si_la_zona_no_la_tiene_se_reporta(self):
+        """Priorizar no es garantizar, y el usuario tiene que enterarse."""
+        sin_cultura = [
+            lugar("Volcan", 13.7000, -89.2200, Category.nature, 0.9),
+            lugar("Cerro", 13.7010, -89.2210, Category.nature, 0.8),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            include_meals=False,
+            must_include_categories=[Category.culture],
+        )
+
+        itinerario = assemble([], sin_cultura, restricciones)
+        motivos = [v.constraint for v in itinerario.violations]
+
+        assert "must_include_categories" in motivos
+
+    def test_el_ancla_puede_cubrir_el_requisito(self):
+        """Si se parte de un hotel y se exige alojamiento, ya esta cubierto."""
+        hotel = lugar("Hotel", 13.6900, -89.2100, Category.lodging, 0.1)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            include_meals=False,
+            start_place=hotel,
+            must_include_categories=[Category.lodging],
+        )
+
+        itinerario = assemble([], self._catalogo(), restricciones)
+
+        assert "must_include_categories" not in [v.constraint for v in itinerario.violations]
+
+    def test_exigir_y_evitar_la_misma_categoria_se_rechaza(self):
+        """No se puede cumplir de ninguna forma: mejor fallar al construir."""
+        with pytest.raises(ValidationError):
+            ItineraryRequest(
+                days=1,
+                center_lat=13.70,
+                center_lon=-89.22,
+                must_include_categories=[Category.culture],
+                avoided_categories=[Category.culture],
+            )
+
+
+class TestFriccionDeLlegar:
+    """Moverse no es lo unico que cuesta llegar.
+
+    El modelo no tenia ningun tiempo muerto por parada, y se veia: 0.7 km en
+    coche daban "1 min", o sea salir del hotel y estar dentro del museo sesenta
+    segundos despues. Falta estacionar, caminar del carro a la puerta y entrar.
+
+    No esta calibrado contra datos porque no hay datos que medir; es una
+    estimacion como DEFAULT_DURATIONS. Lo que si esta medido es su costo:
+    sobre los 26 casos de evaluacion, el cumplimiento no se mueve y las paradas
+    ni bajan, porque el limite que ataba era la distancia y no el reloj —los
+    dias terminaban a las 15:09 con latest_end en 20:00.
+    """
+
+    def test_un_salto_corto_no_dura_un_minuto(self):
+        medidor = EstimatedTravel("driving")
+        a = lugar("A", 13.6756, -89.2529)
+        b = lugar("B", 13.6800, -89.2540)
+
+        _, minutos = medidor.between(a, b)
+
+        assert minutos > ARRIVAL_OVERHEAD_MINUTES["driving"]
+
+    def test_a_pie_cuesta_menos_llegar(self):
+        """No hay donde estacionar: solo encontrar la entrada."""
+        assert ARRIVAL_OVERHEAD_MINUTES["walking"] < ARRIVAL_OVERHEAD_MINUTES["driving"]
+
+    def test_la_friccion_se_suma_una_vez_por_tramo(self):
+        a = lugar("A", 13.6756, -89.2529)
+        b = lugar("B", 13.7000, -89.2600)
+        medidor = EstimatedTravel("driving")
+
+        _, minutos = medidor.between(a, b)
+        km, _ = medidor.between(a, b)
+        velocidad_pura = km / (minutos - ARRIVAL_OVERHEAD_MINUTES["driving"]) * 60
+
+        # Sin la friccion, la velocidad implicita tiene que ser una velocidad
+        # de carretera creible y no un valor absurdo.
+        assert 20 < velocidad_pura < 90
+
+    def test_la_primera_parada_del_dia_no_la_paga(self):
+        """Uno ya esta ahi: no hay llegada que pagar."""
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, include_meals=False
+        )
+        primera = lugar("Primera", 13.70, -89.22, Category.nature, 0.6)
+
+        dia = schedule_day(1, [(primera, None)], restricciones)
+
+        assert dia.stops[0].arrival == restricciones.earliest_start
+        assert dia.stops[0].travel_minutes_from_previous == 0
+
+
+class TestModoPorDia:
+    """ "El primer dia en coche, el segundo a pie" iba entero a unmapped.
+
+    Y era correcto: `mode` era un solo valor para todo el itinerario. Ahora el
+    modo va por dia, y con el va el presupuesto —que es la parte que no se
+    puede no hacer.
+    """
+
+    def test_el_modo_del_dia_manda_sobre_el_del_itinerario(self):
+        restricciones = Constraints(
+            days=2,
+            center_lat=13.70,
+            center_lon=-89.22,
+            mode="driving",
+            day_modes={2: "walking"},
+        )
+
+        assert restricciones.mode_for(1) == "driving"
+        assert restricciones.mode_for(2) == "walking"
+        # Un dia que nadie menciono usa el modo del viaje.
+        assert restricciones.mode_for(3) == "driving"
+
+    def test_el_presupuesto_sigue_al_modo(self):
+        """25 km son un dia en coche y cinco horas caminando.
+
+        Dejar el limite del itinerario en un dia a pie no seria una
+        imprecision, seria un dia imposible.
+        """
+        restricciones = Constraints(
+            days=2,
+            center_lat=13.70,
+            center_lon=-89.22,
+            mode="driving",
+            max_travel_km_per_day=25.0,
+            day_modes={2: "walking"},
+        )
+
+        assert restricciones.budget_for(1) == 25.0
+        assert restricciones.budget_for(2) == BUDGET_BY_MODE["walking"]
+        assert restricciones.budget_for(2) < restricciones.budget_for(1)
+
+    def test_si_todo_el_viaje_va_a_pie_manda_lo_que_pidio_el_usuario(self):
+        """El numero que puso ya es el de a pie: no se sustituye."""
+        restricciones = Constraints(
+            days=2,
+            center_lat=13.70,
+            center_lon=-89.22,
+            mode="walking",
+            max_travel_km_per_day=12.0,
+        )
+
+        assert restricciones.budget_for(1) == 12.0
+        assert restricciones.budget_for(2) == 12.0
+
+    def test_el_dia_a_pie_sale_mas_corto(self):
+        candidatos = [
+            lugar(f"P{i}", 13.70 + i * 0.03, -89.22, Category.nature, 0.6) for i in range(10)
+        ]
+        base = dict(
+            center_lat=13.70,
+            center_lon=-89.22,
+            days=2,
+            max_stops_per_day=5,
+            include_meals=False,
+            max_travel_km_per_day=25.0,
+        )
+
+        dias = build_days(candidatos, Constraints(day_modes={2: "walking"}, **base))
+        km_coche = _route_km(dias[0], EstimatedTravel("driving"))
+        km_pie = _route_km(dias[1], EstimatedTravel("walking"))
+
+        assert km_pie <= BUDGET_BY_MODE["walking"]
+        assert km_pie < km_coche
+
+    def test_sin_modos_por_dia_nada_cambia(self):
+        restricciones = Constraints(days=3, center_lat=13.70, center_lon=-89.22)
+
+        assert {restricciones.mode_for(n) for n in (1, 2, 3)} == {"driving"}
+        assert {restricciones.budget_for(n) for n in (1, 2, 3)} == {25.0}

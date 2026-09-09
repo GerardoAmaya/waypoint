@@ -241,7 +241,8 @@ export default function Panel({
               day={dia}
               advice={itinerary.advice}
               violations={itinerary.violations}
-              mode={interpretation?.constraints?.mode ?? "driving"}
+              /* El modo del dia, no el del itinerario: pueden diferir. */
+              mode={dia.mode}
               selectedStop={selectedStop}
               onSelectStop={onSelectStop}
             />

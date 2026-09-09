@@ -65,10 +65,21 @@ Si no menciona ninguno, null.
 - "max_travel_km_per_day": numero. Kilometros maximos de traslado por dia. \
 "no quiero pasarme el dia en el carro" es cerca de 30. "caminando" o "sin \
 carro" es cerca de 8. Por defecto 25.
-- "mode": "driving" o "walking". Por defecto "driving".
+- "mode": "driving" o "walking". Por defecto "driving". Es el modo de todo el \
+viaje.
+- "day_modes": objeto de numero de dia a modo, SOLO cuando distintos dias van \
+distinto. "el primer dia en coche y el segundo a pie" es \
+{"1": "driving", "2": "walking"}. Si todo el viaje va igual, dejalo vacio y \
+usa "mode".
 - "preferred_categories": lista de estas y solo estas: "food", "nature", \
 "culture", "viewpoint", "attraction", "lodging".
 - "avoided_categories": la misma lista.
+- "must_include_categories": la misma lista. Van aca las categorias que la \
+persona EXIGE, no las que le gustan. "quiero ver minimo un museo" y "que \
+incluya al menos un mirador" son requisitos: culture y viewpoint. "me gustan \
+los museos" o "prefiero naturaleza" son preferencias y van en \
+preferred_categories. La diferencia es que un requisito se cumple o se \
+incumple, y una preferencia solo sube las probabilidades.
 - "include_meals": booleano. Por defecto true.
 - "max_stops_per_day": entero de 1 a 12. Por defecto 5. Son los lugares que \
 quiere visitar; el sitio de donde sale no cuenta.
@@ -101,6 +112,9 @@ madrugar" a earliest_start, ya lo tomaste en cuenta y no queda nada sin \
 representar: repetirlo en "unmapped" le dice a la persona que lo ignoraste \
 cuando en realidad lo aplicaste. Antes de poner algo en "unmapped", revisa si \
 alguno de los campos de arriba lo cubre.
+
+Una categoria exigida NO se repite en preferred_categories: exigirla ya es lo \
+mas fuerte que se puede pedir.
 
 Si dice la hora a la que sale, va en "earliest_start"; si dice hasta que hora \
 puede, en "latest_end". "salgo a las 12 y termino como a las 10 de la noche" \
@@ -211,6 +225,28 @@ def _categories(valores, notes: list[str], campo: str) -> list[Category]:
         if categoria not in validas:
             validas.append(categoria)
     return validas
+
+
+def _day_modes(valores, notes: list[str]) -> dict[str, str]:
+    """Limpia el modo por dia que devolvio el modelo.
+
+    Solo entran dias que son numeros y modos que el motor conoce. Un dia "3"
+    en un viaje de dos no molesta —mode_for() nunca lo busca— asi que no vale
+    la pena rechazar la peticion entera por eso.
+    """
+    if not isinstance(valores, dict):
+        return {}
+
+    salida: dict[str, str] = {}
+    for numero, modo in valores.items():
+        if modo not in ("driving", "walking"):
+            notes.append(f"no reconocí el modo {modo!r}; ese día va como el resto")
+            continue
+        try:
+            salida[str(int(numero))] = modo
+        except (TypeError, ValueError):
+            notes.append(f"no reconocí el día {numero!r} para el modo de viaje")
+    return salida
 
 
 def _strings(valores) -> list[str]:
@@ -341,6 +377,21 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
 
     preferidas = _categories(datos.get("preferred_categories"), notes, "preferred")
     evitadas = _categories(datos.get("avoided_categories"), notes, "avoided")
+    exigidas = _categories(datos.get("must_include_categories"), notes, "must_include")
+
+    # Exigir y evitar la misma categoria no se puede cumplir. Gana evitarla por
+    # la misma razon que con las preferidas: es mas facil que el modelo la
+    # marque como exigida por el contexto que al reves.
+    for categoria in [c for c in exigidas if c in evitadas]:
+        exigidas.remove(categoria)
+        notes.append(
+            f"{categoria.value} quedó exigida y evitada a la vez; se respetó evitarla"
+        )
+
+    # Exigirla ya es lo mas fuerte que se puede pedir: repetirla como preferida
+    # no agrega nada y deja el reporte diciendo dos cosas del mismo pedido.
+    for categoria in [c for c in preferidas if c in exigidas]:
+        preferidas.remove(categoria)
 
     # Una categoria en las dos listas es contradictoria y el schema la rechaza.
     # Gana evitarla: es mas facil que alguien pida "sin museos" y el modelo
@@ -380,10 +431,12 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             else "driving",
             preferred_categories=preferidas,
             avoided_categories=evitadas,
+            must_include_categories=exigidas,
             include_meals=bool(datos.get("include_meals", True)),
             max_stops_per_day=_clamp(
                 datos.get("max_stops_per_day"), 1, 12, 5, notes, "max_stops_per_day"
             ),
+            day_modes=_day_modes(datos.get("day_modes"), notes),
         )
     except ValidationError as exc:
         # Red de seguridad: los campos se recortan uno por uno mas arriba, pero

@@ -97,6 +97,16 @@ class ItineraryRequest(BaseModel):
 
     preferred_categories: list[Category] = Field(default_factory=list)
     avoided_categories: list[Category] = Field(default_factory=list)
+
+    # Categorias que el itinerario tiene que incluir al menos una vez.
+    # Preferir sube las probabilidades; exigir es un requisito, y el motor lo
+    # comprueba sobre el itinerario terminado.
+    must_include_categories: list[Category] = Field(default_factory=list)
+
+    # Modo de cada dia cuando no todos van igual: {"1": "driving", "2":
+    # "walking"}. La clave es el numero de dia en texto porque JSON no tiene
+    # claves numericas. Los dias que no aparecen usan `mode`.
+    day_modes: dict[str, str] = Field(default_factory=dict)
     include_meals: bool = True
     max_stops_per_day: int = Field(default=5, ge=1, le=12)
     min_quality: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -111,6 +121,11 @@ class ItineraryRequest(BaseModel):
             raise ValueError("earliest_start tiene que ser anterior a latest_end")
         if set(self.preferred_categories) & set(self.avoided_categories):
             raise ValueError("una categoria no puede estar preferida y evitada a la vez")
+        # Exigir y evitar la misma categoria no se puede cumplir de ninguna
+        # forma, asi que se rechaza al construir en vez de dejar que el motor
+        # elija cual de las dos incumplir.
+        if set(self.must_include_categories) & set(self.avoided_categories):
+            raise ValueError("una categoria no puede estar exigida y evitada a la vez")
         return self
 
 
@@ -139,6 +154,10 @@ class DayOut(BaseModel):
     travel_km: float
     start: time | None = None
     end: time | None = None
+    # El modo de ESTE dia, que puede no ser el del itinerario. Va por dia
+    # porque el icono del traslado dice como se va, y en un viaje mixto decir
+    # "en coche" en el dia que se camina es decir algo falso.
+    mode: str = "driving"
 
 
 class ViolationOut(BaseModel):

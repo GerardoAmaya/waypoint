@@ -629,6 +629,105 @@ no siete porque la deduplicación absorbió a "Hotel Faro" como duplicado de uno
 que ya estaba con su etiqueta canónica, que es exactamente lo que tiene que
 hacer.
 
+### Exigir no es preferir
+
+"Quiero visitar mínimo un museo" iba entero a `unmapped`, y era la decisión
+correcta con los campos que había: `preferred_categories` es un empujón de 0,6
+en el puntaje, así que mapearlo ahí habría afirmado una garantía que no existe.
+En un itinerario de prueba salieron museos los dos días —pero por suerte, no
+por garantía.
+
+Un requisito se cumple o se incumple, y eso lo vuelve exactamente la clase de
+restricción que este proyecto sabe hacer cumplir. `must_include_categories` es
+una lista de categorías que el itinerario tiene que incluir **al menos una
+vez**, contada sobre el itinerario entero y no sobre cada día: quien pide un
+museo en dos días quiere un museo, no dos.
+
+El motor lo prioriza al armar y lo comprueba al terminar, y las dos cosas hacen
+falta. Priorizar se hace en dos sitios —la semilla del día, que es la forma más
+barata porque el resto se llena alrededor de ella, y el orden de llenado, con un
+descuento en kilómetros para que el requisito compita en la misma unidad que la
+cercanía y la variedad—. Comprobar existe porque priorizar no es garantizar: en
+Perquín, que no tiene ni un mirador, exigir uno reporta la violación en vez de
+dejar que el usuario lo descubra leyendo la lista.
+
+Medido sobre San Salvador: sin exigir nada el día sale `nature, viewpoint,
+food`; exigiendo cultura sale `culture, viewpoint, food`. La garantía funciona y
+no cuesta paradas.
+
+Exigir y evitar la misma categoría se rechaza al construir la petición: no se
+puede cumplir de ninguna forma, y dejar que el motor elija cuál incumplir sería
+peor que fallar. Y una categoría exigida se quita de las preferidas: exigirla ya
+es lo más fuerte que se puede pedir, y reportar las dos cosas del mismo pedido
+confunde.
+
+### Llegar cuesta más que moverse
+
+El modelo no tenía ningún tiempo muerto por parada, y se veía en pantalla:
+0,7 km en coche daban «1 min», o sea salir del hotel y estar dentro del museo
+sesenta segundos después. Falta estacionar, caminar del carro a la puerta y
+entrar. En un día urbano de saltos cortos el horario iba optimista por parada.
+
+No está calibrado contra datos, porque no hay datos que medir: es una estimación
+de sentido común, igual que `DEFAULT_DURATIONS`. Ocho minutos en coche y dos a
+pie —a pie no hay dónde estacionar, solo encontrar la entrada.
+
+**Lo que sí está medido es su costo**, que es lo que decide el número. Barriendo
+de 0 a 20 minutos sobre los 26 casos:
+
+| coche | a pie | cumple | paradas | fin medio |
+|---|---|---|---|---|
+| 0 | 0 | 25/26 | 284 | 15:09 |
+| **8** | **2** | **25/26** | **285** | **15:40** |
+| 20 | 5 | 25/26 | 285 | 16:23 |
+
+Es casi gratis, y la razón es interesante: **el límite que ataba era la
+distancia, no el reloj.** Los días terminaban a las 15:09 con `latest_end` en
+20:00, así que la fricción llena margen que ya estaba ahí. Las paradas ni bajan
+—suben de 284 a 285.
+
+Se suma al usar el dato y no al guardarlo. La caché de `travel_edges` guarda el
+tiempo de conducción que midió OpenRouteService; meterle la fricción ahí dejaría
+un número que no es ni una cosa ni la otra y que ya no se podría comparar con la
+fuente. Hay tres tests que fijan esa separación.
+
+### Un día en coche y otro a pie
+
+"El primer día andaré coche, en el segundo viajaré a pie" iba entero a
+`unmapped`, y era la respuesta correcta: `mode` era **un solo valor para todo
+el itinerario**. Ahora va por día.
+
+**Lo que no se puede no hacer es que el presupuesto siga al modo.** Veinticinco
+kilómetros son un día normal en coche y cinco horas caminando: dejar el límite
+del itinerario en un día a pie no sería una imprecisión, sería un día
+imposible. Solo se sustituye cuando el día va en otro modo que el itinerario —
+si todo el viaje es a pie, el número que puso el usuario ya es el de a pie y
+manda sobre el valor por defecto.
+
+**Una matriz de OpenRouteService por modo distinto, no una por itinerario.** A
+pie y en carro no son la misma red: un sendero que el peatón cruza no existe
+para el carro. Cuesta una petición más, y solo cuando el viaje mezcla modos —un
+itinerario entero en coche sigue costando una.
+
+La alternativa era estimar los días a pie, y se descartó por una razón medida:
+`DETOUR_FACTOR` sale de 812 pares de ORS **en carro**, así que para caminar está
+doblemente mal —el factor de rodeo es otro y la red también. Un día a pie medido
+con la calibración del coche sería un número inventado con aspecto de dato.
+
+Lo mismo vale para el trazo: la geometría se pide con el perfil del día y se
+guarda en su propia fila, porque el camino a pie entre dos plazas no es el del
+carro y dibujar uno por el otro sería mentir sobre el recorrido.
+
+Y el icono del traslado sale del modo del día, no del itinerario: en un viaje
+mixto, poner el coche en el día que se camina es decir algo falso. Por eso
+`DayOut` lleva su propio `mode`.
+
+**El error que casi se cuela.** `assemble` resolvía el medidor una vez y lo
+pasaba hacia abajo. Cada función recibía entonces un proveedor concreto, y
+`_travel_or_estimate` lo devolvía tal cual: el día a pie se medía con la red del
+coche sin que nada lo delatara. Ahora se pasa `travel` —que puede ser un
+diccionario de modo a proveedor— y cada día resuelve el suyo.
+
 ---
 
 ## Frontend

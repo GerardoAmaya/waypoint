@@ -1,0 +1,308 @@
+From cbccf3ff1df9c1073c01049a581b6de07e202a63 Mon Sep 17 00:00:00 2001
+From: Gerardo Amaya <gerardo@example.com>
+Date: Wed, 9 Sep 2026 19:10:39 +0000
+Subject: [PATCH] feat: deployment setup for Railway, Neon and Vercel
+
+One worker, deliberately. The per-IP limiter keeps its count in process
+memory, so four workers would each hold their own and the real ceiling would
+be four times the configured one, with nothing failing and nothing warning.
+The choice not to add Redis forces a single process, and that is pinned in
+start.sh with the reason next to it rather than left to whatever the platform
+defaults to. If it ever needs to scale, the order is shared storage first,
+workers second; the other way round the limit stops limiting silently.
+
+Migrations run as a pre-deploy command rather than in the container's
+entrypoint. With two replicas, migrating on boot has both running Alembic
+against the same database at once, and a migration that fails inside the
+entrypoint leaves the app serving half-migrated instead of stopping the
+deploy.
+
+Data gets copied from local rather than re-downloaded. The README's figures --
+5,652 active places, 5.9% discarded, a 1.45 detour factor over 812 pairs --
+describe one specific snapshot of the catalogue. Pulling from Overpass again
+would produce a different one, since OpenStreetMap changes daily, and the
+README would quietly start describing something that no longer exists.
+
+The dump includes travel_edges on purpose: those are OpenRouteService
+requests already paid for out of a fifty-a-day quota, and carrying them means
+the demo starts with a warm cache in every zone that has been queried.
+
+The start script goes through a shell because the exec form of CMD does not
+expand variables and Railway injects the port.
+---
+ .gitignore         |   3 ++
+ DEPLOY.md          | 125 +++++++++++++++++++++++++++++++++++++++++++++
+ Makefile           |  27 +++++++++-
+ README.md          |   2 +
+ backend/Dockerfile |   7 ++-
+ backend/start.sh   |  23 +++++++++
+ railway.json       |  15 ++++++
+ 7 files changed, 200 insertions(+), 2 deletions(-)
+ create mode 100644 DEPLOY.md
+ create mode 100755 backend/start.sh
+ create mode 100644 railway.json
+
+diff --git a/.gitignore b/.gitignore
+index 1f8d66c..0ec7ce3 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -12,3 +12,6 @@ node_modules/
+ .next/
+ .DS_Store
+ data/
++# Volcado del catalogo para el despliegue: son megabytes de datos que ya
++# estan en la base, no codigo.
++catalogo.dump
+diff --git a/DEPLOY.md b/DEPLOY.md
+new file mode 100644
+index 0000000..91b77b4
+--- /dev/null
++++ b/DEPLOY.md
+@@ -0,0 +1,125 @@
++# Desplegar Waypoint
++
++Backend en Railway, base en Neon, frontend en Vercel. Los tres tienen plan
++gratuito y ninguno pide tarjeta.
++
++---
++
++## 1. La base en Neon
++
++Crear el proyecto y **habilitar PostGIS**, que no viene por defecto:
++
++```sql
++CREATE EXTENSION IF NOT EXISTS postgis;
++```
++
++La migración `0001` también la crea, así que si el rol tiene permiso se puede
++saltar este paso. Si Neon lo rechaza, hay que habilitarla desde su consola SQL
++antes del primer despliegue.
++
++La cadena de conexión que da Neon usa `postgresql://`. Este proyecto usa el
++driver `psycopg` 3, así que hay que cambiarle el esquema:
++
++```
++postgresql+psycopg://usuario:clave@ep-xxx.neon.tech/waypoint?sslmode=require
++```
++
++---
++
++## 2. Los datos
++
++**Se copian de local, no se vuelven a descargar.** Las cifras del README
++—5.652 lugares activos, 5,9% de descarte, 1.45 de factor de desvío sobre 812
++pares— describen un momento concreto del catálogo. Volver a bajar de Overpass
++daría un catálogo distinto, porque OpenStreetMap cambia todos los días, y el
++README pasaría a describir algo que ya no existe sin que nada avise.
++
++```bash
++make dump      # saca catalogo.dump de la base local
++make restore DATABASE_URL="postgresql://...neon.tech/waypoint?sslmode=require"
++```
++
++El volcado lleva `places`, `travel_edges` y el nomenclátor. Las aristas de
++traslado importan: son cupo de OpenRouteService ya gastado, y llevarlas
++significa que la demo arranca con la caché caliente en las zonas que ya se
++consultaron.
++
++---
++
++## 3. El backend en Railway
++
++Railway lee `railway.json` de la raíz. Construye con el Dockerfile del backend,
++corre `alembic upgrade head` antes de publicar, y comprueba `/health`.
++
++Las migraciones van como **comando previo al despliegue** y no en el arranque
++del contenedor. Con dos réplicas, migrar al arrancar hace que las dos corran
++Alembic a la vez sobre la misma base; y una migración fallida dentro del
++arranque deja la aplicación sirviendo a medio migrar en vez de frenar el
++despliegue.
++
++Variables de entorno:
++
++| Variable | Valor |
++|---|---|
++| `DATABASE_URL` | la cadena de Neon con `postgresql+psycopg://` |
++| `ANTHROPIC_API_KEY` | la llave |
++| `ORS_API_KEY` | la llave |
++| `CORS_ORIGINS` | el dominio de Vercel, sin barra final |
++| `TRUST_PROXY_HEADER` | `true` |
++| `ENVIRONMENT` | `production` |
++
++**`TRUST_PROXY_HEADER=true` solo acá.** El límite por IP lee
++`X-Forwarded-For`, que lo pone quien manda la petición. Detrás del proxy de
++Railway el encabezado se reescribe y es fiable; en local, encenderlo regala el
++límite, porque basta cambiar el valor en cada llamada para saltárselo.
++
++`PORT` lo inyecta Railway y `start.sh` lo lee. No hay que ponerla a mano.
++
++---
++
++## 4. El frontend en Vercel
++
++Directorio raíz: `frontend`. El resto lo detecta solo.
++
++| Variable | Valor |
++|---|---|
++| `NEXT_PUBLIC_API_URL` | la URL pública de Railway, sin barra final |
++
++**Ojo con las vistas previas.** Vercel le da un dominio distinto a cada rama, y
++`CORS_ORIGINS` solo lleva el de producción, así que las vistas previas van a
++fallar contra el backend. Es lo correcto por defecto —una lista de orígenes con
++comodín deja de ser una lista— pero conviene saberlo antes de asustarse.
++
++---
++
++## 5. Comprobar que quedó
++
++```bash
++curl https://TU-BACKEND.up.railway.app/health
++curl https://TU-BACKEND.up.railway.app/places/stats
++```
++
++El `health` tiene que traer `postgis` con una versión y las dos llaves en
++`true`. El `stats` tiene que traer 5.652 activos: si trae cero, el volcado no
++entró y el planificador va a devolver itinerarios vacíos sin explicar por qué.
++
++Después, un itinerario de punta a punta desde el navegador.
++
++---
++
++## Lo que hay que saber de este despliegue
++
++**Un solo worker, y no es casualidad.** El límite por IP lleva su cuenta en
++memoria del proceso. Con cuatro workers cada uno tendría la suya y el techo
++real sería cuatro veces el configurado, sin que nada falle ni avise. Está fijado
++en `start.sh` con el motivo escrito al lado. Si algún día hace falta escalar, el
++orden es mover la cuenta a un almacén compartido primero y subir los workers
++después.
++
++**El arranque en frío se nota.** En el plan gratuito de Railway el contenedor
++duerme, y la primera petición después de un rato paga el arranque más la
++conexión a Neon. El `healthcheckTimeout` está en 120 segundos por eso.
++
++**El cupo de rutas es de 50 al día y es global**, no por usuario. La caché lo
++estira: una zona ya consultada no vuelve a gastar. Por eso el volcado incluye
++`travel_edges`.
+diff --git a/Makefile b/Makefile
+index 6bc3f1c..19eb03f 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,4 +1,4 @@
+-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check
++.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check dump restore
+ 
+ up:
+ 	docker compose up -d --build
+@@ -69,3 +69,28 @@ web-build:
+ # Las mismas tres comprobaciones que corre CI sobre el frontend.
+ web-check:
+ 	cd frontend && npm run typecheck && npm run lint && npm run build
++
++# --------------------------------------------------------------------------
++# Despliegue. Ver DEPLOY.md.
++# --------------------------------------------------------------------------
++
++# Vuelca los datos, no el esquema: el esquema lo pone Alembic en el destino.
++# Se copian de local en vez de volver a bajar de Overpass porque las cifras del
++# README describen ESTE catalogo, y OpenStreetMap cambia todos los dias.
++#
++# travel_edges va incluida a proposito: son peticiones a OpenRouteService ya
++# pagadas, y llevarlas hace que la demo arranque con la cache caliente.
++dump:
++	docker compose exec -T db pg_dump -U waypoint -d waypoint \
++		--data-only --no-owner --no-privileges \
++		-t places -t place_names -t travel_edges -t route_legs \
++		> catalogo.dump
++	@wc -c catalogo.dump
++
++# Requiere DATABASE_URL con la cadena de Neon y psql instalado en la maquina.
++#   make restore DATABASE_URL="postgresql://...neon.tech/waypoint?sslmode=require"
++restore:
++	@test -n "$(DATABASE_URL)" || (echo "Falta DATABASE_URL"; exit 1)
++	@test -f catalogo.dump || (echo "Falta catalogo.dump: corre make dump primero"; exit 1)
++	psql "$(DATABASE_URL)" -v ON_ERROR_STOP=1 -f catalogo.dump
++	@echo "Comproba con: curl TU-BACKEND/places/stats"
+diff --git a/README.md b/README.md
+index b2a68c2..ffd844a 100644
+--- a/README.md
++++ b/README.md
+@@ -12,6 +12,8 @@ el despliegue. Ver `PLAN.md` para el alcance completo.
+ 
+ ---
+ 
++Para publicarlo, ver `DEPLOY.md`.
++
+ ## Correr localmente
+ 
+ ```bash
+diff --git a/backend/Dockerfile b/backend/Dockerfile
+index 5b1c922..712d215 100644
+--- a/backend/Dockerfile
++++ b/backend/Dockerfile
+@@ -21,6 +21,11 @@ RUN if [ "$INSTALL_DEV" = "true" ]; then \
+     fi
+ 
+ COPY . .
++RUN chmod +x start.sh
+ 
+ EXPOSE 8000
+-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
++
++# El arranque pasa por un guion porque la forma exec de CMD no expande
++# variables, y Railway inyecta el puerto por entorno. Ver backend/start.sh, que
++# ademas explica por que va con un solo worker.
++CMD ["./start.sh"]
+diff --git a/backend/start.sh b/backend/start.sh
+new file mode 100755
+index 0000000..9d5cb86
+--- /dev/null
++++ b/backend/start.sh
+@@ -0,0 +1,23 @@
++#!/bin/sh
++# Arranque en produccion.
++#
++# **Un solo worker, a proposito.** El limite por IP lleva su cuenta en memoria
++# del proceso, asi que con cuatro workers cada uno tendria la suya y el techo
++# real seria cuatro veces el configurado. La decision de no meter Redis obliga a
++# un solo proceso, y eso se fija aca en vez de dejarlo al azar del entorno.
++#
++# Si algun dia hace falta escalar, el orden es: mover la cuenta a un almacen
++# compartido primero, subir los workers despues. Al reves, el limite deja de
++# limitar sin que nada falle ni avise.
++set -e
++
++# Railway y Fly inyectan el puerto por variable. La forma exec de CMD no expande
++# variables, por eso el arranque pasa por este guion.
++PUERTO="${PORT:-8000}"
++
++exec uvicorn app.main:app \
++  --host 0.0.0.0 \
++  --port "$PUERTO" \
++  --workers 1 \
++  --proxy-headers \
++  --forwarded-allow-ips '*'
+diff --git a/railway.json b/railway.json
+new file mode 100644
+index 0000000..f3ec7c9
+--- /dev/null
++++ b/railway.json
+@@ -0,0 +1,15 @@
++{
++  "$schema": "https://railway.com/railway.schema.json",
++  "build": {
++    "builder": "DOCKERFILE",
++    "dockerfilePath": "backend/Dockerfile"
++  },
++  "deploy": {
++    "startCommand": "./start.sh",
++    "healthcheckPath": "/health",
++    "healthcheckTimeout": 120,
++    "restartPolicyType": "ON_FAILURE",
++    "restartPolicyMaxRetries": 3,
++    "preDeployCommand": "alembic upgrade head"
++  }
++}
+-- 
+2.43.0
+
