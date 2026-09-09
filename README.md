@@ -175,6 +175,9 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Cupo del endpoint de matriz | 50 peticiones / ventana de 24 h |
 | Peticiones por itinerario en zona fría | 1 |
 | Lugares inventados | 0, por construcción |
+| Lugares en el catálogo | 5.654 activos de 6.296 bajados |
+| Descarte del filtro de calidad | 5.8% (368 registros) |
+| Duplicados fusionados | 4.4% (274 registros) |
 | Tests | 180 |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
@@ -182,11 +185,34 @@ cascadas— que caen a estimación siempre, haya cupo o no. Ese número es tambi
 que valida tratar los nulos por celda: con manejo por respuesta se habrían
 perdido bloques enteros por una cascada mal ubicada.
 
-Para las cifras del catálogo:
+### La forma del catálogo condiciona el producto
 
-```bash
-curl -s localhost:8100/places/stats | python3 -m json.tool
-```
+Quitando comida y alojamiento quedan 2.427 destinos, y están repartidos así:
+
+| Categoría | Cuántos | Del total de destinos |
+|---|---|---|
+| nature | 2.024 | 83,4% |
+| culture | 286 | 11,8% |
+| attraction | 82 | 3,4% |
+| viewpoint | 35 | 1,4% |
+
+**Treinta y cinco miradores en todo el país.** OpenStreetMap en El Salvador está
+mapeado con mucho detalle para restaurantes y accidentes naturales, y muy poco
+para atracciones. Eso tiene tres consecuencias directas:
+
+La puntuación por atractivo (`SUBCATEGORY_APPEAL`) carga con el 83% del catálogo.
+En OSM, `leisure=park` incluye cada plaza municipal del país, así que sin esa
+distinción un redondel puntúa igual que un volcán. No es un refinamiento: es lo
+único que separa los destinos del mobiliario urbano.
+
+Repartir el cupo de búsqueda entre categorías rinde menos de lo que parece. Con
+35 miradores nacionales, una zona cualquiera aporta dos o tres, y el itinerario
+termina apoyándose en `nature` casi siempre.
+
+Y hay 1,12 restaurantes por cada destino, así que reservar cupo para comer casi
+siempre tiene con qué llenarse. La excepción son los parques nacionales, que es
+exactamente donde el motor falló primero. Ese fallo no fue mala suerte: es la
+consecuencia previsible de la forma del catálogo.
 
 ---
 
