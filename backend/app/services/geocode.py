@@ -144,6 +144,17 @@ def find_zone(texto: str) -> Zone | None:
     return max(candidatas, key=lambda par: par[0])[1]
 
 
+# Un centro de viaje tiene que ser un destino. Un restaurante o un hotel se
+# llaman como el lugar donde estan —"Pizza Hut La Gran Via"— y con busqueda por
+# trigramas ganan facil, pero nadie planea tres dias alrededor de una pizzeria.
+CATEGORIAS_NO_ANCLABLES = {"food", "lodging"}
+
+# La busqueda por nombre tolera errores de escritura, y esa tolerancia con un
+# umbral bajo convierte cualquier frase en un lugar. Para anclar un viaje entero
+# se pide mas parecido que para buscar un punto en el mapa.
+MIN_SIMILARITY_ANCLA = 0.45
+
+
 def resolve_area(
     db: Session, texto: str, *, default_radius_m: int = 15_000
 ) -> ResolvedArea | None:
@@ -152,6 +163,16 @@ def resolve_area(
     El nomenclator manda sobre el catalogo. Si alguien dice "Santa Ana" quiere
     la ciudad, no el primer POI que se llame parecido, y con trigramas eso
     podria ser cualquier cosa.
+
+    **Del catalogo solo se aceptan destinos.** Un pedido de "cerca de La Gran
+    Via" llego a centrar un viaje de tres dias en un Pizza Hut: el local se
+    llama como la zona, gano la busqueda por nombre, y el itinerario salio
+    titulado con una pizzeria. Los negocios de comida y los hoteles se llaman
+    como el sitio donde estan, asi que son justo los peores candidatos a ancla
+    aunque sean los que mejor coinciden.
+
+    Cuando no queda nada aceptable se devuelve None, y quien llama enumera las
+    zonas que si conoce. Decir "no conozco esa zona" es mejor que elegir mal.
     """
     zona = find_zone(texto)
     if zona is not None:
@@ -163,11 +184,14 @@ def resolve_area(
             source="zone",
         )
 
-    hits: list[PlaceHit] = search_by_name(db, texto, limit=1)
-    if not hits:
+    hits: list[PlaceHit] = search_by_name(
+        db, texto, limit=8, min_similarity=MIN_SIMILARITY_ANCLA
+    )
+    anclables = [h for h in hits if h.category not in CATEGORIAS_NO_ANCLABLES]
+    if not anclables:
         return None
 
-    lugar = hits[0]
+    lugar = anclables[0]
     return ResolvedArea(
         name=lugar.name,
         lat=lugar.lat,

@@ -140,11 +140,25 @@ export default function Mapa({
         // **El trazo dice como se midio.** Punteado es estimado, solido es
         // medido sobre carretera. No es adorno: es la unica forma de ver, sin
         // leer un numero, que las distancias de este dia son aproximadas.
+        // Un trazo fino en anil sobre un mapa oscuro y cargado se pierde. Se
+        // dibuja dos veces: una linea gruesa oscura por debajo que despeja el
+        // fondo, y la de color encima. Es la misma tecnica que usan las cartas
+        // nauticas para las derrotas.
+        if (activo) {
+          L.polyline(coords, {
+            color: PALETA.basalto,
+            weight: 7,
+            opacity: 0.55,
+            lineCap: "round",
+            interactive: false,
+          }).addTo(capa);
+        }
+
         L.polyline(coords, {
-          color: PALETA.anilClaro,
-          weight: activo ? 2.5 : 1.5,
-          opacity: activo ? 0.9 : 0.25,
-          dashArray: travelSource === "real" ? undefined : "1 7",
+          color: activo ? PALETA.niebla : PALETA.anilClaro,
+          weight: activo ? 3 : 1.5,
+          opacity: activo ? 0.95 : 0.3,
+          dashArray: travelSource === "real" ? undefined : "2 8",
           lineCap: "round",
         }).addTo(capa);
       }
@@ -153,8 +167,8 @@ export default function Mapa({
         const marcador = L.marker([parada.place.lat, parada.place.lon], {
           icon: pin(indice + 1, parada.place.category, activo, indice),
           keyboard: true,
-          title: parada.place.name,
-          opacity: activo ? 1 : 0.35,
+          title: `${parada.place.name} — día ${dia.number}`,
+          opacity: activo ? 1 : 0.55,
         });
         marcador.on("click", () => onSelect.current(dia.number));
         marcador.addTo(capa);
@@ -189,14 +203,25 @@ export default function Mapa({
  */
 function pin(numero: number, categoria: string, activo: boolean, indice: number) {
   const color = CATEGORY_COLOR[categoria as keyof typeof CATEGORY_COLOR];
-  const retraso = activo ? Math.min(indice * 70, 700) : 0;
+
+  // **Los otros dias son puntos, no numeros.** Con tres dias en pantalla habia
+  // tres juegos de "1, 2, 3, 4" encimados y ninguno se entendia. El numero es
+  // el orden del recorrido, y un orden solo se lee si es el unico en pantalla.
+  if (!activo) {
+    return L.divIcon({
+      className: "waypoint-pin-wrap",
+      iconSize: [10, 10],
+      iconAnchor: [5, 5],
+      html: `<span class="waypoint-punto" style="--pin:${color}"></span>`,
+    });
+  }
 
   return L.divIcon({
     className: "waypoint-pin-wrap",
     iconSize: [26, 26],
     iconAnchor: [13, 13],
     html: `
-      <span class="waypoint-pin" style="--pin:${color};--retraso:${retraso}ms">
+      <span class="waypoint-pin" style="--pin:${color};--retraso:${Math.min(indice * 70, 700)}ms">
         <span class="waypoint-pin-num">${numero}</span>
       </span>`,
   });

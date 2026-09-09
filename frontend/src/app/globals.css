@@ -126,8 +126,14 @@ body {
   invertiria tambien los pines y la ruta.
 */
 .teselas-oscuras {
-  filter: invert(1) hue-rotate(180deg) brightness(0.86) contrast(0.92)
-    saturate(0.45);
+  /*
+    saturate() casi a cero antes de invertir. Con 0.45 los parques salian verde
+    oliva y las carreteras salmon, y el mapa dejaba de parecerse a basalto: el
+    color del mapa competia con el de los marcadores, que es donde el color
+    tiene que significar algo.
+  */
+  filter: grayscale(1) invert(1) brightness(0.78) contrast(1.08) sepia(0.18)
+    hue-rotate(175deg) saturate(1.6);
 }
 
 /* Leaflet trae su propio aspecto; se lo apaga para que no imponga el suyo. */
@@ -230,4 +236,15 @@ body {
   to {
     opacity: 1;
   }
+}
+
+/* Los dias que no estan seleccionados: presencia sin competencia. */
+.waypoint-punto {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--pin);
+  border: 1.5px solid var(--color-basalto);
+  opacity: 0.8;
 }

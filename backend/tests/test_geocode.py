@@ -58,3 +58,76 @@ class TestCoherenciaDeLaLista:
     def test_los_nombres_van_al_prompt(self):
         assert "Suchitoto" in zone_names()
         assert len(zone_names()) == len(ZONES)
+
+
+class TestAnclaDelCatalogo:
+    """Un centro de viaje tiene que ser un destino.
+
+    El caso real: "hospedaje cerca de La Gran Via" centro un viaje de tres dias
+    en "Pizza Hut La Gran Via". El local se llama como la zona y gano la
+    busqueda por nombre.
+    """
+
+    def _hit(self, nombre, categoria, lat=13.67, lon=-89.24):
+        import uuid
+
+        from app.services.places import PlaceHit
+
+        return PlaceHit(
+            id=uuid.uuid4(),
+            name=nombre,
+            category=categoria,
+            subcategory=None,
+            lat=lat,
+            lon=lon,
+            quality_score=0.7,
+        )
+
+    def _resolver(self, monkeypatch, hits):
+        from app.services import geocode
+
+        monkeypatch.setattr(geocode, "search_by_name", lambda *a, **k: hits)
+        return geocode.resolve_area(None, "La Gran Via")
+
+    def test_descarta_un_restaurante_como_centro(self, monkeypatch):
+        hits = [self._hit("Pizza Hut La Gran Via", "food")]
+        assert self._resolver(monkeypatch, hits) is None
+
+    def test_descarta_un_hotel_como_centro(self, monkeypatch):
+        hits = [self._hit("Hotel La Gran Via", "lodging")]
+        assert self._resolver(monkeypatch, hits) is None
+
+    def test_prefiere_el_destino_aunque_el_negocio_coincida_mejor(self, monkeypatch):
+        hits = [
+            self._hit("Pizza Hut La Gran Via", "food"),
+            self._hit("Mirador La Gran Via", "viewpoint"),
+        ]
+        resultado = self._resolver(monkeypatch, hits)
+
+        assert resultado is not None
+        assert resultado.name == "Mirador La Gran Via"
+        assert resultado.source == "catalog"
+
+    def test_un_lugar_puntual_de_verdad_si_ancla(self, monkeypatch):
+        from app.services import geocode
+
+        hits = [self._hit("Volcan de Izalco", "nature", 13.81, -89.63)]
+        monkeypatch.setattr(geocode, "search_by_name", lambda *a, **k: hits)
+
+        resultado = geocode.resolve_area(None, "el volcan ese de Izalco")
+
+        assert resultado is not None
+        assert resultado.source in {"zone", "catalog"}
+
+    def test_el_nomenclator_sigue_mandando(self, monkeypatch):
+        """Aunque el catalogo tenga algo mas parecido, la zona gana."""
+        from app.services import geocode
+
+        monkeypatch.setattr(
+            geocode, "search_by_name", lambda *a, **k: [self._hit("Bar Suchitoto", "food")]
+        )
+        resultado = geocode.resolve_area(None, "Suchitoto")
+
+        assert resultado is not None
+        assert resultado.source == "zone"
+        assert resultado.name == "Suchitoto"
