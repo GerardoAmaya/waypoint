@@ -1513,11 +1513,15 @@ make test            # los 578 del backend
 npm test             # los 28 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante
 make ors-calibrate   # mide desvío y velocidad contra el catálogo
-make ors-warm        # precalienta la cache por zona (no gasta sin --apply)
+make ors-warm        # dice cuanto costaria precalentar; no gasta nada
+make ors-warm-apply  # lo hace: 20 de las 50 peticiones diarias
 ```
 
-`ors-warm` sin `--apply` solo dice cuánto costaría. Con 50 peticiones diarias, un
-guion que consuma cupo por equivocación sale caro.
+`ors-warm` solo dice cuánto costaría; `ors-warm-apply` lo hace. Son dos
+objetivos y no una bandera porque `make ors-warm --apply` **no funciona**: make
+se come el `--apply` como opción propia y nunca llega al guion. Con 50
+peticiones diarias, un comando que aparenta gastar y no gasta es peor que uno
+que no existe.
 
 ---
 

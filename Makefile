@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
+.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm ors-warm-apply ors-warm-zone zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
 
 up:
 	docker compose up -d --build
@@ -30,9 +30,23 @@ ors-check:
 ors-calibrate:
 	docker compose exec api python -m scripts.calibrate_travel --sample 30
 
-# Sin --apply solo dice cuanto costaria. El cupo son 50 peticiones al dia.
+# Dos objetivos y no una bandera, como con el nomenclator: `make ors-warm
+# --apply` no funciona —make se come el `--apply` como opcion propia y nunca
+# llega al guion— y con un cupo de 50 peticiones al dia, un comando que
+# aparenta gastar y no gasta es peor que uno que no existe.
+#
+# ors-warm no gasta nada: dice cuanto costaria. ors-warm-apply gasta.
 ors-warm:
 	docker compose exec api python -m scripts.warm_travel_cache
+
+ors-warm-apply:
+	docker compose exec api python -m scripts.warm_travel_cache --apply
+
+# Una zona sola, para repartir el cupo en varios dias:
+#   make ors-warm-zone ZONE=ataco
+ors-warm-zone:
+	@test -n "$(ZONE)" || (echo "Falta ZONE. Ej: make ors-warm-zone ZONE=ataco"; exit 1)
+	docker compose exec api python -m scripts.warm_travel_cache --apply --zone "$(ZONE)"
 
 # Comprueba que cada zona del nomenclator tenga lugares alrededor. No gasta cupo.
 zones:
