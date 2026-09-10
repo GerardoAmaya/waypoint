@@ -28,15 +28,22 @@ class Settings(BaseSettings):
     ors_min_interval_seconds: float = 1.5
     # Techo propio de peticiones por ventana de 24 horas, uno por endpoint.
     #
-    # **Los dos cupos de ORS no son iguales y con un solo numero el trazo
-    # salia perdiendo.** Medido en las cabeceras de sus respuestas: la matriz
-    # da 50 y las direcciones 200. Un techo compartido de 45 dejaba el trazo
-    # por carretera limitado a menos de la cuarta parte de lo que ORS permite,
-    # y el trazo es lo que se ve.
+    # **Los dos endpoints se contabilizan aparte en ORS**, y por eso hay dos
+    # numeros: la matriz responde "Quota exceeded" mientras direcciones sigue
+    # contestando, y al reves. Con un solo techo compartido, el que corriera
+    # primero se llevaba el presupuesto del otro.
     #
-    # En los dos se deja margen para poder calibrar o depurar sin quedarnos sin
-    # cupo para la demo. Al llegar al techo, los traslados se estiman y las
-    # lineas se dibujan rectas: el itinerario sale igual.
+    # **Lo que NO se sabe es cuanto da ORS al dia en cada uno.** La cabecera
+    # `X-Ratelimit-Limit: 200` de las respuestas de direcciones parecia decirlo
+    # y no: con `Remaining: 176` en esa misma cabecera, ORS ya contestaba
+    # "Quota exceeded". O sea que esa cabecera describe un limite de RITMO y no
+    # el cupo del dia, que no publica. Del de matriz solo sabemos que se agota
+    # alrededor de las 50 peticiones, medido a golpes.
+    #
+    # Asi que estos numeros son techos NUESTROS, no espejos de los de ORS:
+    # frenan antes de molestar al servicio y dejan margen para calibrar sin
+    # quedarnos sin cupo para la demo. Al llegar al techo, los traslados se
+    # estiman y las lineas se dibujan rectas: el itinerario sale igual.
     ors_daily_budget: int = 45
     ors_directions_budget: int = 180
 

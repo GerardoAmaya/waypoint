@@ -608,7 +608,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Repetición de subcategoría por paso | 15% |
 | Paradas fuera de hora (luz o cierre) | 0 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
-| Cupo del endpoint de direcciones | 200 / día, medido en la cabecera |
+| Cupo del endpoint de direcciones | no publicado; su cabecera mide ritmo, no día |
 | Tests | 578 backend, 28 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
@@ -941,13 +941,17 @@ X-Ratelimit-Limit: 200        (direcciones, no 50 como la matriz)
 X-Ratelimit-Remaining: 176
 ```
 
-O sea que el cupo del trazo es cuatro veces el de la matriz y estaba
-prácticamente sin usar. Y el techo propio de 45 se aplicaba a los dos por
-igual, así que después de arreglar los contadores era **él** —y no ORS— el que
-limitaba las direcciones a menos de la cuarta parte de lo permitido. Ahora hay
-un techo por endpoint: 45 para la matriz de 50, y 180 para las direcciones de
-200, con margen en los dos para poder calibrar sin quedarse sin cupo para la
-demo.
+**Y esa cabecera no dice lo que parece.** Se leyó como "el trazo tiene 200 al
+día y están casi sin usar", y horas después ORS contestaba `Quota exceeded` a
+las direcciones **con `Remaining: 176` en esa misma cabecera**. O sea que
+`X-Ratelimit-Limit` describe un límite de *ritmo*, no el cupo del día — que ORS
+no publica. Del de matriz solo se sabe que se agota alrededor de las 50, medido
+a golpes.
+
+Así que los dos techos del proyecto —45 para la matriz, 180 para las
+direcciones— son nuestros y no espejos de los de ORS: frenan antes de molestar
+al servicio. Lo que sí está medido y es cierto es que **los dos endpoints se
+contabilizan aparte**: uno puede estar agotado y el otro contestando.
 
 **Y con el cupo desbloqueado apareció el problema de verdad, que era otro.**
 Pedir la geometría de un día entero en una petición tiene una consecuencia que

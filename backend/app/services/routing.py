@@ -220,10 +220,11 @@ class ORSClient:
         # el x-ratelimit-remaining de la ultima respuesta —de cualquiera de los
         # dos endpoints— en un campo comun, asi que un "quedan 4" de la matriz
         # apagaba direcciones, que tenia su cupo intacto.
-        # Cada endpoint con su techo, porque los cupos de ORS no son iguales:
-        # 50 la matriz y 200 las direcciones, medido en sus cabeceras. Sin el
-        # segundo numero, el trazo por carretera quedaba limitado a menos de la
-        # cuarta parte de lo que ORS permite.
+        # Cada endpoint con su techo, porque ORS los contabiliza aparte: la
+        # matriz contesta "Quota exceeded" mientras direcciones sigue
+        # respondiendo, y al reves. Cuanto da al dia en cada uno no lo
+        # publica, y su cabecera X-Ratelimit-Limit describe el ritmo y no el
+        # cupo: ver ors_directions_budget en la configuracion.
         self.quotas = {
             ENDPOINT_MATRIX: DailyQuota(daily_budget),
             ENDPOINT_DIRECTIONS: DailyQuota(
