@@ -496,6 +496,57 @@ class TestClienteConPresupuesto:
 
         assert llamadas["n"] == 2, "la tercera no debio salir a la red"
 
+    def test_la_matriz_no_se_come_el_cupo_del_trazo(self, monkeypatch):
+        """Los dos endpoints tienen cupos separados y ORS los cuenta aparte.
+
+        Con un contador compartido, la matriz —que corre primero en la misma
+        peticion— se llevaba el presupuesto y la geometria no se llegaba a
+        pedir: itinerarios con distancias reales y lineas rectas, y route_legs
+        sin una sola fila.
+        """
+        respuestas = {
+            "matrix": RespuestaFalsa(200, {"distances": [[0, 1]], "durations": [[0, 60]]}),
+            "directions": RespuestaFalsa(
+                200,
+                {"features": [{"geometry": {"coordinates": [[-89.2, 13.7], [-89.5, 14.0]]}}]},
+            ),
+        }
+
+        def post_falso(url, json, headers, timeout):
+            return respuestas["directions" if "directions" in url else "matrix"]
+
+        monkeypatch.setattr(routing.httpx, "post", post_falso)
+        cliente = ORSClient("llave", min_interval_seconds=0, daily_budget=1)
+
+        cliente.matrix([SAN_SALVADOR, SANTA_ANA], "driving-car")
+        with pytest.raises(routing.ORSBudgetExhausted):
+            cliente.matrix([SAN_SALVADOR, SANTA_ANA], "driving-car")
+
+        # El trazo tiene su propio cupo y no lo toco la matriz.
+        trazo = cliente.directions([SAN_SALVADOR, SANTA_ANA], "driving-car")
+        assert trazo, "la geometria tenia cupo propio y debio salir"
+
+    def test_el_cupo_que_informa_un_endpoint_no_apaga_al_otro(self, monkeypatch):
+        """La segunda cara del mismo error.
+
+        sync_with_server guardaba el x-ratelimit-remaining de la ultima
+        respuesta en un campo comun, asi que un "quedan 0" de la matriz
+        apagaba direcciones, que tenia su cupo intacto.
+        """
+        respuesta = RespuestaFalsa(200, {"distances": [[0]], "durations": [[0]]})
+        respuesta.headers = {"x-ratelimit-remaining": "0"}
+        monkeypatch.setattr(
+            routing.httpx, "post", lambda url, json, headers, timeout: respuesta
+        )
+
+        cliente = ORSClient("llave", min_interval_seconds=0, daily_budget=45)
+        cliente.matrix([SAN_SALVADOR], "driving-car")
+
+        assert cliente.matrix_quota.remaining == 0
+        assert cliente.directions_quota.remaining is None, (
+            "direcciones no informo nada todavia; heredar el 0 de la matriz la apagaba"
+        )
+
     def test_lee_el_cupo_restante_del_encabezado(self, monkeypatch):
         respuesta = RespuestaFalsa(200, {"distances": [[0]], "durations": [[0]]})
         respuesta.headers = {"x-ratelimit-remaining": "7"}
@@ -506,7 +557,7 @@ class TestClienteConPresupuesto:
         cliente = ORSClient("llave", min_interval_seconds=0, daily_budget=45)
         cliente.matrix([SAN_SALVADOR], "driving-car")
 
-        assert cliente.quota.remaining == 7
+        assert cliente.matrix_quota.remaining == 7
 
     def test_el_presupuesto_agotado_degrada_a_estimacion(self):
         """Sin cupo el itinerario sale igual, con distancias aproximadas."""
@@ -538,7 +589,7 @@ class TestClienteCompartido:
         segundo = routing.client_from_settings()
 
         assert primero is segundo
-        assert primero.quota is segundo.quota
+        assert primero.quotas is segundo.quotas
         routing.client_from_settings.cache_clear()
 
     def test_sin_llave_no_hay_cliente(self, monkeypatch):
@@ -557,9 +608,9 @@ class TestClienteCompartido:
         monkeypatch.setattr(settings, "ors_daily_budget", 2)
 
         cliente = routing.client_from_settings()
-        assert cliente.quota.try_spend() and cliente.quota.try_spend()
+        assert cliente.matrix_quota.try_spend() and cliente.matrix_quota.try_spend()
         # Otra "peticion HTTP" pide el cliente de nuevo y encuentra la cuenta.
-        assert routing.client_from_settings().quota.try_spend() is False
+        assert routing.client_from_settings().matrix_quota.try_spend() is False
         routing.client_from_settings.cache_clear()
 
 

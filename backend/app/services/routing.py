@@ -169,8 +169,13 @@ class Pacer:
             self._last_call = _time.monotonic()
 
 
+# Los dos endpoints que se usan, cada uno con su propio cupo.
+ENDPOINT_MATRIX = "matrix"
+ENDPOINT_DIRECTIONS = "directions"
+
+
 class ORSClient:
-    """Cliente del endpoint de matriz de OpenRouteService."""
+    """Cliente de OpenRouteService: matriz para distancias, direcciones para el trazo."""
 
     def __init__(
         self,
@@ -184,8 +189,43 @@ class ORSClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.pacer = Pacer(min_interval_seconds)
-        self.quota = DailyQuota(daily_budget)
+        # **Un cupo por endpoint, porque asi los cuenta ORS.** Con un contador
+        # compartido la matriz se llevaba el presupuesto entero y la geometria
+        # se quedaba sin pedir: como la matriz corre primero en la misma
+        # peticion, cuando le tocaba al trazo el cliente creia que no quedaba
+        # nada. Los itinerarios salian con distancias reales y lineas rectas, y
+        # route_legs no llego a guardar ni una fila.
+        #
+        # El mismo error tenia una segunda cara peor: sync_with_server guardaba
+        # el x-ratelimit-remaining de la ultima respuesta —de cualquiera de los
+        # dos endpoints— en un campo comun, asi que un "quedan 4" de la matriz
+        # apagaba direcciones, que tenia su cupo intacto.
+        self.quotas = {
+            ENDPOINT_MATRIX: DailyQuota(daily_budget),
+            ENDPOINT_DIRECTIONS: DailyQuota(daily_budget),
+        }
         self.request_count = 0
+
+    @property
+    def matrix_quota(self) -> DailyQuota:
+        """El cupo de las distancias.
+
+        Se expone con nombre propio y no como `quota` a secas: un atributo que
+        no dice de que endpoint es fue exactamente lo que dejo pasar el bug.
+        """
+        return self.quotas[ENDPOINT_MATRIX]
+
+    @property
+    def directions_quota(self) -> DailyQuota:
+        """El cupo del trazo por carretera."""
+        return self.quotas[ENDPOINT_DIRECTIONS]
+
+    def _spend(self, endpoint: str) -> None:
+        cupo = self.quotas[endpoint]
+        if not cupo.try_spend():
+            raise ORSBudgetExhausted(
+                f"presupuesto diario agotado en {endpoint} ({cupo.budget} peticiones)"
+            )
 
     def matrix(
         self,
@@ -213,10 +253,7 @@ class ORSClient:
 
         # El presupuesto se comprueba antes del espaciado: no tiene sentido
         # esperar segundo y medio para descubrir que no ibamos a llamar.
-        if not self.quota.try_spend():
-            raise ORSBudgetExhausted(
-                f"presupuesto diario agotado ({self.quota.budget} peticiones)"
-            )
+        self._spend(ENDPOINT_MATRIX)
 
         self.pacer.wait()
         self.request_count += 1
@@ -234,7 +271,7 @@ class ORSClient:
         except httpx.HTTPError as exc:
             raise ORSError(f"no se pudo llamar a ORS: {exc}") from exc
 
-        self.quota.sync_with_server(_remaining_header(respuesta))
+        self.quotas[ENDPOINT_MATRIX].sync_with_server(_remaining_header(respuesta))
         self._raise_for_status(respuesta)
 
         datos = respuesta.json()
@@ -263,10 +300,7 @@ class ORSClient:
         if len(coords) < 2:
             return []
 
-        if not self.quota.try_spend():
-            raise ORSBudgetExhausted(
-                f"presupuesto diario agotado ({self.quota.budget} peticiones)"
-            )
+        self._spend(ENDPOINT_DIRECTIONS)
 
         self.pacer.wait()
         self.request_count += 1
@@ -284,7 +318,7 @@ class ORSClient:
         except httpx.HTTPError as exc:
             raise ORSError(f"no se pudo llamar a ORS: {exc}") from exc
 
-        self.quota.sync_with_server(_remaining_header(respuesta))
+        self.quotas[ENDPOINT_DIRECTIONS].sync_with_server(_remaining_header(respuesta))
         self._raise_for_status(respuesta)
 
         datos = respuesta.json()

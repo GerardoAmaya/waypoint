@@ -666,6 +666,30 @@ Medido después del cambio: de cinco tramos guardados, **cuatro no tienen
 distancia medida** —son exactamente los que antes se perdían— y la segunda
 consulta no gasta nada.
 
+**El hallazgo estaba escrito aquí y el cliente no lo implementaba.** `ORSClient`
+llevaba un solo `DailyQuota` para los dos endpoints, y como la matriz corre
+primero en la misma petición, se llevaba el presupuesto entero: cuando le tocaba
+al trazo, el cliente creía que no quedaba nada. La segunda cara era peor —
+`sync_with_server` guardaba el `x-ratelimit-remaining` de la última respuesta,
+de cualquiera de los dos, en un campo común, así que un "quedan 4" de la matriz
+apagaba direcciones con su cupo intacto.
+
+El síntoma era un itinerario con **distancias reales y líneas rectas**, y una
+tabla `route_legs` con cero filas después de meses. Con un contador por
+endpoint, la primera petición de direcciones devolvió un tramo de 43 vértices y
+lo guardó. Y los encabezados de esa respuesta dieron el número que faltaba:
+
+```
+X-Ratelimit-Limit: 200        (direcciones, no 50 como la matriz)
+X-Ratelimit-Remaining: 176
+```
+
+O sea que el cupo del trazo es cuatro veces el de la matriz y estaba
+prácticamente sin usar. El presupuesto local de 45 se aplica a los dos por
+igual, así que ahora es él —y no ORS— el que limita las direcciones; con una
+petición por día de itinerario, 45 alcanza de sobra, pero el número ya no
+describe el límite real.
+
 ### El día sale de donde el usuario dijo
 
 "Quiero partir desde Pizza Hut La Gran Vía a las 12:00, almorzaré allí, luego

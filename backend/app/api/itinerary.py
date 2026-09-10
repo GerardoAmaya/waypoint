@@ -109,7 +109,9 @@ def _to_stop(
 def _to_travel_source(stats) -> TravelSourceOut:
     """Traduce las estadisticas de la matriz, o dice que todo fue estimado."""
     cliente = client_from_settings()
-    restante = cliente.quota.remaining if cliente else None
+    # El de la matriz y no "el cupo" a secas: este bloque habla de las
+    # distancias, y el trazo por carretera tiene su propio cupo aparte.
+    restante = cliente.matrix_quota.remaining if cliente else None
 
     if stats is None:
         return TravelSourceOut(source="estimated", quota_remaining=restante)
