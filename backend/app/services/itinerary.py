@@ -142,6 +142,12 @@ SUBCATEGORY_APPEAL: dict[str, float] = {
     "theatre": 0.6,
     "arts_centre": 0.55,
     "monument": 0.5,
+    # **Puede ser destino, pero no es por lo que uno viaja.** Metrocentro es un
+    # sitio al que la gente de verdad va, y a la vez la etiqueta shop=mall de
+    # OSM la llevan tiendas de barrio. Con 0.5 pasa el piso de 0.45 y compite
+    # de tu a tu con un monumento: entra cuando no hay mucho mas alrededor y
+    # pierde contra un museo o un volcan, que es el orden correcto.
+    "mall": 0.5,
     "memorial": 0.35,
     "garden": 0.5,
     # Patrimonio menos evidente pero que si es destino
@@ -663,13 +669,120 @@ def appeal_of(hit: PlaceHit) -> float:
     return SUBCATEGORY_APPEAL.get(hit.subcategory or "", DEFAULT_APPEAL)
 
 
+# Palabras que solo dicen de que tipo es el sitio, no cual es.
+CABEZAS_GENERICAS = frozenset(
+    {
+        "mirador",
+        "cerro",
+        "peña",
+        "pena",
+        "cascada",
+        "cascadas",
+        "playa",
+        "museo",
+        "iglesia",
+        "parque",
+        "monumento",
+        "ruinas",
+        "loma",
+        "pico",
+        "volcan",
+        "volcán",
+        "laguna",
+        "rio",
+        "río",
+        "puente",
+        "plaza",
+    }
+)
+
+# Lo que se le resta a un nombre que no identifica nada.
+#
+# **El nombre es la unica señal que queda en algunas categorias.** Los 35
+# miradores activos del catalogo tienen TODOS el mismo quality_score, 0.40:
+# ninguno trae horario, web ni telefono, asi que lo completo del registro no
+# distingue. Con el mismo atractivo y la misma calidad, "Mirador 3" es
+# indistinguible de "Mirador de Apaneca" para el motor, y se colaba: entre
+# "Mirador 3" y "Peña 1", seis apariciones en 295 paradas.
+#
+# Se penaliza y no se descarta: hay 35 miradores en todo el pais, y tirar dos
+# deja zonas sin ninguno. Un mirador con nombre de marcador sigue siendo un
+# mirador si no hay otro.
+#
+# **Hacen falta las dos penalizaciones, en las dos monedas.** score_candidate
+# solo elige la SEMILLA del dia; el resto lo llena _fill_cost, que mira
+# kilometros y no puntaje. Con la penalizacion solo en el puntaje, "Mirador 3"
+# seguia entrando por cercania exactamente las mismas cuatro veces: medido.
+# El valor del km sale de barrer sobre los 26 casos. "vagas" son las
+# apariciones de un nombre que no identifica nada:
+#
+#     km   cumple  paradas  lleva comida  cats/dia  vagas
+#      0   25/26     295         21         3.26      6
+#      5   25/26     299         21         3.28      3
+#     10   25/26     298         21         3.28      2
+#     20   25/26     293         22         3.28      2
+#     40   25/26     293         22         3.28      2
+#
+# **La penalizacion sale gratis y hasta paga.** En 10 el dia arma tres paradas
+# MAS que sin ella y con mas variedad: lo que sacrificaba un "Mirador 3" cerca
+# era un lugar de verdad un poco mas lejos. De 20 en adelante ya se paga en
+# paradas y en comidas.
+#
+# Las dos apariciones que quedan son "Peña 1" donde es lo unico que hay, que
+# es exactamente lo que se buscaba: penalizar, no descartar.
+# El valor del km sale de barrer sobre los 26 casos. "vagas" son las
+# apariciones de un nombre que no identifica nada:
+#
+#     km   cumple  paradas  lleva comida  cats/dia  vagas
+#      0   25/26     295         21         3.26      6
+#      5   25/26     299         21         3.28      3
+#     10   25/26     298         21         3.28      2
+#     20   25/26     293         22         3.28      2
+#     40   25/26     293         22         3.28      2
+#
+# **La penalizacion sale gratis y hasta paga.** En 10 el dia arma tres paradas
+# MAS que sin ella y con mas variedad: lo que sacrificaba un "Mirador 3" cerca
+# era un lugar de verdad un poco mas lejos. De 20 en adelante ya se paga en
+# paradas y en comidas.
+#
+# Las dos apariciones que quedan son "Peña 1" donde es lo unico que hay, que
+# es exactamente lo que se buscaba: penalizar, no descartar.
+NOMBRE_VAGO_PENALIZACION = 0.5
+NOMBRE_VAGO_KM = 10.0
+
+
+def nombre_no_identifica(nombre: str) -> bool:
+    """Si el nombre es una palabra generica y un numero: "Mirador 3".
+
+    **Solo el numero al final, y eso es deliberado.** La primera version
+    tambien miraba palabras de tamaño y atrapaba ocho "Cerro Grande", que es
+    un toponimo salvadoreño de verdad y no un marcador. Un numero al final, en
+    cambio, solo aparece cuando alguien numera lo que no sabe nombrar: si hay
+    un "Mirador 3" es porque hay un 1 y un 2.
+
+    Medido sobre el catalogo: atrapa 2 de 5.658 lugares activos y ningun falso
+    positivo. Se queda fuera "Peña pequeña", que tampoco identifica nada, pero
+    la regla que la atrapara se llevaria tambien los Cerro Grande.
+    """
+    partes = nombre.split()
+    if len(partes) != 2:
+        return False
+    cabeza, cola = partes[0].casefold(), partes[1].casefold()
+    return cabeza in CABEZAS_GENERICAS and cola.isdigit() and len(cola) <= 2
+
+
 def score_candidate(hit: PlaceHit, constraints: Constraints) -> float:
     """Que tan bien encaja un lugar con lo que pidio el usuario.
 
     El atractivo pesa mas que lo completo del registro: un volcan sin horarios
     publicados sigue siendo mejor destino que una plaza bien documentada.
+
+    Y un nombre que no identifica nada resta: ver nombre_no_identifica.
     """
     puntaje = appeal_of(hit) * 2 + hit.quality_score
+
+    if nombre_no_identifica(hit.name):
+        puntaje -= NOMBRE_VAGO_PENALIZACION
 
     if hit.category in {c.value for c in constraints.preferred_categories}:
         puntaje += 0.6
@@ -845,6 +958,24 @@ SUBCATEGORY_PENALTY_KM = 8.0
 REQUIRED_BONUS_KM = 60.0
 
 
+# Cuantas paradas de una misma subcategoria admite un itinerario entero.
+#
+# **Quien va a querer ir a dos centros comerciales en el mismo viaje.** No es
+# cuestion de variedad ni de atractivo —la penalizacion por subcategoria los
+# dispersa dentro del dia pero no impide que salgan cinco en tres dias— sino
+# de que el segundo no le interesa a nadie. Sin este tope, aceptar los centros
+# comerciales como destino llevaba el 15% de las paradas a eso: 46 de 310 en
+# el arnes, con "Las Pulgas" y "Metrocentro" siete veces cada uno.
+#
+# **No alcanza a los que el usuario nombra.** Quien pide ir a Metrocentro y a
+# Galerias quiere los dos, y un tope del motor no puede contradecir un pedido
+# explicito: must_include_places pasa por encima.
+#
+# El punto de partida tampoco cuenta, por lo mismo que no cuenta contra
+# max_stops_per_day: de ahi se sale, no se visita.
+TOPE_POR_SUBCATEGORIA: dict[str, int] = {"mall": 1}
+
+
 def _name_key(lugar: PlaceHit) -> str:
     """Con que se compara si dos paradas son "el mismo sitio" para el viajero.
 
@@ -891,6 +1022,8 @@ def _fill_cost(
     if candidato.subcategory is not None:
         iguales = sum(1 for parada in dia if parada.subcategory == candidato.subcategory)
         coste += iguales * SUBCATEGORY_PENALTY_KM
+    if nombre_no_identifica(candidato.name):
+        coste += NOMBRE_VAGO_KM
     if candidato.category in faltantes:
         coste -= REQUIRED_BONUS_KM
     # Un lugar pedido con nombre pesa el doble que una categoria pendiente:
@@ -1037,6 +1170,13 @@ def build_days(
     # objeto que traen las restricciones: los dos existen, pero solo el del
     # catalogo de candidatos trae el atractivo y la calidad con los que el
     # motor puntua.
+    # Las subcategorias con tope, contadas sobre el itinerario entero.
+    usadas_sub: dict[str, int] = {}
+
+    def cupo_de_sub(hit: PlaceHit) -> bool:
+        tope = TOPE_POR_SUBCATEGORIA.get(hit.subcategory or "")
+        return tope is None or usadas_sub.get(hit.subcategory or "", 0) < tope
+
     # Los nombres ya usados: uno de cada nombre por itinerario. Ver _name_key.
     nombres_usados: set[str] = set()
     if constraints.start_place is not None:
@@ -1081,7 +1221,9 @@ def build_days(
             # forma mas barata de garantizarlo, porque el resto del dia se
             # llena alrededor de ella.
             faltantes = requeridas - cubiertas
-            libres = [h for h in disponibles if _name_key(h) not in nombres_usados]
+            libres = [
+                h for h in disponibles if _name_key(h) not in nombres_usados and cupo_de_sub(h)
+            ]
             if not libres:
                 break
             pendiente = next((h for h in libres if h.category in faltantes), None)
@@ -1092,6 +1234,9 @@ def build_days(
         nombres_usados.add(_name_key(semilla))
         for lugar in dia:
             nombres_usados.add(_name_key(lugar))
+            # El ancla no gasta cupo: de ahi se sale, no se visita.
+            if lugar.subcategory and lugar is not ancla:
+                usadas_sub[lugar.subcategory] = usadas_sub.get(lugar.subcategory, 0) + 1
 
         # Sin comida los cupos son solo para destinos; con comida se reserva
         # sitio para las que de verdad se van a poder colocar.
@@ -1144,7 +1289,18 @@ def build_days(
                 (
                     h
                     for h in [*pendientes, *disponibles]
-                    if h.category != Category.food.value and _name_key(h) not in nombres_usados
+                    # Lo que el usuario pidio por su nombre compite siempre:
+                    # ni la regla de un nombre por itinerario ni el tope por
+                    # subcategoria pueden contradecir un pedido explicito. Sin
+                    # esta excepcion, los nombres de los pedidos se reservaban
+                    # de entrada y el filtro excluia a los pedidos mismos: solo
+                    # entraban los que caian de semilla, y el segundo se
+                    # reportaba como incumplido.
+                    if h.category != Category.food.value
+                    and (
+                        h.id in ids_pendientes
+                        or (_name_key(h) not in nombres_usados and cupo_de_sub(h))
+                    )
                 ),
                 key=lambda h: _fill_cost(dia, h, semilla, medidor, faltantes, ids_pendientes),
             )
@@ -1165,6 +1321,10 @@ def build_days(
                     continue
                 dia.append(candidato)
                 nombres_usados.add(_name_key(candidato))
+                if candidato.subcategory:
+                    usadas_sub[candidato.subcategory] = (
+                        usadas_sub.get(candidato.subcategory, 0) + 1
+                    )
                 if candidato.id in ids_pendientes:
                     pendientes = [p for p in pendientes if p.id != candidato.id]
                 else:
@@ -1230,6 +1390,14 @@ def _stop_minutes(lugar: PlaceHit, comida: str | None, constraints: Constraints)
     """
     if comida is not None:
         return constraints.meal_minutes
+    # **Del punto de partida se sale, no se visita.** Con un hotel no se veia
+    # —alojamiento ya duraba 0— pero al aceptar centros comerciales aparecio:
+    # "partir desde Metrocentro Santa Ana" se llevaba 90 minutos de visita al
+    # centro comercial antes de arrancar el dia. Lo mismo valdria para una
+    # gasolinera o una plaza. Si el sitio de partida ES la comida del dia, la
+    # etiqueta ya gano mas arriba.
+    if constraints.start_place is not None and lugar.id == constraints.start_place.id:
+        return 0
     if lugar.id in constraints.place_minutes:
         return constraints.place_minutes[lugar.id]
     categoria = Category(lugar.category)

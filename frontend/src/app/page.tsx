@@ -277,6 +277,7 @@ export default function Home() {
                 onRevise={revisar}
                 revising={revisando}
                 reviseError={errorRevision}
+                midiendo={fase === "midiendo"}
                 expandido={panelExpandido}
                 onToggleExpandido={() => setPanelExpandido((v) => !v)}
                 selectedStop={parada?.id ?? null}

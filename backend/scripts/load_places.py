@@ -67,6 +67,13 @@ QUERY_GROUPS: dict[str, str] = {
     # por eso no estaba en el catalogo. places_quality exige que el nombre
     # confirme que es alojamiento antes de aceptarlo, porque esta etiqueta la
     # llevan tambien las torres y los lobbies del mismo complejo.
+    # Solo para partir de ellos: ver la regla de shop=mall en places_quality.
+    # Trae ruido —hay tiendas de barrio etiquetadas como mall— y no importa,
+    # porque nada de esto llega a ser un destino.
+    "centros_comerciales": """
+        node["shop"="mall"]["name"](area.sv);
+        way["shop"="mall"]["name"](area.sv);
+    """,
     "edificios_alojamiento": """
         node["building"~"hotel|hostel|motel"]["name"](area.sv);
         way["building"~"hotel|hostel|motel"]["name"](area.sv);
@@ -140,12 +147,20 @@ def extract_point(elemento: dict) -> tuple[float, float] | None:
     return None
 
 
-def download(dry_run: bool) -> list[dict]:
+def download(dry_run: bool, solo: str | None = None) -> list[dict]:
+    """Baja los grupos de la consulta, o uno solo si se pide.
+
+    `solo` existe para agregar una categoria nueva sin repetir la carga
+    entera: son ocho consultas con ocho segundos de pausa entre cada una, y
+    Overpass corta a quien insiste —contesta 429— asi que repetirla por una
+    etiqueta nueva es gastar su paciencia y la nuestra.
+    """
     elementos: list[dict] = []
+    grupos = {solo: QUERY_GROUPS[solo]} if solo else QUERY_GROUPS
     with httpx.Client(
         headers={"User-Agent": "Waypoint/0.1 (proyecto de portafolio)"}
     ) as client:
-        for indice, (nombre, cuerpo) in enumerate(QUERY_GROUPS.items()):
+        for indice, (nombre, cuerpo) in enumerate(grupos.items()):
             if indice:
                 time.sleep(PAUSE_SECONDS)
             logger.info("Descargando %s...", nombre)
@@ -334,11 +349,17 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="Solo el primer grupo")
     parser.add_argument("--dedupe-only", action="store_true", help="Sin descargar")
+    parser.add_argument(
+        "--group",
+        choices=sorted(QUERY_GROUPS),
+        help="Bajar un solo grupo. Para agregar una categoria nueva sin repetir "
+        "la carga entera, que son ocho consultas y una pausa de 8 s entre cada una.",
+    )
     args = parser.parse_args()
 
     if not args.dedupe_only:
         inicio = time.time()
-        elementos = download(args.dry_run)
+        elementos = download(args.dry_run, args.group)
         logger.info("%s elementos descargados en %.0fs", len(elementos), time.time() - inicio)
 
         if not elementos:

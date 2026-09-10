@@ -35,6 +35,18 @@ TAG_RULES: list[tuple[str, tuple[str, ...], Category]] = [
     ("natural", ("beach", "volcano", "peak", "spring", "cave_entrance"), Category.nature),
     ("waterway", ("waterfall",), Category.nature),
     ("leisure", ("park", "nature_reserve", "garden"), Category.nature),
+    # **El centro comercial entra para poder salir de el, no para visitarlo.**
+    # "Salgo desde Metrocentro Santa Ana" es una forma normalisima de decir de
+    # donde arranca el dia, y sin esta regla el catalogo no tenia ni uno: la
+    # consulta de Overpass pedia turismo, comida, naturaleza, historico,
+    # cultura y edificios de hotel, y nada de comercio.
+    #
+    # Cae en atraccion y su subcategoria no esta en SUBCATEGORY_APPEAL, asi
+    # que hereda DEFAULT_APPEAL —0.25— y queda por debajo de MIN_APPEAL, que
+    # es 0.45: el motor no lo elige nunca como destino. La busqueda por nombre
+    # si lo encuentra, que es exactamente lo que hace falta. Es la misma
+    # asimetria que ya tienen los comedores y los hoteles.
+    ("shop", ("mall",), Category.attraction),
 ]
 
 # Nombres genericos que no identifican nada. Alguien que lee "visita Mirador"

@@ -108,7 +108,8 @@ Los lugares CONCRETOS que dice que quiere visitar, con el nombre tal como lo \
 dijo: "quiero ir al Jardin Botanico y pasar dos horas ahi" es [{"name": \
 "Jardin Botanico", "minutes": 120}]. Van aca los que nombra; una zona ("por el \
 occidente") va en "area", y el sitio de donde SALE va en "start_place". Si no \
-nombra ningun lugar que quiera visitar, lista vacia.
+nombra ningun lugar que quiera visitar, lista vacia. **Nombrar un lugar aqui NO \
+reemplaza a "area"**: si la frase dice la zona, "area" va igual.
 - "return_to_start": booleano. Si vuelve al punto de partida al terminar. \
 "regreso en la noche", "y de vuelta al hotel", "vuelvo a dormir ahi" son true. \
 Por defecto false.
@@ -457,6 +458,20 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             name=partida.name,
             lat=partida.lat,
             lon=partida.lon,
+            radius_m=RADIO_DESDE_LA_PARTIDA_M,
+            source="start",
+        )
+    elif not texto_area and pedidos:
+        # Un lugar que se pidio visitar tambien dice donde buscar. Hace falta
+        # porque el campo "must_visit" compite con "area" en el prompt y el
+        # modelo se queda con uno: medido, "un dia en San Salvador, quiero
+        # visitar Metrocentro y Metrosur" devolvia area null y los dos centros
+        # comerciales en must_visit, y la peticion moria con "no dijiste a
+        # donde queres ir" teniendo la zona escrita en la frase.
+        area = ResolvedArea(
+            name=pedidos[0].name,
+            lat=pedidos[0].lat,
+            lon=pedidos[0].lon,
             radius_m=RADIO_DESDE_LA_PARTIDA_M,
             source="start",
         )

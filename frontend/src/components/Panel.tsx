@@ -30,6 +30,20 @@ interface Props {
   onSelectStop: (id: string | null) => void;
   expandido: boolean;
   onToggleExpandido: () => void;
+  /**
+   * Si el itinerario en pantalla es el borrador y las rutas se siguen midiendo.
+   *
+   * **El indicador de progreso vivia en el compositor, que se desmonta justo
+   * cuando empieza a hacer falta.** El borrador llega sin tocar la red y ya es
+   * un itinerario completo, asi que la pantalla pasa a ser del panel; dos
+   * segundos despues llegan las distancias reales y el mapa cambia las rectas
+   * por el trazo por carretera. Sin avisar, ese cambio se lee como un fallo.
+   *
+   * En 9 de 11 casos medidos solo cambian las lineas. En los otros dos cambian
+   * las paradas, porque las distancias reales no son las estimadas y el dia se
+   * rehace: mas razon para decir que todavia no esta firme.
+   */
+  midiendo: boolean;
 }
 
 const FUENTE: Record<string, string> = {
@@ -62,6 +76,7 @@ export default function Panel({
   onSelectStop,
   expandido,
   onToggleExpandido,
+  midiendo,
 }: Props) {
   const [cambio, setCambio] = useState("");
   const [copiado, setCopiado] = useState(false);
@@ -177,10 +192,24 @@ export default function Panel({
             expandido ? "hidden" : ""
           }`}
         >
-          {FUENTE[itinerary.travel.source]}
-          {itinerary.travel.reason && CAUSA[itinerary.travel.reason]
-            ? `: ${CAUSA[itinerary.travel.reason]}`
-            : ""}
+          {midiendo ? (
+            <span className="inline-flex items-center gap-1.5" role="status">
+              <motion.span
+                aria-hidden
+                className="inline-block size-1.5 rounded-full bg-acento"
+                animate={{ opacity: [1, 0.25, 1] }}
+                transition={{ duration: 1.4, repeat: Infinity }}
+              />
+              Midiendo las rutas por carretera…
+            </span>
+          ) : (
+            <>
+              {FUENTE[itinerary.travel.source]}
+              {itinerary.travel.reason && CAUSA[itinerary.travel.reason]
+                ? `: ${CAUSA[itinerary.travel.reason]}`
+                : ""}
+            </>
+          )}
         </p>
 
         {/*

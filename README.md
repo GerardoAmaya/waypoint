@@ -257,6 +257,104 @@ Es 29% con días llenos contra 24% con días de cinco paradas. No es solo un
 artefacto del largo: cuando se acaba la variedad cercana, el día sigue metiendo
 lo que queda, que suele ser la categoría dominante de la zona.
 
+### Los centros comerciales: uno por viaje, y de ahí se sale
+
+"Partir desde Metrocentro Santa Ana" fallaba con "no encontré ese lugar", y la
+causa era simple: la consulta de Overpass pedía turismo, comida, naturaleza,
+histórico, cultura y edificios de hotel, y **nada de comercio**. No había ni un
+centro comercial en el catálogo. En OSM sí los hay: 172 con `shop=mall` en el
+país. Ahora son 132 activos después del filtro.
+
+Dos decisiones sobre qué hacer con ellos, y la segunda vino del uso:
+
+**De un centro comercial se sale, no se visita.** El punto de partida ocupaba el
+tiempo de visita de su categoría, y con un hotel no se notaba porque
+alojamiento ya duraba 0 minutos. Con un centro comercial saltó a la vista:
+Metrocentro se llevaba hora y media antes de que el día arrancara. Ahora el
+punto de partida dura 0 pase lo que pase, salvo que sea la comida del día.
+
+**Uno por itinerario.** Aceptarlos como destino llevó el 15% de las paradas del
+arnés a centros comerciales: 46 de 310, con "Las Pulgas" y "Metrocentro" siete
+veces cada uno. La penalización por subcategoría los dispersa dentro de un día
+pero no impide cinco en tres días, y el problema no es la variedad — es que
+nadie quiere ir a dos centros comerciales en el mismo viaje. Con el tope: 13
+apariciones, y el arnés mejora en todo frente a no aceptarlos (300 paradas
+contra 297, variedad 3,40 contra 3,11, 29% de días con "llevá comida" contra
+32%).
+
+El tope **no alcanza a lo que el usuario nombra**: quien pide ir a Metrocentro
+y a Metrosur quiere los dos, y un límite del motor no puede contradecir un
+pedido explícito.
+
+Y ahí apareció un bug propio, del cambio de la sesión anterior: la regla de "un
+nombre por itinerario" reservaba los nombres de los lugares pedidos **al
+empezar**, y el filtro del llenado excluye lo que está en esa lista — incluidos
+los pedidos mismos. Solo entraban los que caían de semilla, y el segundo se
+reportaba como restricción incumplida. El test que debía cubrirlo usaba dos
+días, así que cada pedido caía de semilla en el suyo y pasaba sin probar nada.
+
+### El nombre es la única señal que queda, y no se usaba
+
+Los 35 miradores activos del catálogo tienen **todos el mismo
+`quality_score`: 0,40**. Ninguno trae horario, web ni teléfono, así que lo
+completo del registro no distingue nada, y con el mismo atractivo (0,8) el
+motor no puede diferenciar "Mirador de Apaneca" de **"Mirador 3"**. Se colaban:
+seis apariciones en 295 paradas entre "Mirador 3" y "Peña 1".
+
+La regla es estrecha a propósito: una palabra genérica y un número al final. Un
+número solo aparece cuando alguien numera lo que no sabe nombrar — si hay un
+"Mirador 3" es porque hay un 1 y un 2. Atrapa 2 de 5.658 lugares activos y
+ningún falso positivo.
+
+**La primera versión también miraba palabras de tamaño y se llevaba ocho "Cerro
+Grande"**, que es un topónimo salvadoreño de verdad. Por eso se quedó fuera
+"Peña pequeña", que tampoco identifica nada: la regla que la atrapara se
+llevaría también los Cerro Grande.
+
+Y hacen falta **dos** penalizaciones, en dos monedas distintas. `score_candidate`
+solo elige la **semilla** del día; el resto lo llena `_fill_cost`, que mira
+kilómetros y no puntaje. Con la penalización solo en el puntaje, "Mirador 3"
+seguía entrando por cercanía exactamente las mismas cuatro veces: medido.
+
+| km | paradas | llevá comida | cats/día | apariciones vagas |
+|---|---|---|---|---|
+| 0 | 295 | 21 | 3,26 | 6 |
+| 5 | 299 | 21 | 3,28 | 3 |
+| **10** | **298** | **21** | **3,28** | **2** |
+| 20 | 293 | 22 | 3,28 | 2 |
+
+**La penalización sale gratis y hasta paga**: en 10, el día arma tres paradas
+*más* que sin ella y con más variedad, porque lo que sacrificaba un "Mirador 3"
+cerca era un lugar de verdad un poco más lejos. Las dos apariciones que quedan
+son "Peña 1" donde es lo único que hay — penalizar, no descartar: con 35
+miradores en el país, tirar dos deja zonas sin ninguno.
+
+Lo que la regla **no** arregla son los mal etiquetados: en ese mismo pozo de 35
+miradores hay un taller de artesanía en madera, unos graderíos y dos fincas. Eso
+no es un nombre pobre, es una categoría equivocada, y por el nombre no se ve.
+
+### El borrador dice que todavía está midiendo
+
+El itinerario llega en dos tiempos: el borrador se arma sin tocar la red y sale
+de inmediato, y dos segundos después llegan las distancias reales y el mapa
+cambia las rectas punteadas por el trazo por carretera.
+
+**Esperar sería peor.** Si ORS falla o se acabó el cupo, el borrador *es* la
+respuesta final: bloquear convertiría una respuesta rápida y utilizable en la
+misma respuesta, más lenta. Y la recta punteada no es un error que se corrige
+después: la leyenda ya dice "distancia estimada", así que el cambio es una
+mejora de información, no una enmienda.
+
+Lo que faltaba era decirlo. El indicador de progreso vivía en el compositor, y
+el compositor se desmonta en cuanto llega el borrador: **desaparecía justo
+cuando empieza a hacer falta**. Ahora la cabecera del panel dice "midiendo las
+rutas por carretera" mientras eso pasa, y cede el sitio al dato de dónde
+salieron las distancias cuando termina.
+
+Medido sobre 11 itinerarios: en **9 solo cambian las líneas**; en 2 cambian
+también las paradas, porque las distancias reales no son las estimadas y el día
+se rehace. Más razón para no dejar creer que ya está firme.
+
 ### Repetir la subcategoría cuesta aparte, y un nombre no se repite
 
 La penalización por categoría no distingue un día de cerro, volcán, cascada y
@@ -394,13 +492,13 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Qué | Cuánto |
 |---|---|
 | Cumplimiento de límites duros | 96% (25 de 26 casos) |
-| Lugares inventados | 0 de 295 paradas generadas |
+| Lugares inventados | 0 de 300 paradas generadas |
 | Factor de desvío medido | 1.45, mediana sobre 812 pares |
 | Velocidad efectiva en carro | 35 a 62 km/h según el tramo |
 | Pares sin ruta en ORS | 7% (58 de 870) |
 | Cupo del endpoint de matriz | 50 peticiones / ventana de 24 h |
 | Peticiones por itinerario en zona fría | 1 |
-| Lugares en el catálogo | 5.652 activos de 6.296 bajados |
+| Lugares en el catálogo | 5.789 activos de 6.449 bajados |
 | Descarte del filtro de calidad | 5.9% (370 registros) |
 | Duplicados fusionados | 4.4% (274 registros) |
 | Días con recomendación de llevar comida | 34% (21 de 62) |
@@ -409,7 +507,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Paradas fuera de hora (luz o cierre) | 0 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 200 / día, medido en la cabecera |
-| Tests | 536 backend, 24 frontend |
+| Tests | 560 backend, 27 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -1291,7 +1389,7 @@ el tamaño de diseño y el mínimo el que cabe.
 | Iconos | Font Awesome, paquetes SVG con tree-shaking |
 | Satélite | Esri World Imagery, sin llave |
 | Fotos de zona | Wikimedia Commons, resueltas una vez |
-| Tests | pytest en el backend (536), Vitest y Testing Library en el frontend (24) |
+| Tests | pytest en el backend (560), Vitest y Testing Library en el frontend (27) |
 | CI | GitHub Actions: migraciones en ambos sentidos, y tipado, lint, tests y build del frontend |
 
 Sin Celery: la carga del catálogo es un guion que corre una vez y la generación
@@ -1309,8 +1407,8 @@ imperativo— y quedó como dependencia muerta.
 ## Guiones
 
 ```bash
-make test            # los 536 del backend
-npm test             # los 24 del frontend, desde frontend/
+make test            # los 560 del backend
+npm test             # los 27 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante
 make ors-calibrate   # mide desvío y velocidad contra el catálogo
 make ors-warm        # precalienta la cache por zona (no gasta sin --apply)

@@ -24,6 +24,7 @@ from app.services.itinerary import (
     BUDGET_BY_MODE,
     DEFAULT_DURATIONS,
     DEFAULT_MEAL_MINUTES,
+    NOMBRE_VAGO_KM,
     SUBCATEGORY_PENALTY_KM,
     Constraints,
     Day,
@@ -41,6 +42,7 @@ from app.services.itinerary import (
     assemble,
     build_days,
     estimate_travel,
+    nombre_no_identifica,
     order_by_proximity,
     schedule_day,
     total_visits,
@@ -2411,3 +2413,159 @@ class TestRepetirSubcategoriaCuestaAparte:
         )
 
         assert coste == pytest.approx(_fill_cost([semilla], museo, semilla, medidor), abs=0.01)
+
+
+class TestNombreQueNoIdentifica:
+    """ "Mirador 3" no dice a donde vas.
+
+    Los 35 miradores activos del catalogo tienen TODOS el mismo
+    quality_score, 0.40 —ninguno trae horario, web ni telefono— asi que el
+    nombre es la unica señal que queda para distinguirlos, y no se usaba.
+    """
+
+    @pytest.mark.parametrize("nombre", ["Mirador 3", "Peña 1", "cerro 12", "Playa 7"])
+    def test_una_generica_y_un_numero_no_identifica(self, nombre):
+        assert nombre_no_identifica(nombre) is True
+
+    @pytest.mark.parametrize(
+        "nombre",
+        [
+            # Un toponimo de verdad: hay ocho Cerro Grande en el pais y la
+            # primera version de la regla se los llevaba a todos.
+            "Cerro Grande",
+            "Mirador de Apaneca",
+            "Peña Blanca",
+            # El numero no va al final.
+            "Mirador Las 100 Gradas",
+            "Playa K59",
+            # La cabeza no es generica.
+            "Ruta 5",
+        ],
+    )
+    def test_lo_que_si_identifica_se_conserva(self, nombre):
+        assert nombre_no_identifica(nombre) is False
+
+    def test_encarece_el_candidato_al_llenar_el_dia(self):
+        """En kilometros y no solo en puntaje.
+
+        score_candidate solo elige la semilla del dia; el resto lo llena
+        _fill_cost. Con la penalizacion solo en el puntaje, "Mirador 3" seguia
+        entrando por cercania las mismas cuatro veces: medido.
+        """
+        semilla = lugar("Museo", 13.7000, -89.2200, Category.culture)
+        vago = replace(
+            lugar("Mirador 3", 13.7010, -89.2200, Category.viewpoint),
+            subcategory="viewpoint",
+        )
+        con_nombre = replace(
+            lugar("Mirador de Apaneca", 13.7010, -89.2200, Category.viewpoint),
+            subcategory="viewpoint",
+        )
+        medidor = EstimatedTravel()
+
+        coste_vago = _fill_cost([semilla], vago, semilla, medidor)
+        coste_bueno = _fill_cost([semilla], con_nombre, semilla, medidor)
+
+        assert coste_vago - coste_bueno == pytest.approx(NOMBRE_VAGO_KM, abs=0.01)
+
+    def test_se_penaliza_pero_no_se_descarta(self):
+        """Hay 35 miradores en el pais: tirar dos deja zonas sin ninguno."""
+        vago = replace(
+            lugar("Mirador 3", 13.7010, -89.2200, Category.viewpoint),
+            subcategory="viewpoint",
+        )
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, include_meals=False
+        )
+
+        dias = build_days([vago], restricciones)
+
+        assert [p.name for p in dias[0]] == ["Mirador 3"]
+
+
+class TestUnCentroComercialPorViaje:
+    """Quién va a querer ir a dos centros comerciales en el mismo viaje.
+
+    No es variedad ni atractivo: la penalizacion por subcategoria los dispersa
+    dentro del dia pero no impide cinco en tres dias. Sin el tope, aceptarlos
+    como destino llevaba el 15% de las paradas del arnes a centros
+    comerciales: 46 de 310.
+    """
+
+    def _mall(self, nombre, lat):
+        return replace(
+            lugar(nombre, lat, -89.2200, Category.attraction, 0.9), subcategory="mall"
+        )
+
+    def _restricciones(self, **extra):
+        base = dict(
+            days=2,
+            center_lat=13.70,
+            center_lon=-89.22,
+            include_meals=False,
+            max_travel_km_per_day=90,
+        )
+        base.update(extra)
+        return Constraints(**base)
+
+    def test_solo_entra_uno_en_todo_el_itinerario(self):
+        candidatos = [
+            self._mall("Metrocentro", 13.7000),
+            self._mall("Galerías", 13.7020),
+            self._mall("Plaza Mundo", 13.7040),
+            *[
+                lugar(f"Museo {i}", 13.7060 + i * 0.002, -89.2200, Category.culture, 0.6)
+                for i in range(4)
+            ],
+        ]
+
+        dias = build_days(candidatos, self._restricciones())
+        malls = [p.name for grupo in dias for p in grupo if p.subcategory == "mall"]
+
+        assert len(malls) == 1
+
+    def test_lo_que_el_usuario_nombra_pasa_por_encima_del_tope(self):
+        """Quien pide ir a dos, quiere ir a dos: un tope del motor no puede
+        contradecir un pedido explicito."""
+        uno = self._mall("Metrocentro", 13.7000)
+        otro = self._mall("Galerías", 13.7020)
+        candidatos = [
+            uno,
+            otro,
+            *[
+                lugar(f"Museo {i}", 13.7060 + i * 0.002, -89.2200, Category.culture, 0.6)
+                for i in range(4)
+            ],
+        ]
+
+        # **Un solo dia a proposito.** Con dos dias cada pedido cae de semilla
+        # en el suyo y el test pasa sin probar nada: fue mi primer intento y
+        # tapaba justo el bug que habia. Los nombres de los pedidos se
+        # reservaban de entrada y el filtro del llenado excluia a los pedidos
+        # mismos, asi que el segundo nunca entraba por ahi y se reportaba como
+        # restriccion incumplida.
+        dias = build_days(
+            candidatos, self._restricciones(days=1, must_include_places=[uno, otro])
+        )
+        malls = sorted(p.name for grupo in dias for p in grupo if p.subcategory == "mall")
+
+        assert malls == ["Galerías", "Metrocentro"]
+
+    def test_el_punto_de_partida_no_gasta_el_cupo(self):
+        """De un centro comercial se sale, no se visita: si el dia arranca ahi,
+        todavia se puede visitar otro."""
+        partida = self._mall("Metrocentro Santa Ana", 13.7000)
+        otro = self._mall("Galerías", 13.7020)
+        candidatos = [
+            otro,
+            *[
+                lugar(f"Museo {i}", 13.7060 + i * 0.002, -89.2200, Category.culture, 0.6)
+                for i in range(4)
+            ],
+        ]
+
+        dias = build_days(candidatos, self._restricciones(days=1, start_place=partida))
+        nombres = [p.name for p in dias[0]]
+
+        assert "Metrocentro Santa Ana" in nombres, "el punto de partida abre el dia"
+        assert "Galerías" in nombres, "y todavia cabe un centro comercial de visita"
