@@ -58,11 +58,28 @@ así que las dos construcciones son idénticas: si funciona en local, funciona
 allá. El `.dockerignore` de la raíz evita mandar el frontend con sus
 `node_modules`.
 
-Las migraciones van como **comando previo al despliegue** y no en el arranque
-del contenedor. Con dos réplicas, migrar al arrancar hace que las dos corran
-Alembic a la vez sobre la misma base; y una migración fallida dentro del
-arranque deja la aplicación sirviendo a medio migrar en vez de frenar el
-despliegue.
+**Las migraciones corren al arrancar, en `start.sh`.**
+
+La primera versión las dejaba en el `preDeployCommand` de Railway, que es lo
+teóricamente mejor: corre una vez y no compite entre réplicas. No corrió. El
+despliegue salió con PostGIS instalado, cero tablas y un `/health` diciendo
+`ok`; el fallo apareció mucho después, al intentar cargar los datos.
+
+Hay dos explicaciones posibles y desde fuera no se distinguen. La clave espera
+un arreglo y estaba escrita como cadena. Y Railway **deprecó Config as Code**:
+los `railway.json` siguen funcionando hasta el 2026-12-01 solo para servicios
+que ya lo usaban, y los nuevos no pueden optar por él.
+
+Como no se puede saber cuál de las dos fue, no se apuesta a ninguna. Migrar al
+arrancar se prueba con un `docker run` antes de subir nada, y la pega conocida
+—varias réplicas corriendo Alembic a la vez— no aplica: el límite por IP ya
+obliga a una sola instancia con un solo worker.
+
+El `preDeployCommand` queda en `railway.json` con la forma correcta. Si corre,
+Alembic no hace nada la segunda vez.
+
+**Antes del 2026-12-01** hay que migrar a Infrastructure as Code
+(`.railway/railway.ts`) o mover esta configuración a la interfaz de Railway.
 
 Variables de entorno:
 
@@ -106,9 +123,20 @@ curl https://TU-BACKEND.up.railway.app/health
 curl https://TU-BACKEND.up.railway.app/places/stats
 ```
 
-El `health` tiene que traer `postgis` con una versión y las dos llaves en
-`true`. El `stats` tiene que traer 5.652 activos: si trae cero, el volcado no
-entró y el planificador va a devolver itinerarios vacíos sin explicar por qué.
+El `health` ahora comprueba las tres cosas sin las cuales el planificador
+devuelve itinerarios vacíos: PostGIS, el esquema al día y un catálogo con
+lugares. Si algo falta responde `degraded` con la lista de problemas, en vez
+del `ok` que dio cuando la base estaba sin migrar.
+
+```json
+{"status": "ok", "postgis": "3.6.0", "schema_revision": "0006",
+ "catalog_places": 5658, "issues": []}
+```
+
+Sigue respondiendo 200 aunque esté degradado. Un 500 haría que Railway lo
+reinicie en bucle, y lo que falta son datos, no un proceso sano: reiniciar no
+arregla nada y esconde el problema detrás de un contenedor que no para de
+morir.
 
 Después, un itinerario de punta a punta desde el navegador.
 

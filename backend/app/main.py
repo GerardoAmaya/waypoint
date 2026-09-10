@@ -28,10 +28,16 @@ app.include_router(plan.router)
 
 @app.get("/health", tags=["infra"])
 def health() -> dict:
-    """Verifica la conexion y que PostGIS este disponible.
+    """Verifica que el servicio pueda hacer su trabajo, no solo que responda.
 
-    PostGIS no es opcional: las consultas espaciales son el nucleo del
-    proyecto. Si falta, el servicio no puede hacer su trabajo.
+    **Antes decia "ok" con la base vacia.** El primer despliegue paso la
+    comprobacion con PostGIS instalado, cero tablas y cero lugares: el
+    comando previo de Railway no habia corrido y nada lo dijo. El fallo salio
+    a la luz mucho despues, al intentar cargar los datos.
+
+    Un chequeo que solo mira si hay conexion no comprueba nada util. Aqui se
+    miran las tres cosas sin las cuales el planificador devuelve itinerarios
+    vacios: PostGIS, el esquema al dia, y un catalogo con lugares.
     """
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
@@ -39,10 +45,39 @@ def health() -> dict:
             text("SELECT extversion FROM pg_extension WHERE extname = 'postgis'")
         ).scalar()
 
+        # La revision de Alembic dice si las migraciones corrieron. None
+        # significa que la tabla ni existe, o sea que nunca corrio ninguna.
+        try:
+            revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        except Exception:
+            revision = None
+
+        try:
+            lugares = conn.execute(
+                text("SELECT count(*) FROM places WHERE is_active")
+            ).scalar()
+        except Exception:
+            lugares = None
+
+    problemas = []
+    if not postgis:
+        problemas.append("falta PostGIS")
+    if not revision:
+        problemas.append("las migraciones no han corrido")
+    if not lugares:
+        problemas.append("el catalogo esta vacio")
+
     return {
-        "status": "ok",
+        # "degraded" y no un 500: el servicio esta vivo y responde, pero no
+        # puede hacer su trabajo. Decir "ok" seria mentir, y devolver un error
+        # haria que el orquestador lo reiniciara en un bucle que no arregla
+        # nada, porque lo que falta son datos y no un proceso sano.
+        "status": "ok" if not problemas else "degraded",
         "database": "connected",
         "postgis": postgis or False,
+        "schema_revision": revision,
+        "catalog_places": lugares,
         "ors_configured": bool(settings.ors_api_key),
         "llm_configured": bool(settings.anthropic_api_key),
+        "issues": problemas,
     }

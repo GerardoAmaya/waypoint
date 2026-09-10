@@ -10,6 +10,6 @@
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3,
-    "preDeployCommand": "alembic upgrade head"
+    "preDeployCommand": ["alembic upgrade head"]
   }
 }
