@@ -5,6 +5,7 @@ ni base de datos ni catalogo para verificar que una restriccion se respeta.
 """
 
 import uuid
+from dataclasses import replace
 from datetime import time
 
 import pytest
@@ -21,6 +22,7 @@ from app.services.geo import (
 )
 from app.services.itinerary import (
     BUDGET_BY_MODE,
+    DEFAULT_DURATIONS,
     DEFAULT_MEAL_MINUTES,
     Constraints,
     Day,
@@ -2041,3 +2043,51 @@ class TestNadaAlAireLibreDeNoche:
         ]
 
         assert tarde == []
+
+
+class TestDuracionPorSubcategoria:
+    """Un museo y un monumento no duran lo mismo aunque los dos sean cultura.
+
+    Con solo seis numeros, el Museo Nacional de Antropologia y una estatua en
+    una rotonda ocupaban los mismos 75 minutos, y subir "cultura" a dos horas
+    para el museo se las daba tambien a la estatua.
+    """
+
+    def _minutos(self, parada):
+        return (parada.departure.hour * 60 + parada.departure.minute) - (
+            parada.arrival.hour * 60 + parada.arrival.minute
+        )
+
+    def _dia(self, subcategorias, **extra):
+        secuencia = []
+        for indice, sub in enumerate(subcategorias):
+            lugar_ = lugar(f"L{indice}", 13.70 + indice * 0.001, -89.22, Category.culture)
+            secuencia.append((replace(lugar_, subcategory=sub), None))
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(9, 0), **extra
+        )
+        return schedule_day(1, secuencia, restricciones)
+
+    def test_el_museo_dura_dos_horas(self):
+        dia = self._dia(["museum"])
+        assert self._minutos(dia.stops[0]) == 120
+
+    def test_el_monumento_es_una_foto(self):
+        dia = self._dia(["monument"])
+        assert self._minutos(dia.stops[0]) == 20
+
+    def test_los_dos_son_cultura_y_duran_distinto(self):
+        """La prueba de que la categoria no alcanza."""
+        dia = self._dia(["museum", "monument"])
+        assert [s.place.category for s in dia.stops] == ["culture", "culture"]
+        assert self._minutos(dia.stops[0]) != self._minutos(dia.stops[1])
+
+    def test_una_subcategoria_sin_entrada_usa_la_tabla_por_categoria(self):
+        dia = self._dia(["algo_que_no_esta_en_la_tabla"])
+        assert self._minutos(dia.stops[0]) == DEFAULT_DURATIONS[Category.culture]
+
+    def test_lo_que_pidio_el_usuario_gana_sobre_la_subcategoria(self):
+        """Quien dice "los museos rapido" habla de todos, y afinar por debajo
+        de eso seria discutirle."""
+        dia = self._dia(["museum"], category_minutes={Category.culture: 40})
+        assert self._minutos(dia.stops[0]) == 40

@@ -49,6 +49,57 @@ DEFAULT_DURATIONS: dict[Category, int] = {
     Category.lodging: 0,
 }
 
+# Cuanto dura la visita segun la subcategoria, cuando la hay.
+#
+# **Seis numeros no alcanzan y se nota en pantalla.** "Cultura" son los 33
+# museos del pais y tambien los 86 monumentos: con una sola cifra, el Museo
+# Nacional de Antropologia y una estatua en una rotonda ocupaban los mismos 75
+# minutos. Subir la categoria entera para que el museo dure dos horas le daba
+# dos horas a la estatua.
+#
+# Es el mismo motivo por el que existe SUBCATEGORY_APPEAL: la categoria dice
+# de que tipo es el sitio, y la subcategoria dice que es. Aca solo estan las
+# que cambian algo; el resto cae en DEFAULT_DURATIONS.
+#
+# Son estimaciones de sentido comun, como la tabla por categoria: no hay datos
+# de cuanto se queda la gente en cada sitio. Lo que si esta medido es lo que
+# cuestan, porque alargar las visitas acorta el dia.
+SUBCATEGORY_DURATIONS: dict[str, int] = {
+    # Cultura
+    "museum": 120,
+    "archaeological_site": 105,
+    "ruins": 75,
+    "pyramid": 75,
+    "castle": 75,
+    "gallery": 75,
+    "arts_centre": 60,
+    "manor": 60,
+    "church": 30,
+    "place_of_worship": 30,
+    "wreck": 30,
+    # Un monumento es una foto y seguir. Que no dure lo que un museo es la
+    # razon de ser de esta tabla.
+    "monument": 20,
+    "memorial": 20,
+    "artwork": 15,
+    # Naturaleza
+    "volcano": 180,
+    "nature_reserve": 150,
+    "beach": 150,
+    "peak": 120,
+    "garden": 120,
+    "waterfall": 75,
+    "cave_entrance": 60,
+    "spring": 45,
+    # `park` en OpenStreetMap es cada plaza municipal del pais —687 de ellas—
+    # y no el parque nacional, que va etiquetado nature_reserve. Hoy ni entra
+    # a los itinerarios: su atractivo es 0.3 y el piso es 0.45.
+    "park": 60,
+    # Atracciones
+    "theme_park": 210,
+    "zoo": 150,
+}
+
 # Cuanto dura una comida cuando nadie dice lo contrario.
 #
 # Era una hora, heredada de la tabla de arriba, y una hora es lo que se tarda
@@ -147,6 +198,9 @@ OUTDOOR_CATEGORIES = {Category.nature.value, Category.viewpoint.value}
 LUNCH_WINDOW = (time(11, 30), time(14, 30))
 DINNER_WINDOW = (time(18, 0), time(21, 0))
 
+# En orden: el dia que solo da para una comida da para el almuerzo.
+MEAL_WINDOWS = (("lunch", LUNCH_WINDOW), ("dinner", DINNER_WINDOW))
+
 # Duracion tipica de una parada mas su traslado. Sirve para estimar hasta que
 # hora llega el dia antes de armarlo, que es cuando hay que decidir cuantos
 # cupos reservar para comer.
@@ -157,33 +211,73 @@ def _as_minutes(momento: time) -> int:
     return momento.hour * 60 + momento.minute
 
 
-# Kilometros que se le guardan a cada comida, como fraccion del presupuesto
-# del dia. **Es una reserva de presupuesto, no de cupos**, y son cosas
-# distintas: el cupo se lo quita a un destino, la reserva solo frena el llenado
-# un poco antes para que el desvio al restaurante quepa.
+# Tope de la reserva de comida, como fraccion del presupuesto del dia.
 #
-# Hizo falta al llenar los dias por horario: antes el dia se quedaba corto y
-# sobraban kilometros, asi que la comida entraba sola. Llenando, el dia gastaba
-# el presupuesto entero en destinos y el restaurante ya no cabia: los dias con
-# "llevá comida" pasaron de 31% a 68% en el arnes.
-#
-# Fraccion y no kilometros fijos porque un dia a pie tiene ocho kilometros y
-# uno en carro veinticinco: tres kilometros de reserva son un desvio razonable
-# en carro y un tercio del dia caminando.
-# El valor sale de barrer sobre los 26 casos:
-#
-#     share   paradas   lleva comida
-#      0.00     316        27/61
-#      0.06     316        21/61
-#      0.09     317        18/61
-#      0.12     309        18/61
-#      0.15     303        17/61
-#      0.20     294        13/61
-#
-# 0.09 domina a 0.12: mismas comidas resueltas y ocho paradas mas. Por encima
-# se empiezan a comprar comidas con destinos, y a 0.20 el dia ya renuncia a
-# veintitres paradas para asegurar cinco comidas mas.
-MEAL_KM_SHARE = 0.09
+# La reserva de verdad sale de meter la comida y ver que costo: ver
+# _meal_km_reserve. Esto solo evita que una zona sin comedores cerca se coma
+# el dia entero guardando sitio para un almuerzo que no va a existir; cuando
+# la reserva llega a este tope, lo que corresponde es el consejo de llevar
+# comida y no un dia de dos paradas.
+MEAL_KM_CAP_SHARE = 0.30
+
+
+def _meal_km_reserve(
+    ruta: list[PlaceHit],
+    comidas: list[PlaceHit],
+    constraints: Constraints,
+    travel: TravelProvider,
+    esperadas: int,
+    numero: int,
+) -> float:
+    """Kilometros que hay que guardarle a las comidas de este dia.
+
+    **Se calcula metiendo la comida de verdad, no estimandola.** Dos intentos
+    peores antes de este, los dos medidos sobre los 26 casos:
+
+    - Una fraccion fija del presupuesto reserva lo mismo en San Salvador, con
+      el comedor a doscientos metros, que dentro de un parque nacional, con el
+      mas cercano a quince kilometros: sobra en un sitio y falta en el otro, y
+      lo que sobra se paga en paradas.
+    - La distancia al comedor mas cercano tampoco sirve, y el diagnostico dice
+      por que: un dia se quedaba sin almuerzo con el restaurante a 230 metros,
+      porque meterlo costaba 3.2 km igual. El costo no lo manda la cercania
+      sino la hora —el comedor tiene que ir donde el reloj lo permite, no
+      donde queda cerca— y eso solo lo sabe la insercion.
+
+    Asi que se hace la insercion sin mirar el presupuesto y se reserva lo que
+    costo. El tope evita que una zona sin comedores deje el dia en dos paradas
+    guardando sitio para un almuerzo que no va a existir: llegado ahi, lo que
+    corresponde es el consejo de llevar comida.
+    """
+    if not esperadas or not comidas or not ruta:
+        return 0.0
+
+    cercanas = _meal_candidates(ruta, comidas, travel)
+    # Sobre la lista tal como esta y no sobre _pinned_order: probado tambien
+    # ordenando, y sale peor —298 paradas y 23 dias sin comida, contra 300 y
+    # 21—. El orden definitivo cambia otra vez al meter la comida, asi que
+    # ordenar aca no acerca la estimacion, solo la mueve.
+    secuencia: list[tuple[PlaceHit, str | None]] = [(lugar, None) for lugar in ruta]
+    total = 0.0
+
+    for tipo, ventana in list(MEAL_WINDOWS)[:esperadas]:
+        tentativa, comida, costo = _best_meal_insertion(
+            secuencia,
+            cercanas,
+            tipo,
+            ventana,
+            constraints,
+            travel,
+            enforce_budget=False,
+            numero=numero,
+        )
+        if comida is None:
+            continue
+        total += costo
+        secuencia = tentativa
+        cercanas = [c for c in cercanas if c is not comida]
+
+    return min(total, MEAL_KM_CAP_SHARE * constraints.budget_for(numero))
 
 
 def _meals_expected(constraints: Constraints) -> int:
@@ -763,6 +857,7 @@ def build_days(
     constraints: Constraints,
     travel: TravelProvider | None = None,
     meal_options: int = 2,
+    comidas: list[PlaceHit] | None = None,
 ) -> list[list[PlaceHit]]:
     """Reparte los candidatos en dias agrupados geograficamente.
 
@@ -850,7 +945,6 @@ def build_days(
         esperadas = min(_meals_expected(constraints), max(0, meal_options))
         if ancla is not None and ancla.category == Category.food.value:
             esperadas = max(0, esperadas - 1)
-        reserva_km = esperadas * MEAL_KM_SHARE * constraints.budget_for(numero)
 
         while len(dia) < cupo:
             # Se reordena en cada vuelta porque el coste depende de lo que
@@ -858,6 +952,11 @@ def build_days(
             # Se recalcula en cada vuelta: lo que falta cambia con cada
             # parada que entra.
             faltantes = frozenset(requeridas - cubiertas - {p.category for p in dia})
+            # Se recalcula en cada vuelta: el comedor mas cercano depende de
+            # donde esta el dia, y el dia se mueve con cada parada.
+            reserva_km = _meal_km_reserve(
+                dia, comidas or [], constraints, medidor, esperadas, numero
+            )
             cercanos = sorted(
                 (h for h in disponibles if h.category != Category.food.value),
                 key=lambda h: _fill_cost(dia, h, semilla, medidor, faltantes),
@@ -925,19 +1024,26 @@ def _sequence_km(
 def _stop_minutes(lugar: PlaceHit, comida: str | None, constraints: Constraints) -> int:
     """Cuanto dura la parada.
 
-    Tres escalones, del mas especifico al mas general: la etiqueta de comida,
-    lo que el usuario pidio para esa categoria, y la tabla por defecto.
+    Cuatro escalones, del mas especifico al mas general: la etiqueta de
+    comida, lo que el usuario pidio para esa categoria, la subcategoria del
+    lugar, y la tabla por categoria.
 
     La etiqueta va primero y no la categoria del lugar: lo que hace larga a
     una parada es que uno se siente a comer, y eso lo dice la etiqueta que
     puso _insert_meals. Por categoria, el restaurante al que se vuelve a
     cerrar el dia contaria como una segunda cena.
+
+    Lo que pidio el usuario va por encima de la subcategoria a proposito:
+    quien dice "dos horas en el parque" esta hablando de todos los parques del
+    dia, y afinar por debajo de eso seria discutirle.
     """
     if comida is not None:
         return constraints.meal_minutes
     categoria = Category(lugar.category)
     if categoria in constraints.category_minutes:
         return constraints.category_minutes[categoria]
+    if lugar.subcategory in SUBCATEGORY_DURATIONS:
+        return SUBCATEGORY_DURATIONS[lugar.subcategory]
     return DEFAULT_DURATIONS.get(categoria, 60)
 
 
@@ -1700,7 +1806,9 @@ def assemble(
     # `_travel_or_estimate` lo devolvia tal cual, asi que el dia a pie se medía
     # con la red del coche sin que nada lo delatara.
     if grupos is None:
-        grupos = build_days(destinos, constraints, travel, meal_options=len(comidas))
+        grupos = build_days(
+            destinos, constraints, travel, meal_options=len(comidas), comidas=comidas
+        )
 
     dias: list[Day] = []
     comidas_restantes = list(comidas)
@@ -1827,7 +1935,9 @@ def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterat
     yield CandidatesReady(destinations=destinos, meals=comidas)
 
     estimado = EstimatedTravel(constraints.mode)
-    grupos = build_days(destinos, constraints, estimado, meal_options=len(comidas))
+    grupos = build_days(
+        destinos, constraints, estimado, meal_options=len(comidas), comidas=comidas
+    )
     borrador = assemble(comidas, destinos, constraints, estimado, grupos)
     yield DraftReady(itinerary=borrador)
 
@@ -2035,6 +2145,7 @@ def revise_day(
         del_objetivo,
         travel,
         meal_options=len(comidas_libres),
+        comidas=comidas_libres,
     )
     nuevo = grupos[0] if grupos else []
 
