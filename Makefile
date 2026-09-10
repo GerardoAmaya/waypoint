@@ -83,15 +83,34 @@ web-check:
 #
 # travel_edges va incluida a proposito: son peticiones a OpenRouteService ya
 # pagadas, y llevarlas hace que la demo arranque con la cache caliente.
+#
+# **Con INSERT y ON CONFLICT DO NOTHING para que se pueda volver a correr.**
+# Con COPY el volcado solo servia contra una base recien creada: sobre una que
+# ya tenia los datos, psql chocaba con la clave primaria y abortaba por el
+# ON_ERROR_STOP. Y eso es justo el caso normal —agregar al catalogo lo que se
+# bajo despues del primer despliegue, como los 132 centros comerciales— asi
+# que el volcado que hacia falta era uno aditivo.
+#
+# El precio esta medido y es aceptable: son 10.132 filas en total, asi que un
+# INSERT por lote de 500 no cambia nada en la practica.
+#
+# **Lo que este volcado NO hace es sincronizar.** ON CONFLICT DO NOTHING no
+# toca lo que ya existe, asi que un lugar que cambio de is_active o de calidad
+# conserva en el destino el valor viejo. Para que el destino quede identico al
+# origen hay que vaciar las cuatro tablas antes, y eso es otra operacion.
 dump:
 	docker compose exec -T db pg_dump -U waypoint -d waypoint \
 		--data-only --no-owner --no-privileges \
+		--inserts --on-conflict-do-nothing --rows-per-insert=500 \
 		-t places -t place_names -t travel_edges -t route_legs \
 		> catalogo.dump
 	@wc -c catalogo.dump
 
 # Requiere DATABASE_URL con la cadena de Neon y psql instalado en la maquina.
 #   make restore DATABASE_URL="postgresql://...neon.tech/waypoint?sslmode=require"
+#
+# Se puede correr encima de un destino que ya tiene datos: agrega lo que falta
+# y deja lo que hay. Ver el comentario de dump.
 restore:
 	@test -n "$(DATABASE_URL)" || (echo "Falta DATABASE_URL"; exit 1)
 	@test -f catalogo.dump || (echo "Falta catalogo.dump: corre make dump primero"; exit 1)

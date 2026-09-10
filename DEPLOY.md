@@ -39,10 +39,31 @@ make dump      # saca catalogo.dump de la base local
 make restore DATABASE_URL="postgresql://...neon.tech/waypoint?sslmode=require"
 ```
 
-El volcado lleva `places`, `travel_edges` y el nomenclátor. Las aristas de
-traslado importan: son cupo de OpenRouteService ya gastado, y llevarlas
-significa que la demo arranca con la caché caliente en las zonas que ya se
-consultaron.
+El volcado lleva `places`, `travel_edges`, `route_legs` y el nomenclátor. Las
+aristas de traslado importan: son cupo de OpenRouteService ya gastado, y
+llevarlas significa que la demo arranca con la caché caliente en las zonas que
+ya se consultaron.
+
+**Se puede volver a correr encima de un destino que ya tiene datos.** El
+volcado usa `INSERT ... ON CONFLICT DO NOTHING` en lotes de 500 en vez de
+`COPY`, así que agrega lo que falta y deja lo que hay. Con `COPY` solo servía
+contra una base recién creada: sobre una poblada, `psql` chocaba con la clave
+primaria y abortaba por el `ON_ERROR_STOP`.
+
+Y ese es el caso normal, no el raro. El síntoma que lo destapó: se aceptaron
+los centros comerciales en el catálogo, se comiteó la regla, se desplegó — y en
+producción seguía fallando "partir desde Metrocentro Santa Ana", porque los
+lugares no viven en el código sino en la base, y las 132 filas nuevas se habían
+quedado en el Postgres local.
+
+Probado en local contra la base ya cargada: restaurar encima no da error y no
+cambia ninguna fila; borrando una a mano y restaurando, vuelve.
+
+**Lo que este volcado NO hace es sincronizar.** `ON CONFLICT DO NOTHING` no
+toca lo que ya existe, así que un lugar que cambió de `is_active` o de calidad
+—la deduplicación se recalcula entera en cada carga— conserva en el destino el
+valor viejo. Para que el destino quede idéntico al origen hay que vaciar las
+cuatro tablas antes, y eso es una operación distinta y destructiva.
 
 ---
 

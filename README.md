@@ -1433,6 +1433,12 @@ meter una entrada en el historial al enviar y escuchar `popstate`; arregla algo
 que la gente ya trae aprendido del móvil. La petición escrita sí sobrevive a
 "Empezar de nuevo", que era el caso más molesto.
 
+**El volcado del catálogo es aditivo, no sincroniza.** `make dump` genera
+`INSERT ... ON CONFLICT DO NOTHING`, así que `make restore` se puede correr
+encima de producción y agrega lo que falta. Lo que no hace es actualizar lo que
+ya está: un lugar que cambió de `is_active` o de calidad conserva en el destino
+el valor viejo. Para igualar de verdad hay que vaciar las cuatro tablas antes.
+
 **El itinerario no se puede compartir por enlace.** Se copia como texto y nada
 más. Sin cuentas, la URL tendría que llevar el estado, y el estado son
 identificadores del catálogo: se puede, pero hay que decidir qué pasa cuando un
