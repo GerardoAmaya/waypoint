@@ -67,6 +67,38 @@ describe("Panel", () => {
     expect(screen.queryByText(/Midiendo las rutas/i)).toBeNull();
   });
 
+  it("sin cupo para medir, no dice que el mapa dibuje rectas", () => {
+    /*
+      Los dos cupos de ORS son distintos —50 para medir, 200 para el trazo— así
+      que el mapa puede estar dibujando las calles mientras las distancias son
+      estimadas. La línea decía "se acabó el cupo diario de rutas, así que salen
+      de la línea recta" y se leía como que las líneas del mapa eran rectas.
+    */
+    render(
+      <Panel
+        interpretation={null}
+        itinerary={{
+          ...ITINERARIO,
+          travel: { ...ITINERARIO.travel, reason: "no_quota" },
+        }}
+        selectedDay={1}
+        onSelectDay={() => {}}
+        onRevise={async () => {}}
+        revising={false}
+        reviseError={null}
+        selectedStop={null}
+        onSelectStop={() => {}}
+        expandido={false}
+        onToggleExpandido={() => {}}
+        midiendo={false}
+      />,
+    );
+
+    expect(screen.getByText(/cupo diario para medirlas/i)).toBeInTheDocument();
+    expect(screen.getByText(/el trazo del mapa no se ve afectado/i)).toBeInTheDocument();
+    expect(screen.queryByText(/cupo diario de rutas/i)).toBeNull();
+  });
+
   it("el aviso es un role=status para quien no lo ve", () => {
     pinta(true);
 

@@ -46,8 +46,19 @@ interface Props {
   midiendo: boolean;
 }
 
+/*
+  Esta línea habla de las DISTANCIAS y de nada más.
+
+  Decía "Distancias estimadas: se acabó el cupo diario de rutas, así que salen
+  de la línea recta" mientras el mapa dibujaba el recorrido por las calles, y
+  se leía como que las líneas del mapa eran rectas. Son dos cosas con dos
+  cupos distintos en OpenRouteService —50 peticiones para medir, 200 para el
+  trazo— así que un itinerario puede perfectamente tener las distancias
+  estimadas y el trazo real al mismo tiempo. Es el caso normal cuando se
+  agota el primero.
+*/
 const FUENTE: Record<string, string> = {
-  estimated: "Distancias estimadas",
+  estimated: "Distancias estimadas en línea recta",
   mixed: "Distancias medidas, algunas estimadas",
   real: "Distancias medidas sobre carretera",
 };
@@ -56,12 +67,14 @@ const FUENTE: Record<string, string> = {
   Las tres causas piden cosas distintas: configurar algo, esperar, o nada
   porque el lugar de verdad no tiene camino. "Estimadas" a secas las mete en la
   misma bolsa y deja al viajero sin saber si tiene que hacer algo.
+
+  Ninguna vuelve a mencionar la línea recta: ya lo dice FUENTE, y repetirlo es
+  lo que hacía pensar en el dibujo del mapa.
 */
 const CAUSA: Record<string, string> = {
-  no_key: "falta configurar OpenRouteService, así que salen de la línea recta",
-  no_quota: "se acabó el cupo diario de rutas, así que salen de la línea recta",
-  unroutable:
-    "estas paradas están lejos de toda carretera y no se pueden medir, así que salen de la línea recta",
+  no_key: "falta configurar OpenRouteService",
+  no_quota: "se acabó el cupo diario para medirlas; el trazo del mapa no se ve afectado",
+  unroutable: "estas paradas están lejos de toda carretera y no se pueden medir",
 };
 
 export default function Panel({

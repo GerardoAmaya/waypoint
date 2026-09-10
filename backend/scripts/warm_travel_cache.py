@@ -124,6 +124,7 @@ def main() -> int:
             print("Eso pasa del cupo diario. Corre zona por zona con --zone.")
             return 1
 
+        agotado = False
         for nombre, lugares, _ in planes:
             if len(lugares) < 2:
                 continue
@@ -138,10 +139,38 @@ def main() -> int:
             s = matriz.stats
             print(
                 f"{nombre:<14} cache {s.cached:>5}  nuevos {s.fetched:>5}  "
-                f"sin ruta {s.estimated:>4}  ({s.real_ratio:.0%} reales)"
+                f"estimados {s.estimated:>4}  ({s.real_ratio:.0%} reales)"
             )
 
-    print(f"\nPeticiones usadas: {cliente.request_count if cliente else 0}")
+            # **Sin cupo se corta aca y se dice una vez.** Antes recorria las
+            # veinte zonas igual: la primera peticion recibia el 403, las
+            # otras diecinueve ni salian a la red, y el guion imprimia veinte
+            # tablas de ceros con "sin ruta 2448" al lado. Eso hacia pensar que
+            # el problema era el terreno cuando era el cupo, y dejaba el
+            # resultado enterrado al final.
+            #
+            # Se le pregunta al cupo y no a stats.reason: el motivo solo se
+            # marca cuando la zona no tenia NADA en cache, asi que con una
+            # zona a medio calentar el aviso llegaba seis zonas tarde. Un 403
+            # de ORS deja el cupo en cero, y eso se sabe de inmediato.
+            if cliente.matrix_quota.remaining == 0:
+                agotado = True
+                break
+
+    usadas = cliente.request_count if cliente else 0
+    if agotado:
+        print(
+            f"\nSin cupo: ORS no acepta mas peticiones de matriz por ahora. "
+            f"Se gastaron {usadas} y no se guardo nada nuevo."
+        )
+        print(
+            "La ventana de ORS se reinicia 24 h despues de su PRIMERA llamada, "
+            "no a medianoche. Reintentar cuesta una peticion, asi que probar "
+            "mas tarde con este mismo comando es barato."
+        )
+        return 1
+
+    print(f"\nPeticiones usadas: {usadas}")
     print(f"Ritmo configurado: {settings.ors_min_interval_seconds}s entre llamadas.")
     return 0
 
