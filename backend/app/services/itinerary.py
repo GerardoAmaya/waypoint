@@ -805,6 +805,35 @@ def _two_opt(ruta: list[PlaceHit], travel: TravelProvider | None = None) -> list
 # largo del dia y no el criterio.
 REPEAT_PENALTY_KM = 24.0
 
+# Lo que cuesta repetir la SUBCATEGORIA, ademas de la categoria.
+#
+# La penalizacion por categoria no distingue un dia de cerro, volcan, cascada
+# y playa —cuatro cosas distintas— de un dia de cinco monumentos, que son
+# cinco veces la misma parada de veinte minutos. Los dos son "naturaleza" o
+# "cultura" repetida y pagaban lo mismo.
+#
+# Se suma a la de categoria en vez de sustituirla, y eso es deliberado: un
+# segundo monumento es peor que un segundo lugar de cultura cualquiera, asi
+# que paga las dos.
+#
+# El valor sale de barrer sobre los 26 casos. "subrachas" son los dias con
+# tres paradas seguidas de la misma subcategoria, y "peor" el maximo de una
+# misma subcategoria en un dia:
+#
+#     km   cumple  paradas  lleva comida  cats/dia  racha3+  subrachas  peor
+#      0   25/26     297        21          3.26      22%      6/61      5
+#      8   25/26     295        21          3.26      17%      3/61      4
+#     16   25/26     294        23          3.22      17%      3/61      4
+#     24   25/26     293        23          3.22      19%      3/61      4
+#     32   25/26     293        23          3.22      19%      3/61      4
+#
+# 8 domina a todo lo demas: recoge la mejora entera —las subrachas se parten a
+# la mitad y el peor dia baja de cinco monumentos a cuatro— sin tocar las
+# comidas ni las categorias por dia, y por dos paradas de 297. De 16 en
+# adelante se empiezan a comprar con comidas y con variedad de categoria, que
+# es justo lo que se venia a mejorar.
+SUBCATEGORY_PENALTY_KM = 8.0
+
 
 # Descuento para una categoria que el usuario exigio y todavia no aparece.
 #
@@ -814,6 +843,22 @@ REPEAT_PENALTY_KM = 24.0
 # que el candidato este absurdamente lejos, y si esta absurdamente lejos el
 # presupuesto de traslado lo rechaza igual.
 REQUIRED_BONUS_KM = 60.0
+
+
+def _name_key(lugar: PlaceHit) -> str:
+    """Con que se compara si dos paradas son "el mismo sitio" para el viajero.
+
+    **No dice que sean el mismo lugar, dice que una basta.** Dos filas con el
+    nombre identico pueden ser dos sitios distintos de verdad —hay 90 pares de
+    "Pizza Hut" en el catalogo, y son 90 restaurantes— asi que fusionarlas al
+    cargar seria falso. Pero un itinerario con dos "Cascadas de Huizucar" o dos
+    "Area Natural Protegida Talcualhuya" se lee como un error de duplicado, y
+    con dos Pizza Hut se lee como un viaje pobre.
+
+    El caso que lo destapo: "Cascadas de Huizucar" dos veces el mismo dia, dos
+    filas a 774 metros; el radio de deduplicacion para exteriores son 500.
+    """
+    return " ".join(lugar.name.casefold().split())
 
 
 def _visit_count(lugares: Iterable[PlaceHit], numero: int, constraints: Constraints) -> int:
@@ -843,6 +888,9 @@ def _fill_cost(
     """Lo que cuesta agregar un candidato: distancia, repeticion y requisitos."""
     repetidas = sum(1 for parada in dia if parada.category == candidato.category)
     coste = medidor.between(semilla, candidato)[0] + repetidas * REPEAT_PENALTY_KM
+    if candidato.subcategory is not None:
+        iguales = sum(1 for parada in dia if parada.subcategory == candidato.subcategory)
+        coste += iguales * SUBCATEGORY_PENALTY_KM
     if candidato.category in faltantes:
         coste -= REQUIRED_BONUS_KM
     # Un lugar pedido con nombre pesa el doble que una categoria pendiente:
@@ -989,6 +1037,11 @@ def build_days(
     # objeto que traen las restricciones: los dos existen, pero solo el del
     # catalogo de candidatos trae el atractivo y la calidad con los que el
     # motor puntua.
+    # Los nombres ya usados: uno de cada nombre por itinerario. Ver _name_key.
+    nombres_usados: set[str] = set()
+    if constraints.start_place is not None:
+        nombres_usados.add(_name_key(constraints.start_place))
+
     por_id = {h.id: h for h in admisibles}
     pedidos = [
         por_id.get(lugar.id, lugar)
@@ -996,6 +1049,7 @@ def build_days(
         if constraints.start_place is None or lugar.id != constraints.start_place.id
     ]
     pendientes = [lugar for lugar in pedidos if lugar is not None]
+    nombres_usados.update(_name_key(lugar) for lugar in pendientes)
     disponibles = [h for h in disponibles if h.id not in {p.id for p in pendientes}]
 
     for numero in range(1, constraints.days + 1):
@@ -1027,10 +1081,17 @@ def build_days(
             # forma mas barata de garantizarlo, porque el resto del dia se
             # llena alrededor de ella.
             faltantes = requeridas - cubiertas
-            pendiente = next((h for h in disponibles if h.category in faltantes), None)
-            semilla = pendiente if pendiente is not None else disponibles[0]
+            libres = [h for h in disponibles if _name_key(h) not in nombres_usados]
+            if not libres:
+                break
+            pendiente = next((h for h in libres if h.category in faltantes), None)
+            semilla = pendiente if pendiente is not None else libres[0]
             disponibles.remove(semilla)
             dia = [semilla]
+
+        nombres_usados.add(_name_key(semilla))
+        for lugar in dia:
+            nombres_usados.add(_name_key(lugar))
 
         # Sin comida los cupos son solo para destinos; con comida se reserva
         # sitio para las que de verdad se van a poder colocar.
@@ -1080,7 +1141,11 @@ def build_days(
             # del otro tienen que poder caer el mismo dia en vez de ocupar dos.
             ids_pendientes = frozenset(p.id for p in pendientes)
             cercanos = sorted(
-                (h for h in [*pendientes, *disponibles] if h.category != Category.food.value),
+                (
+                    h
+                    for h in [*pendientes, *disponibles]
+                    if h.category != Category.food.value and _name_key(h) not in nombres_usados
+                ),
                 key=lambda h: _fill_cost(dia, h, semilla, medidor, faltantes, ids_pendientes),
             )
             agregado = False
@@ -1099,6 +1164,7 @@ def build_days(
                 ):
                     continue
                 dia.append(candidato)
+                nombres_usados.add(_name_key(candidato))
                 if candidato.id in ids_pendientes:
                     pendientes = [p for p in pendientes if p.id != candidato.id]
                 else:

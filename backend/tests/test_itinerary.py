@@ -24,12 +24,15 @@ from app.services.itinerary import (
     BUDGET_BY_MODE,
     DEFAULT_DURATIONS,
     DEFAULT_MEAL_MINUTES,
+    SUBCATEGORY_PENALTY_KM,
     Constraints,
     Day,
     Itinerary,
     Stop,
+    _fill_cost,
     _insert_meals,
     _meals_that_fit,
+    _name_key,
     _outdoor_after_dusk,
     _route_km,
     _sequence_end,
@@ -2290,3 +2293,121 @@ class TestLaCuentaDeParadas:
         )
 
         assert total_visits(itinerario, None) == itinerario.total_stops
+
+
+class TestNoDosVecesElMismoNombre:
+    """Un itinerario con dos "Cascadas de Huizucar" se lee como un error.
+
+    Y lo era, pero no de duplicado: son dos filas del catalogo a 774 metros, y
+    el radio de deduplicacion para exteriores son 500. Fusionarlas al cargar
+    seria falso —hay 90 pares de "Pizza Hut" en el catalogo y son 90
+    restaurantes— asi que la regla va en el itinerario: una de cada nombre.
+    """
+
+    def test_no_entra_dos_veces_el_mismo_nombre(self):
+        gemelas = [
+            lugar("Cascadas de Huizucar", 13.5896, -89.2310, Category.viewpoint, 0.9),
+            lugar("Cascadas de Huizucar", 13.5842, -89.2265, Category.viewpoint, 0.9),
+        ]
+        otras = [
+            lugar(f"Otra {i}", 13.700 + i * 0.002, -89.220, Category.culture, 0.6)
+            for i in range(4)
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.60,
+            center_lon=-89.23,
+            include_meals=False,
+            max_travel_km_per_day=90,
+        )
+
+        dias = build_days([*gemelas, *otras], restricciones)
+        nombres = [p.name for p in dias[0]]
+
+        assert nombres.count("Cascadas de Huizucar") == 1
+
+    def test_el_nombre_se_compara_sin_mayusculas_ni_espacios_de_mas(self):
+        assert _name_key(lugar("  Cascadas   de Huizucar ", 13.5, -89.2)) == _name_key(
+            lugar("cascadas de huizucar", 13.6, -89.3)
+        )
+
+    def test_dos_nombres_distintos_si_entran(self):
+        """La regla es sobre el nombre, no sobre la categoria."""
+        candidatos = [
+            lugar("Uno", 13.700, -89.220, Category.viewpoint, 0.9),
+            lugar("Dos", 13.702, -89.220, Category.viewpoint, 0.9),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            include_meals=False,
+            max_travel_km_per_day=90,
+        )
+
+        dias = build_days(candidatos, restricciones)
+
+        assert len(dias[0]) == 2
+
+
+class TestRepetirSubcategoriaCuestaAparte:
+    """Cinco monumentos no son un dia de cultura variado.
+
+    La penalizacion por categoria no distinguia un dia de cerro, volcan,
+    cascada y playa de uno de cinco monumentos: los dos son la misma categoria
+    repetida y pagaban igual.
+
+    Se prueba sobre _fill_cost y no sobre el dia armado porque ahi la regla es
+    determinista. Un primer intento midio el dia entero y no probaba nada: el
+    museo ganaba la semilla por atractivo —0.8 contra 0.5 del monumento— asi
+    que entraba con penalizacion y sin ella.
+    """
+
+    def _mundo(self):
+        semilla = replace(
+            lugar("Monumento A", 13.7000, -89.2200, Category.culture),
+            subcategory="monument",
+        )
+        # Los dos candidatos, a la misma distancia de la semilla: lo unico que
+        # los diferencia es la subcategoria.
+        otro_monumento = replace(
+            lugar("Monumento B", 13.7010, -89.2200, Category.culture),
+            subcategory="monument",
+        )
+        museo = replace(
+            lugar("Museo", 13.6990, -89.2200, Category.culture), subcategory="museum"
+        )
+        return semilla, otro_monumento, museo
+
+    def test_repetir_subcategoria_encarece_al_candidato(self):
+        semilla, otro_monumento, museo = self._mundo()
+        medidor = EstimatedTravel()
+
+        coste_mon = _fill_cost([semilla], otro_monumento, semilla, medidor)
+        coste_mus = _fill_cost([semilla], museo, semilla, medidor)
+
+        assert coste_mon > coste_mus
+
+    def test_la_diferencia_es_exactamente_la_penalizacion(self):
+        """Los dos son cultura, asi que la penalizacion de categoria es la
+        misma para ambos: lo que queda es la de subcategoria."""
+        semilla, otro_monumento, museo = self._mundo()
+        medidor = EstimatedTravel()
+
+        coste_mon = _fill_cost([semilla], otro_monumento, semilla, medidor)
+        coste_mus = _fill_cost([semilla], museo, semilla, medidor)
+
+        assert coste_mon - coste_mus == pytest.approx(SUBCATEGORY_PENALTY_KM, abs=0.01)
+
+    def test_sin_subcategoria_no_se_penaliza(self):
+        """Un lugar sin subcategoria en OSM no puede repetir la de nadie."""
+        semilla, _, _ = self._mundo()
+        sin_sub = lugar("Sin etiqueta", 13.6990, -89.2200, Category.culture)
+        medidor = EstimatedTravel()
+
+        coste = _fill_cost([semilla], sin_sub, semilla, medidor)
+        museo = replace(
+            lugar("Museo", 13.6990, -89.2200, Category.culture), subcategory="museum"
+        )
+
+        assert coste == pytest.approx(_fill_cost([semilla], museo, semilla, medidor), abs=0.01)

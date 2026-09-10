@@ -257,6 +257,60 @@ Es 29% con días llenos contra 24% con días de cinco paradas. No es solo un
 artefacto del largo: cuando se acaba la variedad cercana, el día sigue metiendo
 lo que queda, que suele ser la categoría dominante de la zona.
 
+### Repetir la subcategoría cuesta aparte, y un nombre no se repite
+
+La penalización por categoría no distingue un día de cerro, volcán, cascada y
+playa —cuatro cosas distintas— de un día de cinco monumentos, que son cinco
+veces la misma parada de veinte minutos. Los dos son la misma categoría
+repetida y pagaban lo mismo. Medido: el peor día del arnés llevaba **cinco
+monumentos**, y había cuatro días con tres o más miradores seguidos.
+
+La penalización de subcategoría se **suma** a la de categoría en vez de
+sustituirla, y eso es deliberado: un segundo monumento es peor que un segundo
+lugar de cultura cualquiera, así que paga las dos. El barrido:
+
+| km | paradas | llevá comida | cats/día | racha 3+ | subrachas | peor |
+|---|---|---|---|---|---|---|
+| 0 | 297 | 21 | 3,26 | 22% | 6/61 | 5 |
+| **8** | **295** | **21** | **3,26** | **17%** | **3/61** | **4** |
+| 16 | 294 | 23 | 3,22 | 17% | 3/61 | 4 |
+| 24 | 293 | 23 | 3,22 | 19% | 3/61 | 4 |
+
+8 domina a todo lo demás: recoge la mejora entera sin tocar las comidas ni las
+categorías por día, y por dos paradas de 297. De 16 en adelante la variedad de
+subcategoría se empieza a comprar con comidas y con variedad de categoría, que
+es justo lo que se venía a mejorar.
+
+**Y un nombre no se repite en el itinerario.** El síntoma era un día con dos
+"Cascadas de Huizucar", que se lee como un error de duplicado. Lo era, pero no
+del cargador: son dos filas del catálogo a 774 metros y el radio de
+deduplicación para exteriores son 500.
+
+Aflojar ese radio habría sido un error, y medirlo lo dijo: de los pares con
+nombre **idéntico** a menos de 3 km, los que más aparecen son **Pizza Hut (90
+pares), Don Pollo (60), Starbucks (59), Subway (54)** y áreas protegidas
+mapeadas varias veces. Dos Pizza Hut a 800 metros son dos restaurantes;
+fusionarlos sería falso, y el número de pares *crece* con la distancia, que es
+la firma de sitios distintos con nombre genérico.
+
+Así que la regla va en el itinerario y no en el catálogo: **uno de cada
+nombre**. No dice que sean el mismo lugar, dice que uno basta — que también es
+cierto para las cadenas, porque dos Pizza Hut en el mismo viaje no son variedad.
+
+Resultado de las dos cosas juntas, sobre los 61 días:
+
+| | antes | ahora |
+|---|---|---|
+| días con racha de 3+ de la misma subcategoría | 7 | **3 (5%)** |
+| máximo de monumentos en un día | 5 | **2** |
+| máximo de miradores en un día | 4 | **3** |
+| pares consecutivos de la misma subcategoría | 18% | **15%** |
+| días con 3+ cerros | 1 (2%) | 1 (2%) |
+
+Los cerros, que fueron la queja original —"cuatro cerros seguidos"—, ya estaban
+resueltos por la penalización de categoría antes de esto: un día de 61 llega a
+tres, y ninguno a cuatro.
+
 ### Cuánto dura una visita: seis números no alcanzaban
 
 Las duraciones eran una tabla por categoría, seis números para todo el
@@ -340,7 +394,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Qué | Cuánto |
 |---|---|
 | Cumplimiento de límites duros | 96% (25 de 26 casos) |
-| Lugares inventados | 0 de 298 paradas generadas |
+| Lugares inventados | 0 de 295 paradas generadas |
 | Factor de desvío medido | 1.45, mediana sobre 812 pares |
 | Velocidad efectiva en carro | 35 a 62 km/h según el tramo |
 | Pares sin ruta en ORS | 7% (58 de 870) |
@@ -350,7 +404,8 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Descarte del filtro de calidad | 5.9% (370 registros) |
 | Duplicados fusionados | 4.4% (274 registros) |
 | Días con recomendación de llevar comida | 34% (21 de 62) |
-| Repetición de categoría por paso | 29% |
+| Repetición de categoría por paso | 26% |
+| Repetición de subcategoría por paso | 15% |
 | Paradas fuera de hora (luz o cierre) | 0 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 200 / día, medido en la cabecera |
