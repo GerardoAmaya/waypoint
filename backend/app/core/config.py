@@ -26,10 +26,19 @@ class Settings(BaseSettings):
     # Ritmo minimo entre llamadas a ORS. Controlar el ritmo en origen es mejor
     # que reintentar contra un limite que ya sabemos que existe.
     ors_min_interval_seconds: float = 1.5
-    # Techo propio de peticiones por ventana de 24 horas. El endpoint de matriz
-    # da 50; dejamos margen para poder calibrar o depurar sin quedarnos sin
-    # cupo para la demo. Al llegar al techo los traslados se estiman.
+    # Techo propio de peticiones por ventana de 24 horas, uno por endpoint.
+    #
+    # **Los dos cupos de ORS no son iguales y con un solo numero el trazo
+    # salia perdiendo.** Medido en las cabeceras de sus respuestas: la matriz
+    # da 50 y las direcciones 200. Un techo compartido de 45 dejaba el trazo
+    # por carretera limitado a menos de la cuarta parte de lo que ORS permite,
+    # y el trazo es lo que se ve.
+    #
+    # En los dos se deja margen para poder calibrar o depurar sin quedarnos sin
+    # cupo para la demo. Al llegar al techo, los traslados se estiman y las
+    # lineas se dibujan rectas: el itinerario sale igual.
     ors_daily_budget: int = 45
+    ors_directions_budget: int = 180
 
     # Limite por IP. Los itinerarios cuestan tokens de Haiku y cupo de rutas, y
     # la demo no tiene cuentas: sin techo, una persona curioseando vacia el

@@ -203,6 +203,7 @@ class ORSClient:
         min_interval_seconds: float = 1.5,
         timeout: float = 30.0,
         daily_budget: int = 45,
+        directions_budget: int | None = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -219,9 +220,15 @@ class ORSClient:
         # el x-ratelimit-remaining de la ultima respuesta —de cualquiera de los
         # dos endpoints— en un campo comun, asi que un "quedan 4" de la matriz
         # apagaba direcciones, que tenia su cupo intacto.
+        # Cada endpoint con su techo, porque los cupos de ORS no son iguales:
+        # 50 la matriz y 200 las direcciones, medido en sus cabeceras. Sin el
+        # segundo numero, el trazo por carretera quedaba limitado a menos de la
+        # cuarta parte de lo que ORS permite.
         self.quotas = {
             ENDPOINT_MATRIX: DailyQuota(daily_budget),
-            ENDPOINT_DIRECTIONS: DailyQuota(daily_budget),
+            ENDPOINT_DIRECTIONS: DailyQuota(
+                daily_budget if directions_budget is None else directions_budget
+            ),
         }
         self.request_count = 0
 
@@ -979,6 +986,7 @@ def client_from_settings() -> ORSClient | None:
         base_url=settings.ors_base_url,
         min_interval_seconds=settings.ors_min_interval_seconds,
         daily_budget=settings.ors_daily_budget,
+        directions_budget=settings.ors_directions_budget,
     )
 
 

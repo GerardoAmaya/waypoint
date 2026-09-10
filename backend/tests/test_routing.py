@@ -1041,3 +1041,54 @@ class TestUn403NoEsUnaCarreteraQueFalta:
         assert matriz.stats.reason == "no_quota"
         # Tres lugares son seis pares ordenados, no tres.
         assert matriz.stats.fetched == 0 and matriz.stats.estimated == 6
+
+
+class TestCadaEndpointConSuTecho:
+    """Los cupos de ORS no son iguales, y con un solo numero el trazo perdia.
+
+    Medido en las cabeceras de sus respuestas: la matriz da 50 y las
+    direcciones 200. Un techo compartido de 45 dejaba el trazo por carretera
+    limitado a menos de la cuarta parte de lo que ORS permite, y el trazo es
+    lo que se ve en el mapa.
+    """
+
+    def test_el_trazo_tiene_su_propio_techo(self):
+        cliente = ORSClient("llave", daily_budget=45, directions_budget=180)
+
+        assert cliente.matrix_quota.budget == 45
+        assert cliente.directions_quota.budget == 180
+
+    def test_gastar_la_matriz_no_gasta_el_trazo(self, monkeypatch):
+        respuestas = {
+            "matrix": RespuestaFalsa(200, {"distances": [[0, 1]], "durations": [[0, 60]]}),
+            "directions": RespuestaFalsa(
+                200,
+                {"features": [{"geometry": {"coordinates": [[-89.2, 13.7], [-89.5, 14.0]]}}]},
+            ),
+        }
+        monkeypatch.setattr(
+            routing.httpx,
+            "post",
+            lambda url, json, headers, timeout: respuestas[
+                "directions" if "directions" in url else "matrix"
+            ],
+        )
+        cliente = ORSClient(
+            "llave", min_interval_seconds=0, daily_budget=1, directions_budget=3
+        )
+
+        cliente.matrix([SAN_SALVADOR, SANTA_ANA], "driving-car")
+        with pytest.raises(routing.ORSBudgetExhausted):
+            cliente.matrix([SAN_SALVADOR, SANTA_ANA], "driving-car")
+
+        # Al trazo le quedan sus tres, intactas.
+        for _ in range(3):
+            assert cliente.directions([SAN_SALVADOR, SANTA_ANA], "driving-car")
+        with pytest.raises(routing.ORSBudgetExhausted):
+            cliente.directions([SAN_SALVADOR, SANTA_ANA], "driving-car")
+
+    def test_sin_segundo_numero_los_dos_comparten_el_mismo(self):
+        """El valor por defecto no cambia el comportamiento de quien no lo pasa."""
+        cliente = ORSClient("llave", daily_budget=45)
+
+        assert cliente.directions_quota.budget == 45

@@ -942,10 +942,12 @@ X-Ratelimit-Remaining: 176
 ```
 
 O sea que el cupo del trazo es cuatro veces el de la matriz y estaba
-prácticamente sin usar. El presupuesto local de 45 se aplica a los dos por
-igual, así que ahora es él —y no ORS— el que limita las direcciones; con una
-petición por día de itinerario, 45 alcanza de sobra, pero el número ya no
-describe el límite real.
+prácticamente sin usar. Y el techo propio de 45 se aplicaba a los dos por
+igual, así que después de arreglar los contadores era **él** —y no ORS— el que
+limitaba las direcciones a menos de la cuarta parte de lo permitido. Ahora hay
+un techo por endpoint: 45 para la matriz de 50, y 180 para las direcciones de
+200, con margen en los dos para poder calibrar sin quedarse sin cupo para la
+demo.
 
 **Y con el cupo desbloqueado apareció el problema de verdad, que era otro.**
 Pedir la geometría de un día entero en una petición tiene una consecuencia que
