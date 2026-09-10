@@ -462,6 +462,18 @@ def resolve_start_place(db: Session, texto: str) -> PlaceHit | None:
     return hits[0] if hits else None
 
 
+def resolve_must_visit(db: Session, texto: str) -> PlaceHit | None:
+    """Un lugar que la persona pidio visitar, buscado por nombre.
+
+    Mismo umbral que el punto de partida y por el mismo motivo: con uno bajo,
+    "Jardin Botanico" trae cualquier jardin, y un itinerario que promete el
+    lugar que pediste y te lleva a otro es peor que uno que admite no haberlo
+    encontrado. Quien llama tiene que decir que no se encontro.
+    """
+    hits = search_by_name(db, texto, limit=5, min_similarity=MIN_SIMILARITY_PARTIDA)
+    return hits[0] if hits else None
+
+
 def zone_names() -> list[str]:
     """Los nombres que el modelo puede usar. Va dentro del prompt."""
     return [z.name for z in ZONES]

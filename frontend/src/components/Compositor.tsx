@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { motion } from "motion/react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -43,7 +43,7 @@ const PASOS: { fase: Fase; texto: string }[] = [
   El precio es que para escribir lo propio hay que borrar esto primero. Se
   paga una vez y a cambio la pantalla ensena su techo en vez de su suelo.
 */
-const PETICION_INICIAL =
+export const PETICION_INICIAL =
   "Me estoy hospedando en Hotel Barceló, quiero un itinerario de 2 días a partir de las 10 am, el primer día en coche y el segundo caminando, realizaré cena en los 2 viajes y quiero estar de vuelta en el hotel antes de las 11 p.m";
 
 const EJEMPLOS = [
@@ -56,10 +56,29 @@ interface Props {
   fase: Fase;
   error: string | null;
   onSubmit: (mensaje: string) => void;
+  /*
+    El texto vive en la pagina y no aca.
+
+    Esta caja se desmonta en cuanto llega el plan —la pantalla pasa a ser del
+    itinerario— y al volver con "Empezar de nuevo" se montaba otra nueva, con
+    la peticion de ejemplo puesta donde estaba la tuya. Volver atras es casi
+    siempre para retocar lo que pediste, no para escribirlo de cero.
+
+    Sobrevive al viaje de ida y vuelta al itinerario, y no a un recargado de
+    pagina, que es exactamente donde no queremos que sobreviva: encontrarse la
+    peticion de la semana pasada esperando seria mas raro que util.
+  */
+  texto: string;
+  onTextoChange: (texto: string) => void;
 }
 
-export default function Compositor({ fase, error, onSubmit }: Props) {
-  const [texto, setTexto] = useState(PETICION_INICIAL);
+export default function Compositor({
+  fase,
+  error,
+  onSubmit,
+  texto,
+  onTextoChange,
+}: Props) {
   const caja = useRef<HTMLTextAreaElement>(null);
   const trabajando = fase !== "quieto" && fase !== "listo";
 
@@ -160,7 +179,7 @@ export default function Compositor({ fase, error, onSubmit }: Props) {
           ref={caja}
           aria-label="Contá el viaje que querés hacer"
           value={texto}
-          onChange={(e) => setTexto(e.target.value)}
+          onChange={(e) => onTextoChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -233,7 +252,7 @@ export default function Compositor({ fase, error, onSubmit }: Props) {
                 {EJEMPLOS.map((ejemplo) => (
                   <li key={ejemplo}>
                     <button
-                      onClick={() => setTexto(ejemplo)}
+                      onClick={() => onTextoChange(ejemplo)}
                       className="group flex items-baseline gap-2 text-left text-menudo text-tinta-tenue transition-colors hover:text-tinta"
                     >
                       {/*

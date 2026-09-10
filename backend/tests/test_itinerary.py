@@ -40,6 +40,7 @@ from app.services.itinerary import (
     estimate_travel,
     order_by_proximity,
     schedule_day,
+    total_visits,
     validate,
 )
 from app.services.places import PlaceHit
@@ -2091,3 +2092,180 @@ class TestDuracionPorSubcategoria:
         de eso seria discutirle."""
         dia = self._dia(["museum"], category_minutes={Category.culture: 40})
         assert self._minutos(dia.stops[0]) == 40
+
+
+class TestLaComidaPedidaConNombre:
+    """Pedir cena y no recibirla sin explicacion es el peor de los casos.
+
+    include_meals dice "meteme comidas donde quepan" y must_include_meals dice
+    "cuento con esta comida". El caso real: dos dias pidiendo cena, el segundo
+    a pie termina a las 15:04 porque se le acaban los ocho kilometros, y no se
+    decia ni una palabra.
+    """
+
+    def _itinerario(self, **extra):
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(9, 0),
+            latest_end=time(16, 0),
+            include_meals=True,
+            **extra,
+        )
+        secuencia = [
+            (lugar("Museo", 13.70, -89.22, Category.culture), None),
+            (lugar("Comedor", 13.7005, -89.22, Category.food), "lunch"),
+        ]
+        dia = schedule_day(1, secuencia, restricciones)
+        return Itinerary(days=[dia]), restricciones
+
+    def test_dice_que_el_dia_no_llega_a_la_cena(self):
+        itinerario, restricciones = self._itinerario(must_include_meals=["dinner"])
+
+        consejos = advise(itinerario, restricciones, [])
+        cenas = [c for c in consejos if c.kind == "bring_dinner"]
+
+        assert len(cenas) == 1
+        assert "no llega" in cenas[0].detail
+        assert "18:00" in cenas[0].detail, "tiene que decir a que hora empieza la cena"
+
+    def test_sin_pedirla_no_dice_nada(self):
+        """Un dia que termina a las cuatro no tiene nada que explicar si nadie
+        contaba con cenar."""
+        itinerario, restricciones = self._itinerario()
+
+        consejos = advise(itinerario, restricciones, [])
+
+        assert [c for c in consejos if c.kind == "bring_dinner"] == []
+
+
+class TestLugarPedidoConNombre:
+    """ "quiero ir al Jardin Botanico" es lo mas fuerte que se puede pedir.
+
+    Exigir cultura se cumple con cualquier museo; exigir un lugar se cumple
+    con uno solo.
+    """
+
+    def _mundo(self, **extra):
+        # El pedido es el peor puntuado y el mas lejano de los tres: sin el
+        # requisito no entraria.
+        pedido = lugar("Pedido", 13.760, -89.22, Category.culture, 0.1)
+        otros = [
+            lugar(f"P{i}", 13.700 + i * 0.002, -89.220, Category.nature, 0.9) for i in range(6)
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            include_meals=False,
+            max_travel_km_per_day=60,
+            must_include_places=[pedido],
+            **extra,
+        )
+        return pedido, [pedido, *otros], restricciones
+
+    def test_el_lugar_pedido_entra(self):
+        pedido, candidatos, restricciones = self._mundo()
+
+        itinerario = assemble([], candidatos, restricciones)
+        nombres = [p.place.name for d in itinerario.days for p in d.stops]
+
+        assert "Pedido" in nombres
+
+    def test_los_minutos_del_lugar_ganan_sobre_todo(self):
+        pedido, candidatos, restricciones = self._mundo(
+            place_minutes={},
+            category_minutes={Category.culture: 40},
+        )
+        restricciones = replace(restricciones, place_minutes={pedido.id: 200})
+
+        itinerario = assemble([], candidatos, restricciones)
+        parada = next(p for d in itinerario.days for p in d.stops if p.place.id == pedido.id)
+        minutos = (parada.departure.hour * 60 + parada.departure.minute) - (
+            parada.arrival.hour * 60 + parada.arrival.minute
+        )
+
+        assert minutos == 200
+
+    def test_si_no_cabe_se_reporta_en_vez_de_callarse(self):
+        """Priorizar no es garantizar, y hay que decirlo.
+
+        Dos lugares pedidos a ochenta kilometros uno del otro, un dia y diez
+        kilometros de presupuesto: uno entra de semilla y el otro no cabe de
+        ninguna forma. Un lugar pedido suelto siempre entra —de semilla no
+        cuesta traslado— asi que este es el caso que de verdad falla.
+        """
+        uno = lugar("Pedido uno", 13.70, -89.22, Category.culture, 0.9)
+        otro = lugar("Pedido dos", 14.40, -89.22, Category.culture, 0.9)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            include_meals=False,
+            max_travel_km_per_day=10,
+            must_include_places=[uno, otro],
+        )
+
+        itinerario = assemble([], [uno, otro], restricciones)
+        motivos = [v.constraint for v in itinerario.violations]
+        nombres = [p.place.name for d in itinerario.days for p in d.stops]
+
+        assert "must_include_places" in motivos
+        assert "Pedido uno" in nombres, "el que si cabe tiene que entrar"
+
+
+class TestLaCuentaDeParadas:
+    """La cabecera decia "12 paradas" en un itinerario de nueve lugares.
+
+    Contaba el hotel al salir y al volver, los dos dias: un numero que
+    cualquiera desmiente contando la lista de al lado.
+    """
+
+    def test_el_punto_de_partida_no_es_una_visita(self):
+        casa = lugar("Casa", 13.70, -89.22, Category.lodging)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            start_place=casa,
+            return_to_start=True,
+            include_meals=False,
+        )
+        secuencia = [
+            (casa, None),
+            (lugar("Uno", 13.7005, -89.22, Category.culture), None),
+            (lugar("Dos", 13.7010, -89.22, Category.nature), None),
+        ]
+        dia = schedule_day(1, secuencia, restricciones)
+        itinerario = Itinerary(days=[dia])
+
+        assert itinerario.total_stops == 4, "cuatro lineas en la lista"
+        assert total_visits(itinerario, restricciones) == 2, "dos lugares visitados"
+
+    def test_la_comida_si_cuenta(self):
+        """Uno para ahi de verdad."""
+        casa = lugar("Casa", 13.70, -89.22, Category.lodging)
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, start_place=casa
+        )
+        secuencia = [
+            (casa, None),
+            (lugar("Comedor", 13.7005, -89.22, Category.food), "lunch"),
+        ]
+        itinerario = Itinerary(days=[schedule_day(1, secuencia, restricciones)])
+
+        assert total_visits(itinerario, restricciones) == 1
+
+    def test_sin_restricciones_devuelve_la_cuenta_cruda(self):
+        """El borrador se emite antes de tener a mano las restricciones."""
+        secuencia = [(lugar("Uno", 13.70, -89.22), None)]
+        itinerario = Itinerary(
+            days=[
+                schedule_day(
+                    1, secuencia, Constraints(days=1, center_lat=13.7, center_lon=-89.22)
+                )
+            ]
+        )
+
+        assert total_visits(itinerario, None) == itinerario.total_stops

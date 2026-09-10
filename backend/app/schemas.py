@@ -108,6 +108,10 @@ class ItineraryRequest(BaseModel):
     # claves numericas. Los dias que no aparecen usan `mode`.
     day_modes: dict[str, str] = Field(default_factory=dict)
     include_meals: bool = True
+    # Comidas pedidas con nombre. include_meals dice "meteme comidas donde
+    # quepan"; esto dice "cuento con esta comida", y un dia que no llega a la
+    # franja de una comida pedida tiene que explicarlo.
+    must_include_meals: list[Literal["lunch", "dinner"]] = Field(default_factory=list)
     # Minutos por comida. El tope de cuatro horas no es un caso de uso, es una
     # barrera: un modelo que devuelva 600 no deja un dia largo, deja un dia de
     # una sola parada.
@@ -136,6 +140,15 @@ class ItineraryRequest(BaseModel):
     # volvia a el, y el usuario no habia cambiado nada de eso.
     start_place_id: uuid.UUID | None = None
     return_to_start: bool = False
+
+    # Lugares que el itinerario tiene que incluir, por identificador del
+    # catalogo. Como el punto de partida: viajan por id para que sobrevivan el
+    # ida y vuelta de /revise sin dejar inyectar lugares que no existen.
+    must_include_place_ids: list[uuid.UUID] = Field(default_factory=list)
+    # Minutos en un lugar concreto: "y pasar dos horas ahi".
+    place_minutes: dict[uuid.UUID, Annotated[int, Field(ge=10, le=480)]] = Field(
+        default_factory=dict
+    )
 
     # Con rutas reales el itinerario consume cupo de ORS. Se puede apagar para
     # probar o para ahorrar, y la respuesta dice siempre cual se uso.

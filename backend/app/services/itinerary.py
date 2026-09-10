@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Category
 from app.services.geo import EstimatedTravel, TravelProvider
-from app.services.places import PlaceHit, search_in_area
+from app.services.places import PlaceHit, nombre_legible, search_in_area
 from app.services.places import by_ids as places_by_ids
 
 # Kilometros por dia por defecto segun el modo. Solo se usan cuando un dia va
@@ -396,6 +396,31 @@ class Constraints:
 
     include_meals: bool = True
 
+    # Comidas que la persona pidio con nombre: "voy a cenar los dos dias".
+    #
+    # **Es distinto de include_meals y la diferencia es lo que se dice, no lo
+    # que se hace.** include_meals dice "meteme comidas donde quepan"; esto
+    # dice "cuento con esta comida". Un dia que no llega a la cena con la
+    # primera no tiene nada que explicar; con la segunda, callarse es dejar a
+    # alguien esperando una cena que nadie planifico. El caso real: dos dias
+    # pidiendo cena, el segundo a pie termina a las 15:04 porque se le acaban
+    # los ocho kilometros, y no se decia ni una palabra.
+    must_include_meals: list[str] = field(default_factory=list)
+
+    # Lugares concretos que el itinerario TIENE que incluir: "quiero ir al
+    # Jardin Botanico". Resueltos contra el catalogo por su nombre, igual que
+    # el punto de partida, asi que aca ya son lugares que existen.
+    #
+    # **Es lo mas fuerte que se puede pedir, mas que una categoria.** Exigir
+    # cultura se cumple con cualquier museo; exigir el Jardin Botanico se
+    # cumple con uno solo. La cuenta es del itinerario entero y no de cada
+    # dia: quien nombra un lugar quiere ir una vez.
+    must_include_places: list[PlaceHit] = field(default_factory=list)
+
+    # Minutos en un lugar concreto: "y pasar dos horas ahi". Gana sobre todo
+    # lo demas porque es lo mas especifico que se puede decir.
+    place_minutes: dict[uuid.UUID, int] = field(default_factory=dict)
+
     # Minutos que se pasa uno en cada comida. Ver DEFAULT_MEAL_MINUTES.
     meal_minutes: int = DEFAULT_MEAL_MINUTES
 
@@ -533,6 +558,25 @@ class Itinerary:
     @property
     def total_stops(self) -> int:
         return sum(len(d.stops) for d in self.days)
+
+
+def total_visits(itinerario: Itinerary, constraints: Constraints | None) -> int:
+    """Cuantos lugares se visitan de verdad.
+
+    **El punto de partida no es una visita, y aparece dos veces por dia.** La
+    cabecera decia "12 paradas" en un itinerario donde se visitan nueve
+    lugares: contaba el hotel al salir y al volver, los dos dias. Un numero
+    que cualquiera puede desmentir contando la lista de al lado.
+
+    Las comidas si cuentan: uno para ahi de verdad. Es la misma regla que
+    _visit_count, la que ya usan el tope de paradas y su verificacion.
+    """
+    if constraints is None:
+        return itinerario.total_stops
+    return sum(
+        _visit_count((parada.place for parada in dia.stops), dia.number, constraints)
+        for dia in itinerario.days
+    )
 
 
 # --------------------------------------------------------------------------
@@ -754,12 +798,17 @@ def _fill_cost(
     semilla: PlaceHit,
     medidor: TravelProvider,
     faltantes: frozenset[str] = frozenset(),
+    lugares_pendientes: frozenset[uuid.UUID] = frozenset(),
 ) -> float:
     """Lo que cuesta agregar un candidato: distancia, repeticion y requisitos."""
     repetidas = sum(1 for parada in dia if parada.category == candidato.category)
     coste = medidor.between(semilla, candidato)[0] + repetidas * REPEAT_PENALTY_KM
     if candidato.category in faltantes:
         coste -= REQUIRED_BONUS_KM
+    # Un lugar pedido con nombre pesa el doble que una categoria pendiente:
+    # una categoria la cubre cualquier museo, y esto lo cubre uno solo.
+    if candidato.id in lugares_pendientes:
+        coste -= 2 * REQUIRED_BONUS_KM
     return coste
 
 
@@ -889,12 +938,29 @@ def build_days(
     if constraints.start_place is not None:
         cubiertas.add(constraints.start_place.category)
 
+    # Los lugares pedidos con nombre. Se sacan de la lista general y se van
+    # colocando de semilla, uno por dia: es la forma mas barata de
+    # garantizarlos, porque el resto del dia se llena alrededor.
+    #
+    # Se buscan por identificador entre los candidatos en vez de usar el
+    # objeto que traen las restricciones: los dos existen, pero solo el del
+    # catalogo de candidatos trae el atractivo y la calidad con los que el
+    # motor puntua.
+    por_id = {h.id: h for h in admisibles}
+    pedidos = [
+        por_id.get(lugar.id, lugar)
+        for lugar in constraints.must_include_places
+        if constraints.start_place is None or lugar.id != constraints.start_place.id
+    ]
+    pendientes = [lugar for lugar in pedidos if lugar is not None]
+    disponibles = [h for h in disponibles if h.id not in {p.id for p in pendientes}]
+
     for numero in range(1, constraints.days + 1):
         medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
         anclado = constraints.anchors_day(numero)
         ancla = constraints.start_place if anclado else None
 
-        if not disponibles and ancla is None:
+        if not disponibles and not pendientes and ancla is None:
             break
 
         if ancla is not None:
@@ -904,6 +970,15 @@ def build_days(
             dia = [ancla]
             # Puede estar en el catalogo de destinos: no se elige dos veces.
             disponibles = [h for h in disponibles if h.id != ancla.id]
+            # Un lugar pedido con nombre entra igual el mismo dia: el ancla
+            # es de donde se sale, no lo que se va a ver.
+            if pendientes:
+                dia.append(pendientes.pop(0))
+        elif pendientes:
+            # Un lugar pedido por su nombre manda sobre cualquier otro
+            # criterio de semilla: es lo mas concreto que alguien puede pedir.
+            semilla = pendientes.pop(0)
+            dia = [semilla]
         else:
             # La semilla cubre un requisito pendiente si hay con que: es la
             # forma mas barata de garantizarlo, porque el resto del dia se
@@ -957,9 +1032,13 @@ def build_days(
             reserva_km = _meal_km_reserve(
                 dia, comidas or [], constraints, medidor, esperadas, numero
             )
+            # Los lugares pedidos con nombre que aun no entraron compiten
+            # tambien por el sitio, con su bono: dos lugares pedidos cerca uno
+            # del otro tienen que poder caer el mismo dia en vez de ocupar dos.
+            ids_pendientes = frozenset(p.id for p in pendientes)
             cercanos = sorted(
-                (h for h in disponibles if h.category != Category.food.value),
-                key=lambda h: _fill_cost(dia, h, semilla, medidor, faltantes),
+                (h for h in [*pendientes, *disponibles] if h.category != Category.food.value),
+                key=lambda h: _fill_cost(dia, h, semilla, medidor, faltantes, ids_pendientes),
             )
             agregado = False
             for candidato in cercanos[:15]:
@@ -977,7 +1056,10 @@ def build_days(
                 ):
                     continue
                 dia.append(candidato)
-                disponibles.remove(candidato)
+                if candidato.id in ids_pendientes:
+                    pendientes = [p for p in pendientes if p.id != candidato.id]
+                else:
+                    disponibles.remove(candidato)
                 agregado = True
                 break
             if not agregado:
@@ -1024,9 +1106,9 @@ def _sequence_km(
 def _stop_minutes(lugar: PlaceHit, comida: str | None, constraints: Constraints) -> int:
     """Cuanto dura la parada.
 
-    Cuatro escalones, del mas especifico al mas general: la etiqueta de
-    comida, lo que el usuario pidio para esa categoria, la subcategoria del
-    lugar, y la tabla por categoria.
+    Cinco escalones, del mas especifico al mas general: la etiqueta de
+    comida, los minutos que se pidieron para ESE lugar, lo que se pidio para
+    su categoria, la subcategoria del lugar, y la tabla por categoria.
 
     La etiqueta va primero y no la categoria del lugar: lo que hace larga a
     una parada es que uno se siente a comer, y eso lo dice la etiqueta que
@@ -1039,6 +1121,8 @@ def _stop_minutes(lugar: PlaceHit, comida: str | None, constraints: Constraints)
     """
     if comida is not None:
         return constraints.meal_minutes
+    if lugar.id in constraints.place_minutes:
+        return constraints.place_minutes[lugar.id]
     categoria = Category(lugar.category)
     if categoria in constraints.category_minutes:
         return constraints.category_minutes[categoria]
@@ -1323,6 +1407,12 @@ ETIQUETA_CATEGORIA = {
 }
 
 
+def _missing_places(itinerario: Itinerary, constraints: Constraints) -> list[PlaceHit]:
+    """Los lugares pedidos con nombre que no llegaron al itinerario."""
+    visitados = {parada.place.id for dia in itinerario.days for parada in dia.stops}
+    return [lugar for lugar in constraints.must_include_places if lugar.id not in visitados]
+
+
 def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]:
     """Comprueba el itinerario terminado contra cada restriccion.
 
@@ -1430,6 +1520,19 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
                 )
             )
 
+    # Un lugar pedido por su nombre que no aparece. Mismo criterio que las
+    # categorias: el motor lo prioriza fuerte al armar, y priorizar no es
+    # garantizar —el lugar puede quedar fuera del presupuesto de traslado de
+    # cualquier dia—, asi que se dice.
+    for lugar in _missing_places(itinerario, constraints):
+        violaciones.append(
+            Violation(
+                "must_include_places",
+                None,
+                f"pediste ir a {nombre_legible(lugar.name)} y no entró en ningún día",
+            )
+        )
+
     return violaciones
 
 
@@ -1453,27 +1556,54 @@ def advise(
     if not constraints.include_meals:
         return consejos
 
+    pedidas = set(constraints.must_include_meals)
+
     for dia in itinerario.days:
         medidor = _travel_or_estimate(travel, constraints.mode_for(dia.number))
         if not dia.stops or not dia.start or not dia.end:
             continue
 
-        cruza_almuerzo = dia.start <= LUNCH_WINDOW[1] and dia.end >= LUNCH_WINDOW[0]
-        if cruza_almuerzo and not any(p.meal == "lunch" for p in dia.stops):
-            consejos.append(
-                _meal_advice(dia, constraints, comidas, medidor, "lunch", LUNCH_WINDOW)
-            )
+        for tipo, ventana in MEAL_WINDOWS:
+            if any(p.meal == tipo for p in dia.stops):
+                continue
 
-        # La cena tambien: el comprobador de la evaluacion la reclamaba y
-        # advise() no decia nada, asi que un dia que llegaba a la noche sin
-        # cenar se quedaba sin explicacion.
-        llega_a_la_cena = dia.end >= DINNER_WINDOW[0]
-        if llega_a_la_cena and not any(p.meal == "dinner" for p in dia.stops):
-            consejos.append(
-                _meal_advice(dia, constraints, comidas, medidor, "dinner", DINNER_WINDOW)
-            )
+            # El dia llega a la franja si empieza antes de que cierre y
+            # termina despues de que abre.
+            llega = dia.start <= ventana[1] and dia.end >= ventana[0]
+            if llega:
+                consejos.append(
+                    _meal_advice(dia, constraints, comidas, medidor, tipo, ventana)
+                )
+                continue
+
+            # **Si la pidio con nombre, el silencio no vale.** Un dia que no
+            # llega a la franja no tiene nada que explicar cuando las comidas
+            # son "donde quepan"; cuando alguien dijo que iba a cenar, lo que
+            # hay que decirle es que ese dia no da, y por que.
+            if tipo in pedidas:
+                consejos.append(_meal_out_of_reach(dia, tipo, ventana))
 
     return consejos
+
+
+def _meal_out_of_reach(dia: Day, tipo: str, ventana: tuple[time, time]) -> Advice:
+    """El dia no llega a la franja de una comida que se pidio con nombre."""
+    nombre, kind = MEAL_LABELS[tipo]
+    if dia.end is not None and dia.end < ventana[0]:
+        espera = _minutes_between(dia.end, ventana[0])
+        detalle = (
+            f"Pediste {nombre} y este día no llega: termina a las "
+            f"{dia.end:%H:%M} y la {nombre} empieza a las {ventana[0]:%H:%M}, "
+            f"o sea {espera // 60} h {espera % 60:02d} min de espera. Alargá el "
+            f"día o subí el límite de traslado si querés que llegue"
+        )
+    else:
+        detalle = (
+            f"Pediste {nombre} y este día no llega: empieza a las "
+            f"{dia.start:%H:%M}, después de que cierra la franja de "
+            f"{nombre} a las {ventana[1]:%H:%M}"
+        )
+    return Advice(kind, dia.number, detalle)
 
 
 MEAL_LABELS = {"lunch": ("almuerzo", "bring_lunch"), "dinner": ("cena", "bring_dinner")}

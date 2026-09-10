@@ -60,6 +60,11 @@ def _to_constraints(peticion: ItineraryRequest, db: Session) -> motor.Constraint
         must_include_categories=list(peticion.must_include_categories),
         day_modes={int(numero): modo for numero, modo in peticion.day_modes.items()},
         include_meals=peticion.include_meals,
+        must_include_meals=list(peticion.must_include_meals),
+        must_include_places=[
+            hit for hit in places_by_ids(db, peticion.must_include_place_ids).values()
+        ],
+        place_minutes=dict(peticion.place_minutes),
         meal_minutes=peticion.meal_minutes,
         category_minutes=dict(peticion.category_minutes),
         max_stops_per_day=peticion.max_stops_per_day,
@@ -171,7 +176,7 @@ def _to_out(
         ],
         advice=[AdviceOut(kind=c.kind, day=c.day, detail=c.detail) for c in itinerario.advice],
         satisfies_all_constraints=itinerario.satisfies_all_constraints,
-        total_stops=itinerario.total_stops,
+        total_stops=motor.total_visits(itinerario, constraints),
         unused_candidates=itinerario.unused_candidates,
         travel=_to_travel_source(stats),
     )
@@ -188,7 +193,7 @@ def build(peticion: ItineraryRequest, db: Session = Depends(get_db)) -> Itinerar
     restricciones = _to_constraints(peticion, db)
 
     if not peticion.real_routes:
-        return _to_out(motor.plan(db, restricciones), None)
+        return _to_out(motor.plan(db, restricciones), None, None, restricciones)
 
     itinerario, stats = motor.plan_with_routing(db, restricciones)
-    return _to_out(itinerario, stats)
+    return _to_out(itinerario, stats, None, restricciones)

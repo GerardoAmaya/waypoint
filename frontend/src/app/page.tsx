@@ -6,7 +6,7 @@ import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faRotateLeft } from "@fortawesome/free-solid-svg-icons";
 
-import Compositor, { type Fase } from "@/components/Compositor";
+import Compositor, { PETICION_INICIAL, type Fase } from "@/components/Compositor";
 import Fondo from "@/components/Fondo";
 import Leyenda from "@/components/Leyenda";
 import Panel from "@/components/Panel";
@@ -26,6 +26,13 @@ export default function Home() {
   const [field, setField] = useState<[number, number][]>([]);
   const [fondo, setFondo] = useState<FondoId>("mapa");
   const [fase, setFase] = useState<Fase>("quieto");
+  /*
+    La peticion escrita vive aca y no dentro del compositor porque el
+    compositor se desmonta cuando llega el plan: ahi se perdia lo que la
+    persona habia escrito, y al volver se encontraba el ejemplo. Ver Props en
+    Compositor.
+  */
+  const [peticion, setPeticion] = useState(PETICION_INICIAL);
   const [interpretacion, setInterpretacion] = useState<Interpretation | null>(null);
   const [itinerario, setItinerario] = useState<Itinerary | null>(null);
   const [diaActivo, setDiaActivo] = useState<number | null>(null);
@@ -183,6 +190,8 @@ export default function Home() {
                 <Compositor
                   fase={fase}
                   error={error}
+                  texto={peticion}
+                  onTextoChange={setPeticion}
                   onSubmit={(m) => void armar(m)}
                 />
               </div>

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import time
 
@@ -32,6 +33,7 @@ from app.schemas import ItineraryRequest
 from app.services.geocode import (
     ResolvedArea,
     resolve_area,
+    resolve_must_visit,
     resolve_start_place,
     zone_names,
 )
@@ -81,6 +83,11 @@ los museos" o "prefiero naturaleza" son preferencias y van en \
 preferred_categories. La diferencia es que un requisito se cumple o se \
 incumple, y una preferencia solo sube las probabilidades.
 - "include_meals": booleano. Por defecto true.
+- "must_include_meals": lista con "lunch" y/o "dinner". Van SOLO las comidas \
+que nombra: "voy a cenar los dos dias" es ["dinner"], "almuerzo y cena" es \
+["lunch", "dinner"]. Si solo dice que come, o no habla de comidas, dejala \
+vacia: la diferencia es que una comida nombrada que el itinerario no pueda \
+darle se le explica, y una que no nombro, no.
 - "meal_minutes": entero de 20 a 240. Cuanto dura cada comida, en minutos. \
 Por defecto 90. "almuerzo tranquilo de dos horas" es 120; "comemos algo \
 rapido" o "no quiero perder tiempo comiendo" es cerca de 40. Solo si lo dice.
@@ -96,6 +103,12 @@ que pidio, y un numero inventado se lo acortaria.
 - "start_place": string. El lugar concreto de donde arranca el dia, tal como lo \
 nombro: "Pizza Hut La Gran Via", "el Hotel Barcelo", "mi casa en Mejicanos". Es \
 de donde SALE, no lo que quiere visitar. Si no dice de donde sale, null.
+- "must_visit": lista de objetos {"name": string, "minutes": entero o null}. \
+Los lugares CONCRETOS que dice que quiere visitar, con el nombre tal como lo \
+dijo: "quiero ir al Jardin Botanico y pasar dos horas ahi" es [{"name": \
+"Jardin Botanico", "minutes": 120}]. Van aca los que nombra; una zona ("por el \
+occidente") va en "area", y el sitio de donde SALE va en "start_place". Si no \
+nombra ningun lugar que quiera visitar, lista vacia.
 - "return_to_start": booleano. Si vuelve al punto de partida al terminar. \
 "regreso en la noche", "y de vuelta al hotel", "vuelvo a dormir ahi" son true. \
 Por defecto false.
@@ -165,6 +178,8 @@ class Interpretation:
     # es una parada del catalogo.
     start_place: PlaceHit | None = None
     return_to_start: bool = False
+    # Lugares pedidos con nombre, ya resueltos contra el catalogo.
+    must_include_places: list[PlaceHit] = field(default_factory=list)
     unmapped: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     error: str | None = None
@@ -295,6 +310,24 @@ def _category_minutes(valores, notes: list[str]) -> dict[Category, int]:
     return salida
 
 
+def _meals(valores, notes: list[str]) -> list[str]:
+    """Limpia las comidas pedidas con nombre.
+
+    Solo almuerzo y cena: son las dos franjas que el motor sabe colocar. Un
+    "breakfast" se descarta con aviso en vez de aceptarse y no cumplirse
+    nunca, que es la peor de las dos respuestas.
+    """
+    salida: list[str] = []
+    for valor in _strings(valores):
+        clave = valor.strip().lower()
+        if clave in ("lunch", "dinner"):
+            if clave not in salida:
+                salida.append(clave)
+        else:
+            notes.append(f"no reconocí {valor!r} como una comida; solo almuerzo y cena")
+    return salida
+
+
 def _strings(valores) -> list[str]:
     if not isinstance(valores, list):
         return []
@@ -353,6 +386,42 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
 
     notes: list[str] = []
     unmapped = _strings(datos.get("unmapped"))
+
+    pedidos: list[PlaceHit] = []
+    minutos_por_lugar: dict[uuid.UUID, int] = {}
+    for entrada in datos.get("must_visit") or []:
+        if isinstance(entrada, str):
+            entrada = {"name": entrada}
+        if not isinstance(entrada, dict):
+            continue
+        nombre = str(entrada.get("name") or "").strip()
+        if not nombre:
+            continue
+        hallado = resolve_must_visit(db, nombre)
+        if hallado is None:
+            # **No se sustituye por el parecido.** Prometer el lugar que
+            # pidieron y llevar a otro es peor que admitir que no se encontro,
+            # que es la misma regla del punto de partida. Aca no se corta la
+            # peticion entera: el resto del viaje sigue siendo valido y esto
+            # se cuenta como algo que no se supo usar.
+            unmapped.append(nombre)
+            continue
+        if not any(p.id == hallado.id for p in pedidos):
+            pedidos.append(hallado)
+        crudos = entrada.get("minutes")
+        if crudos is not None:
+            try:
+                minutos = int(crudos)
+            except (TypeError, ValueError):
+                notes.append(f"no entendí {crudos!r} como minutos en {nombre}")
+            else:
+                if 10 <= minutos <= 480:
+                    minutos_por_lugar[hallado.id] = minutos
+                else:
+                    notes.append(
+                        f"{minutos} minutos en {nombre} está fuera de lo razonable; "
+                        "se usó la duración normal"
+                    )
 
     texto_partida = datos.get("start_place")
     texto_partida = texto_partida.strip() if isinstance(texto_partida, str) else None
@@ -479,6 +548,7 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             avoided_categories=evitadas,
             must_include_categories=exigidas,
             include_meals=bool(datos.get("include_meals", True)),
+            must_include_meals=_meals(datos.get("must_include_meals"), notes),
             meal_minutes=_clamp(datos.get("meal_minutes"), 20, 240, 90, notes, "meal_minutes"),
             # Sin numero se deja en None y manda el reloj. _clamp necesita un
             # valor por defecto, asi que la ausencia se resuelve antes.
@@ -492,6 +562,8 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             # Van tambien en la peticion y no solo en la interpretacion: es lo
             # que el cliente devuelve al pedir una revision, y sin ellos el dia
             # rehecho pierde su ancla.
+            must_include_place_ids=[lugar.id for lugar in pedidos],
+            place_minutes=dict(minutos_por_lugar),
             start_place_id=partida.id if partida is not None else None,
             return_to_start=bool(datos.get("return_to_start", False)),
         )
@@ -512,6 +584,7 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
         request=peticion,
         area=area,
         area_text=texto_area,
+        must_include_places=pedidos,
         start_place=partida,
         return_to_start=bool(datos.get("return_to_start", False)),
         unmapped=unmapped,
@@ -543,6 +616,8 @@ bajarlo bastante; "no me importa manejar" es subirlo.
 "attraction", "lodging", o null.
 - "avoided_categories": la misma lista, o null.
 - "include_meals": booleano o null.
+- "must_include_meals": lista con "lunch" y/o "dinner", o null. Las comidas \
+que nombra para ese dia.
 - "meal_minutes": entero de 20 a 240, o null. Minutos por comida. "dame mas \
 tiempo para almorzar" es subirlo.
 - "category_minutes": objeto de categoria a minutos, o null. "mas rato en el \
@@ -648,6 +723,8 @@ def interpret_revision(frase: str, stops: list[str], client=None) -> Revision:
         )
     if isinstance(datos.get("include_meals"), bool):
         cambios["include_meals"] = datos["include_meals"]
+    if datos.get("must_include_meals") is not None:
+        cambios["must_include_meals"] = _meals(datos["must_include_meals"], notes)
     if datos.get("meal_minutes") is not None:
         cambios["meal_minutes"] = _clamp(
             datos["meal_minutes"], 20, 240, 90, notes, "meal_minutes"
