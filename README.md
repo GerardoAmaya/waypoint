@@ -207,6 +207,125 @@ La métrica vive en `scripts/evaluate.py` y no en un cuaderno: la penalización 
 una constante del motor, y una constante sin métrica que la vigile es una
 constante que alguien baja sin darse cuenta.
 
+### El largo del día lo decide la hora que pediste, no un contador
+
+`max_stops_per_day` traía un 5 por defecto, y ese 5 decidía cuándo terminaba el
+día. Con una petición de 10 de la mañana a 11 de la noche, el itinerario
+cerraba a las 15:52 con siete horas sin usar: `latest_end` solo servía de techo
+para recortar, nunca de objetivo para llenar. La hora de la cena, que empieza a
+las 18:00, era inalcanzable por construcción — se pidiera o no.
+
+Ahora el tope solo es un límite si se pidió: sin número, mandan el reloj y los
+kilómetros, que son los límites que sí vienen del usuario, con una barrera
+interna de 12 paradas para que "sin número" no signifique "sin límite".
+
+Llenar por reloj destapó dos cosas que había que medir. La primera, que el día
+se gastaba el presupuesto entero en destinos y luego el restaurante no cabía:
+los días con "llevá comida" pasaron del 31% al 68%. La reserva de kilómetros
+para la comida tuvo tres versiones, las tres medidas:
+
+| Cómo se reserva | Paradas | Llevá comida |
+|---|---|---|
+| Fracción fija del presupuesto (0,09) | 299 | 22/62 |
+| Distancia al comedor más cercano × 2 | 297 | 24/62 |
+| **Coste real de meter la comida** | **300** | **21/62** |
+| Lo mismo, sobre la ruta ya ordenada | 298 | 23/62 |
+
+La segunda versión parecía la más principiada y era la peor, y el diagnóstico
+dice por qué: un día se quedaba sin almuerzo **con el restaurante a 230
+metros**, porque meterlo costaba 3,2 km igual. El coste no lo manda la cercanía
+sino la hora — el comedor tiene que ir donde el reloj lo permite, no donde
+queda cerca — y eso solo lo sabe la inserción.
+
+La segunda cosa que destapó fue la variedad. `REPEAT_PENALTY_KM` estaba medido
+para días de cinco paradas, donde casi no cabe una racha de tres; con días de
+ocho, las rachas subieron del 21% al 38% de los días. Vuelto a barrer, la
+rodilla está en 24:
+
+| Penalización | Paradas | Rachas de 3+ |
+|---|---|---|
+| 12 | 317 | 38% |
+| 18 | 309 | 33% |
+| **24** | **306** | **31%** |
+| 30 | 305 | 31% |
+| 40 | 305 | 31% |
+
+**El costo honesto de todo esto está en una fila que empeora.** "Días con una
+racha de 3+" crece solo con el largo del día, así que la medida buena es la
+repetición normalizada: qué proporción de pasos consecutivos repiten categoría.
+Es 29% con días llenos contra 24% con días de cinco paradas. No es solo un
+artefacto del largo: cuando se acaba la variedad cercana, el día sigue metiendo
+lo que queda, que suele ser la categoría dominante de la zona.
+
+### Cuánto dura una visita: seis números no alcanzaban
+
+Las duraciones eran una tabla por categoría, seis números para todo el
+catálogo. Y "cultura" son los 33 museos del país **y también** los 86
+monumentos: el Museo Nacional de Antropología y una estatua en una rotonda
+ocupaban los mismos 75 minutos. Subir la categoría entera para que el museo
+durara dos horas se las daba también a la estatua.
+
+La subcategoría ya se usaba para el atractivo, por el mismo motivo — un
+redondel no puntúa igual que un volcán — y ahora también para la duración: un
+museo son 120 minutos, un monumento 20, un volcán 180, un jardín 120. Lo que no
+está en la tabla cae en la de categoría.
+
+Visitas más largas mejoran la variedad y empeoran las comidas, las dos cosas
+medidas: las rachas bajan del 31% al 24% de los días y los días de una sola
+categoría de 3 a 1, porque el día visita menos sitios y no llega a raspar el
+fondo del catálogo; y los "llevá comida" suben del 23% al 34%, porque visita
+menos sitios **pero mejores**, y los mejores están más dispersos.
+
+La duración se resuelve en cinco escalones, del más específico al más general:
+la etiqueta de comida, los minutos pedidos para ESE lugar, los pedidos para su
+categoría, la subcategoría, y la tabla. La etiqueta va primero y no la
+categoría del lugar: si mandara la categoría, quien sale de una pupusería y
+vuelve a ella cerraría el día con una segunda cena de hora y media.
+
+### Nada fuera de hora: la luz y el cierre
+
+Mientras los días terminaban a las cuatro de la tarde no había forma de llegar
+a este problema. Con días que llegan a la noche aparecieron cinco de 130
+paradas al aire libre empezando a oscuras — entre ellas un cerro a las 19:22 — y
+dos de 121 bajo techo — una iglesia a las 19:56.
+
+Son dos reglas con dos motivos distintos. Al aire libre manda la luz, y eso
+puede ser una constante: en El Salvador el sol se pone entre las 17:50 y las
+18:30 durante todo el año, porque está a trece grados de latitud. Bajo techo
+manda el horario de apertura, que **no existe en el dato**: de los 366 lugares
+bajo techo del catálogo, once traen `opening_hours` en OpenStreetMap, un 3%. Con
+eso no se decide nada, así que se asume una hora de cierre para todos en vez de
+fingir que el dato está. Los comedores no entran en ninguna de las dos: un
+restaurante a las ocho de la noche es exactamente lo que uno busca a esa hora.
+
+Mirarlo solo al llenar el día no bastaba — quedaban cuatro de cinco — porque
+entre el llenado y el resultado el orden cambia dos veces: `_pinned_order`
+optimiza el recorrido y la comida se intercala. Así que también se quitan
+cuando el orden ya está decidido, y **por su nombre y no por su costo**: el
+recorte de kilómetros elige la parada que más traslado suma, que casi nunca es
+la que cae tarde.
+
+### Lo que se pide con nombre se cumple o se explica
+
+`include_meals` es un booleano y significa "meteme comidas donde quepan". No
+sirve para "voy a cenar los dos días", y la diferencia no está en lo que el
+motor hace sino en lo que dice: un día que no llega a la cena no tiene nada que
+explicar con el primero, y con el segundo callarse es dejar a alguien esperando
+una cena que nadie planificó. El caso real eran dos días pidiendo cena, con el
+segundo a pie terminando a las 15:04 porque se le acababan los ocho kilómetros,
+y ni una palabra al respecto.
+
+Lo mismo un paso más allá: se puede pedir un lugar concreto — "quiero ir al
+Jardín Botánico y pasar dos horas ahí" — y eso es más fuerte que pedir una
+categoría, porque exigir cultura se cumple con cualquier museo y esto se cumple
+con uno solo. Pesa el doble que una categoría pendiente al llenar el día, y si
+no cabe en ninguno, `validate()` lo reporta: priorizar no es garantizar.
+
+Si el nombre no está en el catálogo **se dice en vez de sustituirlo**, que es la
+misma regla del punto de partida. Probado con el Museo del Añil de Suchitoto,
+que OpenStreetMap no tiene: la pantalla responde "no supe cómo usar esto" en
+lugar de llevar a otro museo parecido.
+
 ### Restricciones duras que el motor hace cumplir
 
 Las categorías que el usuario pide evitar se descartan en el motor, no se
@@ -221,7 +340,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Qué | Cuánto |
 |---|---|
 | Cumplimiento de límites duros | 96% (25 de 26 casos) |
-| Lugares inventados | 0 de 285 paradas generadas |
+| Lugares inventados | 0 de 298 paradas generadas |
 | Factor de desvío medido | 1.45, mediana sobre 812 pares |
 | Velocidad efectiva en carro | 35 a 62 km/h según el tramo |
 | Pares sin ruta en ORS | 7% (58 de 870) |
@@ -230,7 +349,10 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Lugares en el catálogo | 5.652 activos de 6.296 bajados |
 | Descarte del filtro de calidad | 5.9% (370 registros) |
 | Duplicados fusionados | 4.4% (274 registros) |
-| Tests | 315 |
+| Días con recomendación de llevar comida | 34% (21 de 62) |
+| Repetición de categoría por paso | 29% |
+| Paradas fuera de hora (luz o cierre) | 0 |
+| Tests | 536 backend, 24 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -1047,8 +1169,8 @@ el tamaño de diseño y el mínimo el que cabe.
 | Iconos | Font Awesome, paquetes SVG con tree-shaking |
 | Satélite | Esri World Imagery, sin llave |
 | Fotos de zona | Wikimedia Commons, resueltas una vez |
-| Tests | pytest, 315 casos |
-| CI | GitHub Actions: migraciones en ambos sentidos, y tipado, lint y build del frontend |
+| Tests | pytest en el backend (536), Vitest y Testing Library en el frontend (24) |
+| CI | GitHub Actions: migraciones en ambos sentidos, y tipado, lint, tests y build del frontend |
 
 Sin Celery: la carga del catálogo es un guion que corre una vez y la generación
 de itinerarios es petición-respuesta. Sin embeddings: la selección de lugares se
@@ -1065,6 +1187,8 @@ imperativo— y quedó como dependencia muerta.
 ## Guiones
 
 ```bash
+make test            # los 536 del backend
+npm test             # los 24 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante
 make ors-calibrate   # mide desvío y velocidad contra el catálogo
 make ors-warm        # precalienta la cache por zona (no gasta sin --apply)
@@ -1077,11 +1201,31 @@ guion que consuma cupo por equivocación sale caro.
 
 ## Lo que falta
 
-Fase 7: evaluación automática del cumplimiento de restricciones. Fase 8:
-despliegue y límite por IP.
-
-Del frontend queda una cosa medida y no resuelta: las familias tipográficas se
-piden con `<link>` a Google Fonts, lo que mete un tercero en el camino crítico
-de la primera pintura. `next/font` lo arreglaría autohospedándolas, pero las
-descarga al compilar y eso ata el build a que `fonts.googleapis.com` esté
+**Las fuentes vienen de un tercero en el camino crítico.** Las familias
+tipográficas se piden con `<link>` a Google Fonts, así que la primera pintura
+depende de un dominio ajeno. `next/font` lo arreglaría autohospedándolas, pero
+las descarga al compilar y eso ata el build a que `fonts.googleapis.com` esté
 alcanzable. La salida es versionar los `.woff2` en el repo.
+
+**El botón atrás del navegador no vuelve del itinerario.** La aplicación no
+toca la URL, así que atrás saca del sitio. Que devuelva al estado vacío es
+meter una entrada en el historial al enviar y escuchar `popstate`; arregla algo
+que la gente ya trae aprendido del móvil. La petición escrita sí sobrevive a
+"Empezar de nuevo", que era el caso más molesto.
+
+**El itinerario no se puede compartir por enlace.** Se copia como texto y nada
+más. Sin cuentas, la URL tendría que llevar el estado, y el estado son
+identificadores del catálogo: se puede, pero hay que decidir qué pasa cuando un
+lugar desaparece del catálogo entre que se comparte y se abre.
+
+**El costo por itinerario en tokens no está medido.** Sí lo está el de rutas.
+
+**La cobertura de horarios de apertura hace imposible el dato fino.** Once de
+366 lugares bajo techo traen `opening_hours`. Mientras siga así, la hora de
+cierre es una suposición uniforme y un museo que cierra a la una queda igual
+que uno que cierra a las cinco.
+
+**Los tests de frontend cubren cuatro componentes, no el mapa.** Leaflet toca
+`window` al importarse y mide elementos que en jsdom no tienen tamaño; probarlo
+ahí sería probar un doble. El mapa se verifica en un navegador de verdad, a
+mano.

@@ -620,30 +620,29 @@ class TestReservaDeCupos:
 
         assert len(dias[0]) == 4, "un cupo queda para el almuerzo"
 
-    def test_un_dia_largo_reserva_para_las_dos_comidas(self):
-        """Con reloj de sobra, lo que decide el cupo es la reserva.
-
-        La hora de cierre va holgada y las paradas son cortas a proposito:
-        desde que el dia se llena por horario hay dos limites, y este test
-        mide el de la reserva. Con paradas de hora y media, ocho no caben ni
-        en un dia de quince horas y el que cortaria seria el reloj.
-        """
-        candidatos = [
-            lugar(f"P{i}", 13.700 + i * 0.004, -89.220, Category.viewpoint) for i in range(14)
-        ]
-        restricciones = Constraints(
+    def _con_tope(self, tope, fin=time(23, 0)):
+        return Constraints(
             days=1,
             center_lat=13.70,
             center_lon=-89.22,
-            max_stops_per_day=10,
-            latest_end=time(23, 59),
+            max_stops_per_day=tope,
+            latest_end=fin,
             include_meals=True,
-            max_travel_km_per_day=120,
         )
 
-        dias = build_days(candidatos, restricciones, meal_options=4)
+    def test_un_dia_largo_reserva_para_las_dos_comidas(self):
+        """Diez visitas de hora y medida llegan de sobra a la cena."""
+        assert _meals_that_fit(self._con_tope(10), 90) == 2
 
-        assert len(dias[0]) == 8, "dos cupos quedan para almuerzo y cena"
+    def test_con_visitas_cortas_el_mismo_tope_no_llega(self):
+        """La proyeccion depende de cuanto duran las visitas, no solo de
+        cuantas son.
+
+        Con un 90 fijo para todo, diez miradores de media hora "llegaban" a
+        la cena y se les reservaba un cupo que nunca se llenaba. Diez paradas
+        de treinta minutos mas su traslado terminan a las cuatro de la tarde.
+        """
+        assert _meals_that_fit(self._con_tope(10), 30) == 1
 
     def test_sin_tiempo_hasta_la_cena_no_se_reserva_para_ella(self):
         """Un dia largo pero que cierra temprano tampoco llega a cenar.
@@ -1989,17 +1988,21 @@ class TestElDiaSeLlenaHastaSuHora:
         assert "dinner" in [c for _, c in secuencia if c]
 
 
-class TestNadaAlAireLibreDeNoche:
-    """Un mirador a las siete de la tarde es una cuesta a oscuras.
+class TestNadaFueraDeHora:
+    """Un mirador a las siete de la tarde es una cuesta a oscuras, y un museo
+    a esa hora esta cerrado.
 
-    Mientras los dias terminaban a las cuatro no se podia llegar a esto. Al
-    llenarlos por horario aparecieron, entre ellas un cerro a las 19:22.
+    Mientras los dias terminaban a las cuatro no se podia llegar a ninguna de
+    las dos. Al llenarlos por horario aparecieron: un cerro a las 19:22 y una
+    iglesia a las 19:56.
     """
 
     def test_detecta_la_parada_que_cae_de_noche(self):
+        """La primera parada es un comedor a proposito: es lo unico que no
+        tiene hora, asi que la que sobra es el mirador y no ella."""
         mirador = lugar("Mirador", 13.7005, -89.22, Category.viewpoint)
         secuencia = [
-            (lugar("Museo", 13.70, -89.22, Category.culture), None),
+            (lugar("Comedor", 13.70, -89.22, Category.food), "dinner"),
             (mirador, None),
         ]
         restricciones = Constraints(
@@ -2008,14 +2011,32 @@ class TestNadaAlAireLibreDeNoche:
 
         assert _outdoor_after_dusk(secuencia, restricciones, EstimatedTravel()) is mirador
 
-    def test_un_museo_a_esa_hora_no_es_asunto_suyo(self):
-        """Eso es horario de apertura, que el catalogo no tiene fiable."""
+    def test_lo_de_bajo_techo_tambien_cierra(self):
+        """Con otra hora y por otro motivo: la luz no, el horario si.
+
+        Once de los 366 lugares bajo techo traen horario en OpenStreetMap, un
+        3%, asi que se asume una hora de cierre para todos en vez de fingir
+        que el dato existe.
+        """
+        museo = lugar("Museo", 13.7005, -89.22, Category.culture)
         secuencia = [
-            (lugar("Museo", 13.70, -89.22, Category.culture), None),
-            (lugar("Otro museo", 13.7005, -89.22, Category.culture), None),
+            (lugar("Comedor", 13.70, -89.22, Category.food), "dinner"),
+            (museo, None),
         ]
         restricciones = Constraints(
-            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(18, 0)
+            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(18, 30)
+        )
+
+        assert _outdoor_after_dusk(secuencia, restricciones, EstimatedTravel()) is museo
+
+    def test_un_comedor_de_noche_es_justo_lo_que_se_busca(self):
+        """La regla no puede alcanzar a la cena."""
+        secuencia = [
+            (lugar("Comedor", 13.70, -89.22, Category.food), "dinner"),
+            (lugar("Otro comedor", 13.7005, -89.22, Category.food), None),
+        ]
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, earliest_start=time(20, 0)
         )
 
         assert _outdoor_after_dusk(secuencia, restricciones, EstimatedTravel()) is None

@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check dump restore
+.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
 
 up:
 	docker compose up -d --build
@@ -66,9 +66,12 @@ web:
 web-build:
 	cd frontend && npm run build
 
-# Las mismas tres comprobaciones que corre CI sobre el frontend.
+web-test:
+	cd frontend && npm test
+
+# Las mismas comprobaciones que corre CI sobre el frontend, en el mismo orden.
 web-check:
-	cd frontend && npm run typecheck && npm run lint && npm run build
+	cd frontend && npm run typecheck && npm run lint && npm test && npm run build
 
 # --------------------------------------------------------------------------
 # Despliegue. Ver DEPLOY.md.

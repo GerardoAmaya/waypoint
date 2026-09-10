@@ -195,16 +195,42 @@ DUSK = time(18, 15)
 # Lo que no tiene sentido visitar sin luz.
 OUTDOOR_CATEGORIES = {Category.nature.value, Category.viewpoint.value}
 
+# A partir de aca lo de bajo techo ya cerro.
+#
+# **Es una heuristica y no un horario, porque el horario no existe.** De los
+# 366 lugares bajo techo del catalogo, once traen `opening_hours` en
+# OpenStreetMap: un 3%. Con eso no se puede decidir nada, y fingir que si
+# seria peor que asumir una hora de cierre razonable para todos.
+#
+# Aparecio al llenar los dias por reloj, igual que lo de la luz: mientras
+# terminaban a las cuatro de la tarde no habia forma de llegar. Con dias que
+# llegan a la noche salieron dos de 121, entre ellas una iglesia a las 19:56.
+#
+# Los comedores no entran en la regla: un restaurante a las ocho de la noche
+# es exactamente lo que uno busca a esa hora.
+INDOOR_CLOSES = time(18, 0)
+INDOOR_CATEGORIES = {Category.culture.value, Category.attraction.value}
+
 LUNCH_WINDOW = (time(11, 30), time(14, 30))
 DINNER_WINDOW = (time(18, 0), time(21, 0))
 
 # En orden: el dia que solo da para una comida da para el almuerzo.
 MEAL_WINDOWS = (("lunch", LUNCH_WINDOW), ("dinner", DINNER_WINDOW))
 
-# Duracion tipica de una parada mas su traslado. Sirve para estimar hasta que
-# hora llega el dia antes de armarlo, que es cuando hay que decidir cuantos
-# cupos reservar para comer.
-TYPICAL_STOP_MINUTES = 90
+# Para proyectar hasta que hora llega el dia antes de armarlo, que es cuando
+# hay que decidir cuantos cupos reservar para comer.
+#
+# **Eran los dos numeros en uno y se quedo viejo.** Un solo 90 hacia de visita
+# y traslado juntos, y valia mientras todas las visitas duraban lo mismo. Con
+# la tabla por subcategoria una visita va de 20 minutos a 210, asi que la
+# proyeccion se hace con la duracion de los candidatos que hay de verdad y el
+# traslado aparte.
+#
+# Los dos medidos sobre el arnes: 238 tramos dan una mediana de 12 minutos de
+# traslado por parada (media 14), y 300 visitas dan una mediana de 90 minutos.
+# El 90 se queda como respaldo para cuando no hay candidatos que mirar.
+TYPICAL_TRAVEL_MINUTES = 12
+TYPICAL_VISIT_MINUTES = 90
 
 
 def _as_minutes(momento: time) -> int:
@@ -300,7 +326,21 @@ def _meals_expected(constraints: Constraints) -> int:
     return esperadas
 
 
-def _meals_that_fit(constraints: Constraints) -> int:
+def _typical_visit_minutes(candidatos: list[PlaceHit], constraints: Constraints) -> int:
+    """La duracion tipica de las visitas que este dia tiene a mano.
+
+    La mediana y no la media: un parque nacional de tres horas y media entre
+    diez museos no describe el dia, y la media lo dejaria creer que si.
+    """
+    if not candidatos:
+        return TYPICAL_VISIT_MINUTES
+    duraciones = sorted(_stop_minutes(hit, None, constraints) for hit in candidatos)
+    return duraciones[len(duraciones) // 2]
+
+
+def _meals_that_fit(
+    constraints: Constraints, minutos_visita: int = TYPICAL_VISIT_MINUTES
+) -> int:
     """Cuantas comidas puede llegar a colocar un dia con estas restricciones.
 
     Con los cinco cupos que trae por defecto, un dia arranca a las nueve y
@@ -320,8 +360,8 @@ def _meals_that_fit(constraints: Constraints) -> int:
     # el tope casi siempre, asi que la reserva no le quita nada a nadie; pero
     # el caso en que no —un dia de paradas cortas que llega a las doce— se
     # quedaba sin comer, que es el mismo agujero que ya tenia el ancla.
-    fin_estimado = (
-        _as_minutes(constraints.earliest_start) + constraints.stops_cap * TYPICAL_STOP_MINUTES
+    fin_estimado = _as_minutes(constraints.earliest_start) + constraints.stops_cap * (
+        minutos_visita + TYPICAL_TRAVEL_MINUTES
     )
     llega_a_la_cena = fin_estimado >= _as_minutes(DINNER_WINDOW[0]) and _as_minutes(
         constraints.latest_end
@@ -883,13 +923,13 @@ def _fits_the_clock(
     tentativa = _pinned_order(ancla, [*ruta, nueva], medidor)
     secuencia = [(lugar, None) for lugar in tentativa]
 
-    # Nada al aire libre despues de que oscurece. Se mira sobre el orden
-    # tentativo, que es el mismo que va a salir: _pinned_order es determinista.
-    limite_luz = _as_minutes(DUSK)
+    # Nada al aire libre despues de que oscurece, y nada bajo techo despues de
+    # que cierra. Se mira sobre el orden tentativo, que es el mismo que va a
+    # salir: _pinned_order es determinista.
     for lugar, hora in zip(
         tentativa, _arrival_times(secuencia, constraints, medidor), strict=False
     ):
-        if lugar.category in OUTDOOR_CATEGORIES and _as_minutes(hora) >= limite_luz:
+        if _too_late_for(lugar, hora):
             return False
 
     minutos = _sequence_minutes(secuencia, constraints, medidor)
@@ -929,6 +969,9 @@ def build_days(
     disponibles = sorted(
         admisibles, key=lambda h: score_candidate(h, constraints), reverse=True
     )
+    # Con que duran las visitas de esta zona se proyecta hasta que hora llega
+    # el dia, y de ahi sale cuantas comidas tiene sentido reservarle.
+    minutos_tipicos = _typical_visit_minutes(admisibles, constraints)
     dias: list[list[PlaceHit]] = []
 
     # Los requisitos se llevan como cuenta del itinerario entero: quien pide un
@@ -1003,7 +1046,7 @@ def build_days(
         # restaurantes para cinco dias, los ultimos dias reservan sitio que no
         # van a llenar. Es una imprecision acotada, a diferencia de la de
         # reservar contra cero.
-        reservados = min(_meals_that_fit(constraints), max(0, meal_options))
+        reservados = min(_meals_that_fit(constraints, minutos_tipicos), max(0, meal_options))
         # Si el dia arranca en un comedor, ese comedor ya es la comida del dia
         # y su cupo reservado sobra. Sin esto se guarda sitio para un almuerzo
         # que nunca se coloca, y el dia sale con un destino menos del pedido.
@@ -1774,6 +1817,20 @@ def _fits_the_day(
     )
 
 
+def _too_late_for(lugar: PlaceHit, hora: time) -> bool:
+    """Si a esa hora ese lugar ya no se puede visitar.
+
+    Al aire libre manda la luz; bajo techo, la hora de cierre. Un comedor no
+    tiene ninguna de las dos: a las ocho de la noche es justo lo que se busca.
+    """
+    minutos = _as_minutes(hora)
+    if lugar.category in OUTDOOR_CATEGORIES:
+        return minutos >= _as_minutes(DUSK)
+    if lugar.category in INDOOR_CATEGORIES:
+        return minutos >= _as_minutes(INDOOR_CLOSES)
+    return False
+
+
 def _outdoor_after_dusk(
     secuencia: list[tuple[PlaceHit, str | None]],
     constraints: Constraints,
@@ -1786,11 +1843,10 @@ def _outdoor_after_dusk(
     intercala, y las dos cosas mueven las horas. Mirandolo solo al llenar
     quedaban cuatro de cinco.
     """
-    limite = _as_minutes(DUSK)
     for (lugar, _), hora in zip(
         secuencia, _arrival_times(secuencia, constraints, travel), strict=False
     ):
-        if lugar.category in OUTDOOR_CATEGORIES and _as_minutes(hora) >= limite:
+        if _too_late_for(lugar, hora):
             return lugar
     return None
 

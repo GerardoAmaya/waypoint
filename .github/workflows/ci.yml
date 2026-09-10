@@ -81,6 +81,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Tests
+        run: npm test
+
       # El build es la unica comprobacion que ejecuta el CSS de Tailwind: un
       # token mal escrito no falla el tipado ni el lint, falla aca.
       - name: Build
