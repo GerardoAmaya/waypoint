@@ -94,17 +94,39 @@ web-check:
 # El precio esta medido y es aceptable: son 10.132 filas en total, asi que un
 # INSERT por lote de 500 no cambia nada en la practica.
 #
-# **Lo que este volcado NO hace es sincronizar.** ON CONFLICT DO NOTHING no
-# toca lo que ya existe, asi que un lugar que cambio de is_active o de calidad
-# conserva en el destino el valor viejo. Para que el destino quede identico al
-# origen hay que vaciar las cuatro tablas antes, y eso es otra operacion.
+# **Y despues se sincronizan las banderas, porque los INSERT no pueden.**
+# ON CONFLICT DO NOTHING no toca lo que ya existe, asi que una desactivacion
+# no viaja: se filtro "2a Calle Poniente" —una calle etiquetada como
+# atraccion, que entraba a los itinerarios con noventa minutos de visita— y en
+# el destino seguia activa. Lo mismo con lo que decide la deduplicacion, que
+# se recalcula entera en cada carga.
+#
+# Asi que al final del volcado va un UPDATE que iguala is_active,
+# rejected_reason y duplicate_of de cada lugar. Son las tres columnas que el
+# filtro de calidad y la deduplicacion cambian, y las unicas que hace falta
+# igualar: el resto del registro no se edita, viene de OpenStreetMap.
+#
+# La tabla va cualificada como public.places: pg_dump pone `search_path = ''`
+# en la cabecera del volcado, asi que un nombre sin esquema no se encuentra y
+# el UPDATE muere con "relation does not exist".
+#
+# Sigue sin borrar nada: un lugar que ya no exista en el origen se queda en el
+# destino. Para eso hay que vaciar las cuatro tablas antes, y eso es otra
+# operacion.
 dump:
 	docker compose exec -T db pg_dump -U waypoint -d waypoint \
 		--data-only --no-owner --no-privileges \
 		--inserts --on-conflict-do-nothing --rows-per-insert=500 \
 		-t places -t place_names -t travel_edges -t route_legs \
 		> catalogo.dump
+	@docker compose exec -T db psql -U waypoint -d waypoint -t -A -c \
+		"SELECT 'UPDATE public.places p SET is_active = v.is_active, rejected_reason = v.rejected_reason, duplicate_of = v.duplicate_of FROM (VALUES ' \
+		 || string_agg(format('(%L::uuid,%L::boolean,%L::text,%L::uuid)', id, is_active, rejected_reason, duplicate_of), ',') \
+		 || ') AS v(id, is_active, rejected_reason, duplicate_of) WHERE p.id = v.id;' FROM places;" \
+		>> catalogo.dump
 	@wc -c catalogo.dump
+	@grep -c "ON CONFLICT DO NOTHING" catalogo.dump | xargs echo "lotes de insercion:"
+	@grep -c "SET is_active = v.is_active" catalogo.dump | xargs echo "sincronizacion de banderas:"
 
 # Requiere DATABASE_URL con la cadena de Neon y psql instalado en la maquina.
 #   make restore DATABASE_URL="postgresql://...neon.tech/waypoint?sslmode=require"

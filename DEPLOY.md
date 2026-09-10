@@ -59,11 +59,30 @@ quedado en el Postgres local.
 Probado en local contra la base ya cargada: restaurar encima no da error y no
 cambia ninguna fila; borrando una a mano y restaurando, vuelve.
 
-**Lo que este volcado NO hace es sincronizar.** `ON CONFLICT DO NOTHING` no
-toca lo que ya existe, así que un lugar que cambió de `is_active` o de calidad
-—la deduplicación se recalcula entera en cada carga— conserva en el destino el
-valor viejo. Para que el destino quede idéntico al origen hay que vaciar las
-cuatro tablas antes, y eso es una operación distinta y destructiva.
+**Y al final va un `UPDATE` que sincroniza las banderas, porque los `INSERT`
+no pueden.** `ON CONFLICT DO NOTHING` no toca lo que ya existe, así que una
+desactivación no viajaba: se filtró "2a Calle Poniente" —una calle etiquetada
+como atracción, que entraba a los itinerarios con noventa minutos de visita— y
+en el destino seguía activa. Lo mismo con lo que decide la deduplicación, que
+se recalcula entera en cada carga.
+
+El `UPDATE` iguala `is_active`, `rejected_reason` y `duplicate_of` de cada
+lugar: son las tres columnas que el filtro de calidad y la deduplicación
+cambian, y las únicas que hace falta igualar, porque el resto del registro
+viene de OpenStreetMap y no se edita.
+
+Probado en local simulando el destino —reactivando las tres calles y borrando
+un centro comercial— y restaurando encima:
+
+| | antes | después |
+|---|---|---|
+| calles activas | 3 | **0** |
+| el lugar borrado | no está | **vuelve** |
+| activos en total | 5.789 | **5.786** |
+
+**Lo que sigue sin hacer es borrar.** Un lugar que ya no exista en el origen se
+queda en el destino. Para eso hay que vaciar las cuatro tablas antes, y eso es
+una operación distinta y destructiva.
 
 ---
 
