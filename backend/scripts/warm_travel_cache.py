@@ -1,6 +1,7 @@
 """Llena travel_edges por adelantado, zona por zona.
 
-Con cincuenta peticiones diarias de matriz, una demo publica que consulte ORS
+Con el cupo de matriz que esta llave recibe —la cabecera de ORS dice 50 al
+dia—, una demo publica que consulte ORS
 en vivo se queda sin cupo a media manana. La salida es precalcular: las zonas
 turisticas del pais son pocas y sus lugares no se mueven, asi que la cache se
 llena una vez y despues el itinerario sale de la base.
@@ -114,7 +115,10 @@ def main() -> int:
             planes.append((nombre, lugares, costo))
             print(f"{nombre:<14} {len(lugares):>3} lugares  {costo} peticion(es)")
 
-        print(f"\nTotal: {total_peticiones} de las 50 diarias.")
+        # El cupo real lo dice ORS en la cabecera de cada respuesta, asi que
+        # aqui solo se cuenta lo que costaria: poner un denominador fijo fue
+        # justo lo que hizo creer durante meses que el cupo era otro.
+        print(f"\nTotal: {total_peticiones} peticiones de matriz.")
 
         if not args.apply:
             print("Nada gastado. Agrega --apply para hacerlo.")

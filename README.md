@@ -70,11 +70,28 @@ La abstracción que lo hace posible es `TravelProvider`: el motor pide traslados
 no sabe si el número vino de una carretera o de una estimación. Eso también deja
 los tests corriendo sin red.
 
-### El cupo real son 50 peticiones por día, no 2.000
+### El cupo real es el que dice la cabecera, no el que dice la tabla
 
-El endpoint de direcciones da 2.000 diarias y es el número que aparece en la
-documentación. El de matriz da 50. Se lee en el encabezado `x-ratelimit-limit` de
-cualquier respuesta.
+La tabla de planes de ORS publica esto para el plan Standard:
+
+| endpoint | por día | por minuto |
+|---|---|---|
+| Directions V2 | 2.000 | 40 |
+| Matrix V2 | 500 | 40 |
+
+Y el encabezado `x-ratelimit-limit` de las respuestas de esta llave dice **50**
+para matriz y **200** para direcciones: **una décima parte en los dos casos**.
+
+Manda la cabecera, porque es la que coincide con lo que pasa: la matriz empezó
+a responder `403 Quota exceeded` después de unas cuarenta llamadas en el día, no
+de quinientas. Por eso el código trata `x-ratelimit-remaining` como la cifra
+buena y el techo propio como un respaldo —`min(nuestro, el de ORS)`—, y no al
+revés.
+
+Queda sin explicar de dónde sale el factor diez. Las dos hipótesis razonables
+son que la llave esté en un escalón anterior al que la página anuncia, o que la
+tabla describa el plan al que se puede optar y no el que se otorga. Sin poder
+distinguirlas desde fuera, el proyecto se comporta según lo que mide.
 
 A ese cupo, una demo pública que consulte en vivo se queda seca antes del
 mediodía. Por eso la cache en `travel_edges` no es una optimización: es lo que
@@ -598,7 +615,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Factor de desvío medido | 1.45, mediana sobre 812 pares |
 | Velocidad efectiva en carro | 35 a 62 km/h según el tramo |
 | Pares sin ruta en ORS | 7% (58 de 870) |
-| Cupo del endpoint de matriz | 50 peticiones / ventana de 24 h |
+| Cupo del endpoint de matriz | 500 / día (plan Standard de ORS) |
 | Peticiones por itinerario en zona fría | 1 |
 | Lugares en el catálogo | 5.786 activos de 6.449 bajados |
 | Descarte del filtro de calidad | 5.9% (370 registros) |
@@ -608,7 +625,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Repetición de subcategoría por paso | 15% |
 | Paradas fuera de hora (luz o cierre) | 0 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
-| Cupo del endpoint de direcciones | no publicado; su cabecera mide ritmo, no día |
+| Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
 | Tests | 578 backend, 28 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
@@ -943,15 +960,28 @@ X-Ratelimit-Remaining: 176
 
 **Y esa cabecera no dice lo que parece.** Se leyó como "el trazo tiene 200 al
 día y están casi sin usar", y horas después ORS contestaba `Quota exceeded` a
-las direcciones **con `Remaining: 176` en esa misma cabecera**. O sea que
-`X-Ratelimit-Limit` describe un límite de *ritmo*, no el cupo del día — que ORS
-no publica. Del de matriz solo se sabe que se agota alrededor de las 50, medido
-a golpes.
+las direcciones **con `Remaining: 176` en esa misma cabecera**. Así que
+`X-Ratelimit-Limit` describe otra cosa, no el cupo del día.
 
-Así que los dos techos del proyecto —45 para la matriz, 180 para las
-direcciones— son nuestros y no espejos de los de ORS: frenan antes de molestar
-al servicio. Lo que sí está medido y es cierto es que **los dos endpoints se
-contabilizan aparte**: uno puede estar agotado y el otro contestando.
+**La fuente estaba a un clic y nadie la había mirado.** La tabla de planes de
+ORS publica los dos cupos del plan Standard:
+
+| endpoint | por día | por minuto |
+|---|---|---|
+| Directions V2 | 2.000 | 40 |
+| Matrix V2 | 500 | 40 |
+
+Los techos que el proyecto se ponía a sí mismo —45 y 180— eran **diez veces más
+bajos de lo necesario**, deducidos a golpes contra un límite que resultó ser
+otro. Ahora son 450 y 1.800: el 90% de lo real, con margen para que una
+petición hecha desde otro sitio con la misma llave no nos haga chocar contra el
+límite de verdad.
+
+Lo que sí se dedujo bien fue el ritmo: 1,5 s entre llamadas son exactamente las
+40 por minuto que ORS permite en los dos endpoints.
+
+Y sigue siendo cierto que **los dos se contabilizan aparte**: uno puede estar
+agotado y el otro contestando.
 
 **Y con el cupo desbloqueado apareció el problema de verdad, que era otro.**
 Pedir la geometría de un día entero en una petición tiene una consecuencia que
@@ -1520,7 +1550,7 @@ npm test             # los 28 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante
 make ors-calibrate   # mide desvío y velocidad contra el catálogo
 make ors-warm        # dice cuanto costaria precalentar; no gasta nada
-make ors-warm-apply  # lo hace: 20 de las 50 peticiones diarias
+make ors-warm-apply  # lo hace: 20 peticiones de matriz
 ```
 
 `ors-warm` solo dice cuánto costaría; `ors-warm-apply` lo hace. Son dos
