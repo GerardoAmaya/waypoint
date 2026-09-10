@@ -333,6 +333,32 @@ Costó dos paradas de 300 y **mejoró las comidas**, de 29% a 24% de días con
 "llevá comida": los días dejan de terminar con una caminata larga a última hora
 y les queda sitio para comer.
 
+### Reservar lo que no alcanza es perder dos veces
+
+La reserva de kilómetros para la comida tenía un tope del 30% del presupuesto
+del día. El tope no recortaba la reserva: **la volvía inútil.** Si el
+restaurante más barato cuesta más de lo que queda, guardar kilómetros no lo
+hace entrar y sí le quita una parada al día.
+
+Medido con "dos días en Santa Ana": el día del carro guardó 7,5 km, no colocó
+ninguna comida y cerró con **una sola parada a las 13:26**, con seis
+kilómetros de veinticinco. Ahora el tope decide *si* vale la pena reservar, no
+cuánto: por encima de él la comida está fuera de alcance, no se reserva nada, y
+el consejo de llevar comida —que ya existe y dice el número— hace su trabajo.
+
+Costó cero y pagó cuatro paradas: 298 → 302, con los días de "llevá comida"
+igual en 24%.
+
+**Y dos cosas que probé el mismo día y quité**, porque el arnés no las
+justificó: proteger del recorte el lugar de más atractivo del día, y reordenar
+el día para darle la mañana a una visita al aire libre que al final terminaría
+de noche. Las dos son razonables sobre el papel y ninguna movió una métrica.
+El caso que las motivaba resultó no tener solución: ir al Cerro Singuil y
+volver cuesta 32 km contra un presupuesto de 25, y dejarlo al final cabe en
+19,4 pero termina a las 18:17, de noche. No es un fallo del motor, son dos
+límites que no se pueden cumplir a la vez — y con "no me importa manejar hasta
+90 km" el cerro entra, medido.
+
 ### Decir la causa equivocada, otra vez
 
 Dos números en la misma pantalla que no cuadraban, y una cabecera que
@@ -568,7 +594,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Qué | Cuánto |
 |---|---|
 | Cumplimiento de límites duros | 96% (25 de 26 casos) |
-| Lugares inventados | 0 de 300 paradas generadas |
+| Lugares inventados | 0 de 302 paradas generadas |
 | Factor de desvío medido | 1.45, mediana sobre 812 pares |
 | Velocidad efectiva en carro | 35 a 62 km/h según el tramo |
 | Pares sin ruta en ORS | 7% (58 de 870) |

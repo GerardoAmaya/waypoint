@@ -309,7 +309,18 @@ def _meal_km_reserve(
         secuencia = tentativa
         cercanas = [c for c in cercanas if c is not comida]
 
-    return min(total, MEAL_KM_CAP_SHARE * constraints.budget_for(numero))
+    # **Reservar lo que no alcanza es perder dos veces.** El tope no recortaba
+    # la reserva, la volvia inutil: si la comida mas barata cuesta mas de lo
+    # que queda, guardar kilometros no la hace entrar y si le quita una parada
+    # al dia. Medido con "dos dias en Santa Ana": el dia del carro guardo 7.5
+    # km, no coloco ninguna comida y cerro con una sola parada a las 13:26.
+    #
+    # Asi que el tope decide si vale la pena reservar, no cuanto: por encima
+    # de el la comida esta fuera de alcance, no se reserva nada y el consejo
+    # de llevar comida —que ya existe y dice el numero— hace su trabajo.
+    if total > MEAL_KM_CAP_SHARE * constraints.budget_for(numero):
+        return 0.0
+    return total
 
 
 def _meals_expected(constraints: Constraints) -> int:
@@ -866,7 +877,9 @@ def order_by_proximity(
 
 
 def _pinned_order(
-    ancla: PlaceHit | None, paradas: list[PlaceHit], travel: TravelProvider | None = None
+    ancla: PlaceHit | None,
+    paradas: list[PlaceHit],
+    travel: TravelProvider | None = None,
 ) -> list[PlaceHit]:
     """Ordena dejando el ancla primera, si hay ancla.
 
