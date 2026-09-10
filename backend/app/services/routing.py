@@ -169,6 +169,25 @@ class Pacer:
             self._last_call = _time.monotonic()
 
 
+# Cuanto puede alejarse una parada para engancharse a la red vial.
+#
+# **El valor por defecto de ORS son 350 metros y es lo que rompia el trazo.**
+# No hay calle a menos de 350 m de la cumbre de un volcan, asi que ORS
+# respondia 404 con el codigo 2010 —"could not find routable point"— y, como la
+# geometria se pide una vez por dia, ese unico punto tumbaba el trazo del dia
+# entero: en el arnes, 34 de 61 dias y 127 de 236 tramos, incluidos los que van
+# entre museos del centro y ORS enruta sin problema.
+#
+# Medido contra el Volcan de San Salvador, que es el reincidente: con 5 km el
+# dia enruta y el trazo arranca a 840 m de la cumbre. Eso no es un error de
+# precision, es el dato correcto —ahi se acaba la carretera y empieza la
+# caminata— y es mucho mas informativo que una linea recta de ocho kilometros.
+#
+# El tope existe para que un punto en medio de un lago no se engache a una
+# carretera de la otra orilla y dibuje un recorrido que nadie va a hacer. Lo
+# que pase de ahi se queda recto, que es la respuesta honesta.
+SNAP_RADIUS_M = 5000
+
 # Los dos endpoints que se usan, cada uno con su propio cupo.
 ENDPOINT_MATRIX = "matrix"
 ENDPOINT_DIRECTIONS = "directions"
@@ -296,6 +315,9 @@ class ORSClient:
         habla (lon, lat) en las dos direcciones —entrada y salida—, asi que hay
         dos inversiones y ninguna es opcional. Es el error mas comun contra
         esta API y no da fallo: devuelve una ruta plausible en el oceano Indico.
+
+        Cada parada va con su radio de enganche: ver SNAP_RADIUS_M. Sin el, un
+        volcan sin calle a 350 metros deja sin trazo al dia completo.
         """
         if len(coords) < 2:
             return []
@@ -308,7 +330,11 @@ class ORSClient:
         try:
             respuesta = httpx.post(
                 f"{self.base_url}/v2/directions/{profile}/geojson",
-                json={"coordinates": [[lon, lat] for lat, lon in coords]},
+                json={
+                    "coordinates": [[lon, lat] for lat, lon in coords],
+                    # Uno por parada: ORS espera la lista del mismo largo.
+                    "radiuses": [SNAP_RADIUS_M] * len(coords),
+                },
                 headers={
                     "Authorization": self.api_key,
                     "Content-Type": "application/json",

@@ -496,6 +496,31 @@ class TestClienteConPresupuesto:
 
         assert llamadas["n"] == 2, "la tercera no debio salir a la red"
 
+    def test_manda_el_radio_de_enganche_con_cada_parada(self, monkeypatch):
+        """Sin el, ORS usa 350 m y un volcan tumba el trazo del dia entero.
+
+        Medido en el arnes antes de mandarlo: 34 de 61 dias y 127 de 236
+        tramos se quedaban rectos, incluidos los que van entre museos del
+        centro. Con el radio puesto, 34 de 36 en los dias mas duros.
+        """
+        cuerpos = []
+
+        def post_falso(url, json, headers, timeout):
+            cuerpos.append(json)
+            return RespuestaFalsa(
+                200,
+                {"features": [{"geometry": {"coordinates": [[-89.2, 13.7], [-89.5, 14.0]]}}]},
+            )
+
+        monkeypatch.setattr(routing.httpx, "post", post_falso)
+        cliente = ORSClient("llave", min_interval_seconds=0)
+
+        cliente.directions([SAN_SALVADOR, SANTA_ANA, (13.8, -89.4)], "driving-car")
+
+        assert cuerpos[0]["radiuses"] == [routing.SNAP_RADIUS_M] * 3, (
+            "uno por parada: ORS espera la lista del mismo largo"
+        )
+
     def test_la_matriz_no_se_come_el_cupo_del_trazo(self, monkeypatch):
         """Los dos endpoints tienen cupos separados y ORS los cuenta aparte.
 

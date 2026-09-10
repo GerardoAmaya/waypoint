@@ -352,6 +352,8 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Días con recomendación de llevar comida | 34% (21 de 62) |
 | Repetición de categoría por paso | 29% |
 | Paradas fuera de hora (luz o cierre) | 0 |
+| Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
+| Cupo del endpoint de direcciones | 200 / día, medido en la cabecera |
 | Tests | 536 backend, 24 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
@@ -689,6 +691,47 @@ prácticamente sin usar. El presupuesto local de 45 se aplica a los dos por
 igual, así que ahora es él —y no ORS— el que limita las direcciones; con una
 petición por día de itinerario, 45 alcanza de sobra, pero el número ya no
 describe el límite real.
+
+**Y con el cupo desbloqueado apareció el problema de verdad, que era otro.**
+Pedir la geometría de un día entero en una petición tiene una consecuencia que
+el código no había previsto: si ORS no puede enganchar **una** parada a la red
+vial, falla la petición completa y el día se queda sin trazo. El error lo dice
+con precisión:
+
+```
+HTTP 404 · code 2010
+"Could not find routable point within a radius of 350.0 meters
+ of specified coordinate 0: -89.2861135 13.7372142."
+```
+
+Esa coordenada es el Volcán de San Salvador. Los 350 metros son el valor por
+defecto de ORS, y no hay calle a esa distancia de una cumbre. Medido: **34 de
+61 días** del arnés llevan al menos una parada así, y arrastraban **127 de 236
+tramos** a la línea recta —incluidos los que van entre museos del centro, que
+ORS enruta sin pestañear—. El comentario de `load_route_geometry` prometía que
+"el degradado es por tramo y no por itinerario"; la implementación degradaba
+por día.
+
+La solución es un parámetro que existe para esto y no se estaba mandando:
+`radiuses`, cuánto puede alejarse cada parada para engancharse. Con 5 km, el
+día del volcán enruta y el trazo arranca a 840 m de la cumbre — que no es un
+error de precisión, es el dato correcto: ahí se acaba la carretera y empieza la
+caminata.
+
+| | tramos con trazo |
+|---|---|
+| Antes, sobre los días más duros | 0 de 36 |
+| Con `radiuses` | **34 de 36 (94%)** |
+
+Los dos que faltan son honestos: 1,17 km y 755 m entre tres paradas **dentro**
+del Parque El Imposible, que se enganchan todas a la misma carretera de acceso
+porque no hay ninguna entre ellas. Ahí se camina, y la recta es la respuesta.
+
+El tope de 5 km no es generosidad, es un límite: un punto en medio de un lago
+podría engancharse a una carretera de la otra orilla y dibujar un recorrido que
+nadie va a hacer. Queda un residual sin observar todavía —una parada a más de 5
+km de cualquier calle seguiría tumbando su día— y la salida sería reintentar sin
+ese punto, que ORS identifica por índice.
 
 ### El día sale de donde el usuario dijo
 
