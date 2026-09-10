@@ -73,6 +73,8 @@ export interface Day {
    * dia que se camina es decir algo falso.
    */
   mode: Mode;
+  /** Lugares que se visitan, sin contar el punto de partida. */
+  visits: number;
 }
 
 /** Un limite que el usuario puso y el itinerario no pudo respetar. */

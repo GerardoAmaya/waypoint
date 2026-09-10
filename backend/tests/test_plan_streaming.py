@@ -11,6 +11,7 @@ import pytest
 
 from app.models import Category
 from app.services import itinerary as motor
+from app.services import routing
 from app.services.itinerary import (
     CandidatesReady,
     Constraints,
@@ -63,6 +64,9 @@ class ClienteFalso:
         self.falla_con = falla_con
         self.request_count = 0
         self.directions_count = 0
+        # El cliente real lleva un cupo por endpoint, y load_travel_matrix lo
+        # consulta para separar "sin cupo" de "sin carretera".
+        self.matrix_quota = routing.DailyQuota(45)
 
     def directions(self, coords, profile):
         self.request_count += 1

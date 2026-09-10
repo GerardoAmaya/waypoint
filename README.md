@@ -293,6 +293,82 @@ los pedidos mismos. Solo entraban los que caían de semilla, y el segundo se
 reportaba como restricción incumplida. El test que debía cubrirlo usaba dos
 días, así que cada pedido caía de semilla en el suyo y pasaba sin probar nada.
 
+### Si dijiste dónde empezás, todos los días empiezan ahí
+
+El ancla valía para todos los días solo cuando se pedía volver a dormir ahí; en
+otro caso, solo el primero. El razonamiento era bueno —"tres días por el
+occidente saliendo de San Salvador" no vuelve a San Salvador cada noche— pero
+dejaba fuera el caso más común, y el resultado no era practicable: "dos días en
+Santa Ana partiendo de Metrocentro Santa Ana" armaba un segundo día **a pie**
+que arrancaba en el Volcán de Santa Ana, a veinte kilómetros. Un día caminando
+al que no se puede llegar caminando.
+
+Lo que distingue los dos casos no es una palabra del prompt, es la geometría:
+**si el punto de partida cae dentro de la zona, ahí te alojás**. Si cae fuera,
+estás saliendo hacia otro lado. La distancia decide.
+
+**Y eso destapó que anclar un día lo volvía miope.** El día anclado se llenaba
+hacia afuera desde el punto de partida por cercanía, así que el mejor lugar de
+la zona no entraba nunca: con "dos días en Santa Ana" el Cerro Singuil quedaba
+fuera **incluso con noventa kilómetros de presupuesto**, porque siempre había un
+museo más cerca, y el día cerraba a las 15:12 con cinco horas sin usar. Ahora el
+primer destino de un día anclado se elige por lo que vale —`disponibles` ya
+viene ordenado por `score_candidate`, así que el primero que quepa es el mejor
+que quepa— y pasa a ser la semilla, de modo que el resto del día se agrupa a su
+alrededor y no alrededor del punto de partida.
+
+### La luz se acaba cuando se acaba, no cuando llegás
+
+La regla del anochecer miraba la **llegada**. Un cerro de tres horas que
+arrancaba a las 15:37 pasaba el filtro y terminaba a las 18:37: veintidós
+minutos después de que oscurece, tres horas de monte que acaban a oscuras.
+Ahora, al aire libre, lo que tiene que caber antes del anochecer es la visita
+entera.
+
+Bajo techo sigue mandando la llegada, y la asimetría es deliberada: si el museo
+cierra a las seis, lo que importa es haber entrado antes, no que te echen a y
+media.
+
+Costó dos paradas de 300 y **mejoró las comidas**, de 29% a 24% de días con
+"llevá comida": los días dejan de terminar con una caminata larga a última hora
+y les queda sitio para comer.
+
+### Decir la causa equivocada, otra vez
+
+Dos números en la misma pantalla que no cuadraban, y una cabecera que
+contradecía al mapa. Los dos salieron de mirar una captura de un itinerario de
+Santa Ana.
+
+**"2 días · 8 paradas" arriba y 6 + 3 en las pestañas.** Al arreglar la cuenta
+total para que no contara el hotel cuatro veces, la de cada día se quedó
+contando líneas de la lista. Dos reglas distintas en el mismo panel, y
+cualquiera puede sumar. La cuenta por día la manda ahora el backend —`visits`
+en `DayOut`— porque el cliente no puede deducir cuál parada es el punto de
+partida: quien lo sabe es el motor, que tiene las restricciones a mano.
+
+**Y la peor: la cabecera decía "estas paradas están lejos de toda carretera y
+no se pueden medir" mientras el mapa dibujaba siete de nueve tramos por
+carretera.** La causa no era el terreno, era el cupo. ORS contesta `403 Quota
+exceeded` a la matriz, y la lógica que elige el motivo razonaba así:
+
+```python
+elif not stats.requests:   # sin cupo se ve como cero peticiones
+    stats.reason = "no_quota"
+else:
+    stats.reason = "unroutable"
+```
+
+Un 403 **sí** cuenta como petición hecha, así que caía en el `else`. Y la
+respuesta de un 403 no trae la cabecera `x-ratelimit-remaining`, con lo cual el
+cliente tampoco se enteraba de que se había quedado sin nada. Ahora un 403 pone
+el cupo de ese endpoint en cero, que es la única noticia fiable que da, y el
+motivo sale `no_quota`.
+
+Las dos causas se arreglan distinto y por eso importa distinguirlas: una se
+espera a que ruede la ventana de 24 horas, la otra no tiene arreglo. Es el mismo
+principio que ya estaba escrito para "no hay donde comer" —decir la causa
+equivocada es peor que no decir nada— aplicado donde faltaba.
+
 ### El nombre es la única señal que queda, y no se usaba
 
 Los 35 miradores activos del catálogo tienen **todos el mismo
@@ -498,7 +574,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Pares sin ruta en ORS | 7% (58 de 870) |
 | Cupo del endpoint de matriz | 50 peticiones / ventana de 24 h |
 | Peticiones por itinerario en zona fría | 1 |
-| Lugares en el catálogo | 5.789 activos de 6.449 bajados |
+| Lugares en el catálogo | 5.786 activos de 6.449 bajados |
 | Descarte del filtro de calidad | 5.9% (370 registros) |
 | Duplicados fusionados | 4.4% (274 registros) |
 | Días con recomendación de llevar comida | 34% (21 de 62) |
@@ -507,7 +583,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Paradas fuera de hora (luz o cierre) | 0 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 200 / día, medido en la cabecera |
-| Tests | 560 backend, 27 frontend |
+| Tests | 578 backend, 28 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -1389,7 +1465,7 @@ el tamaño de diseño y el mínimo el que cabe.
 | Iconos | Font Awesome, paquetes SVG con tree-shaking |
 | Satélite | Esri World Imagery, sin llave |
 | Fotos de zona | Wikimedia Commons, resueltas una vez |
-| Tests | pytest en el backend (560), Vitest y Testing Library en el frontend (27) |
+| Tests | pytest en el backend (578), Vitest y Testing Library en el frontend (28) |
 | CI | GitHub Actions: migraciones en ambos sentidos, y tipado, lint, tests y build del frontend |
 
 Sin Celery: la carga del catálogo es un guion que corre una vez y la generación
@@ -1407,8 +1483,8 @@ imperativo— y quedó como dependencia muerta.
 ## Guiones
 
 ```bash
-make test            # los 560 del backend
-npm test             # los 27 del frontend, desde frontend/
+make test            # los 578 del backend
+npm test             # los 28 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante
 make ors-calibrate   # mide desvío y velocidad contra el catálogo
 make ors-warm        # precalienta la cache por zona (no gasta sin --apply)

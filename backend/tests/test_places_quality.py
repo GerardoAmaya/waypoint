@@ -308,3 +308,40 @@ class TestAlojamientoPorEdificio:
         paga a sabiendas.
         """
         assert not evaluate({"building": "hotel", "name": "Courtyard by Marriott"}).accepted
+
+
+class TestUnaCalleNoEsUnDestino:
+    """ "2a Calle Poniente o Via Morena", marcada tourism=attraction en OSM.
+
+    Entraba en los itinerarios con noventa minutos de visita —la duracion por
+    defecto de una atraccion— o sea hora y media de pie en una calle. Y
+    aparecia dos veces, porque son dos nodos de la misma calle a 220 metros.
+    """
+
+    @pytest.mark.parametrize(
+        "nombre",
+        [
+            "2a Calle Poniente o Vía Morena",
+            "15 Avenida Norte",
+            "2 Calle Oriente",
+            "1a Av. Sur",
+        ],
+    )
+    def test_la_calle_numerada_se_descarta(self, nombre):
+        veredicto = evaluate({"name": nombre, "tourism": "attraction"})
+
+        assert not veredicto.accepted
+        assert veredicto.reason == "no_es_destino"
+
+    @pytest.mark.parametrize(
+        "nombre",
+        [
+            # Una calle con nombre propio puede ser un paseo.
+            "Calle Arce",
+            "Avenida Independencia",
+            "Calle El Mirador",
+            "Paseo El Carmen",
+        ],
+    )
+    def test_la_calle_con_nombre_propio_se_conserva(self, nombre):
+        assert evaluate({"name": nombre, "tourism": "attraction"}).accepted

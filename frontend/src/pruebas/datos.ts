@@ -48,6 +48,7 @@ export function dia(parcial: Partial<Day> = {}): Day {
     start: stops[0]?.arrival ?? null,
     end: stops[stops.length - 1]?.departure ?? null,
     mode: "driving",
+    visits: stops.length,
     ...parcial,
     stops,
   };

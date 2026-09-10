@@ -92,6 +92,27 @@ describe("Linea", () => {
     expect(onSelectStop).toHaveBeenCalledWith(null);
   });
 
+  it("la cabecera cuenta visitas, no líneas de la lista", () => {
+    /*
+      El punto de partida aparece dos veces en la lista y no es una visita. La
+      cabecera del itinerario ya lo descontaba y la del día no, así que en la
+      misma pantalla se leía "8 paradas" arriba y 6 + 3 en las pestañas.
+    */
+    render(
+      <Linea
+        day={{ ...idaYVuelta, visits: 2 }}
+        advice={[]}
+        violations={[]}
+        mode="driving"
+        selectedStop={null}
+        onSelectStop={() => {}}
+      />,
+    );
+
+    expect(screen.getByText(/^2 paradas$/)).toBeInTheDocument();
+    expect(screen.queryByText(/^4 paradas$/)).toBeNull();
+  });
+
   it("el icono del traslado sigue al modo del dia", () => {
     const { container } = pinta({ mode: "walking" });
 

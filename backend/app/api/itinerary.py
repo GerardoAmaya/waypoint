@@ -169,6 +169,11 @@ def _to_out(
                 mode=(
                     constraints.mode_for(dia.number) if constraints is not None else "driving"
                 ),
+                visits=(
+                    motor.visits_of_day(dia, constraints)
+                    if constraints is not None
+                    else len(dia.stops)
+                ),
             )
             for dia in itinerario.days
         ],

@@ -69,6 +69,10 @@ class ClienteFalso:
         self.falla_con = falla_con
         self.llamadas = []
         self.request_count = 0
+        # El cliente real lleva un cupo por endpoint, y load_travel_matrix lo
+        # consulta para distinguir "sin cupo" de "sin carretera". Sin sincronizar
+        # con el servidor, `remaining` es None: cupo desconocido.
+        self.matrix_quota = routing.DailyQuota(45)
 
     def matrix(self, coords, profile, sources=None, destinations=None):
         self.llamadas.append((list(coords), profile, sources, destinations))
@@ -998,3 +1002,42 @@ class TestGeometriaPorModo:
 
         assert cliente.request_count == 1
         assert stats.fetched == 2
+
+
+class TestUn403NoEsUnaCarreteraQueFalta:
+    """ "Quota exceeded" y "punto sin carretera" se arreglan distinto.
+
+    Una se espera a que ruede la ventana; la otra no tiene arreglo. El sintoma
+    estaba en pantalla: la cabecera decia "estas paradas estan lejos de toda
+    carretera y no se pueden medir" mientras el mapa dibujaba siete de nueve
+    tramos por carretera. La causa era el cupo, y el motor no lo distinguia
+    porque un 403 tambien cuenta como peticion hecha.
+    """
+
+    def test_el_403_deja_el_cupo_en_cero(self, monkeypatch):
+        respuesta = RespuestaFalsa(403, {"error": "Quota exceeded"})
+        monkeypatch.setattr(
+            routing.httpx, "post", lambda url, json, headers, timeout: respuesta
+        )
+        cliente = ORSClient("llave", min_interval_seconds=0)
+
+        with pytest.raises(routing.ORSQuotaExhausted):
+            cliente.matrix([SAN_SALVADOR, SANTA_ANA], "driving-car")
+
+        assert cliente.matrix_quota.remaining == 0, (
+            "el 403 no trae cabecera de cupo: es la unica noticia de que no queda"
+        )
+        # Y no apaga el otro endpoint, que tiene su propio cupo.
+        assert cliente.directions_quota.remaining is None
+
+    def test_con_el_cupo_agotado_la_causa_es_el_cupo(self):
+        lugares = [lugar(f"L{i}", 13.7 + i * 0.01, -89.2) for i in range(3)]
+        cliente = ClienteFalso(falla_con=routing.ORSQuotaExhausted("Quota exceeded"))
+        # Como lo deja el cliente real despues de un 403.
+        cliente.matrix_quota.sync_with_server(0)
+
+        matriz = load_travel_matrix(lugares, "driving", client=cliente)
+
+        assert matriz.stats.reason == "no_quota"
+        # Tres lugares son seis pares ordenados, no tres.
+        assert matriz.stats.fetched == 0 and matriz.stats.estimated == 6

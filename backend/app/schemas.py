@@ -197,6 +197,14 @@ class DayOut(BaseModel):
     # porque el icono del traslado dice como se va, y en un viaje mixto decir
     # "en coche" en el dia que se camina es decir algo falso.
     mode: str = "driving"
+    # Lugares que se visitan de verdad, sin contar el punto de partida.
+    #
+    # **Va del backend porque el cliente no puede deducirlo.** La cabecera del
+    # itinerario ya descontaba el punto de partida y la de cada dia no, asi que
+    # los numeros no cuadraban en la misma pantalla: "2 dias · 8 paradas"
+    # arriba y 6 + 3 en las pestañas. Quien lo sabe es el motor, que es el que
+    # tiene las restricciones a mano.
+    visits: int = 0
 
 
 class ViolationOut(BaseModel):

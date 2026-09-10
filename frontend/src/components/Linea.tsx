@@ -69,7 +69,12 @@ export default function Linea({
         </span>
         <span className="inline-flex items-center gap-1.5 text-tinta-tenue">
           <FontAwesomeIcon icon={faLocationDot} aria-hidden className="size-3" />
-          {day.stops.length} {day.stops.length === 1 ? "parada" : "paradas"}
+          {/*
+            La cuenta del backend y no day.stops.length: el punto de partida
+            aparece en la lista pero no es una visita, y sumar las pestañas
+            tenia que dar el total de la cabecera.
+          */}
+          {day.visits} {day.visits === 1 ? "parada" : "paradas"}
         </span>
       </div>
 

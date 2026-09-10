@@ -23,7 +23,7 @@ from datetime import time, timedelta
 from sqlalchemy.orm import Session
 
 from app.models import Category
-from app.services.geo import EstimatedTravel, TravelProvider
+from app.services.geo import EstimatedTravel, TravelProvider, haversine_km
 from app.services.places import PlaceHit, nombre_legible, search_in_area
 from app.services.places import by_ids as places_by_ids
 
@@ -516,11 +516,44 @@ class Constraints:
         """
         return self.max_stops_per_day or MAX_STOPS_HARD_CAP
 
-    def anchors_day(self, numero: int) -> bool:
-        """Si el dia `numero` arranca en el punto de partida."""
+    @property
+    def start_inside_area(self) -> bool:
+        """Si el punto de partida cae dentro de la zona que se va a recorrer."""
         if self.start_place is None:
             return False
-        return self.return_to_start or numero == 1
+        metros = (
+            haversine_km(
+                self.center_lat, self.center_lon, self.start_place.lat, self.start_place.lon
+            )
+            * 1000
+        )
+        return metros <= self.radius_m
+
+    def anchors_day(self, numero: int) -> bool:
+        """Si el dia `numero` arranca en el punto de partida.
+
+        Tres casos y el tercero hizo falta al usarlo:
+
+        - Quien vuelve cada noche esta diciendo que ese sitio es su base, y el
+          ancla vale para todos los dias.
+        - Quien sale de un sitio y se mete en OTRA zona lo hace una vez: "tres
+          dias por el occidente saliendo de San Salvador" no vuelve a San
+          Salvador cada noche.
+        - **Pero si el punto de partida esta DENTRO de la zona, esta diciendo
+          donde se aloja**, y todos los dias salen de ahi. Sin esto, "dos dias
+          en Santa Ana partiendo de Metrocentro Santa Ana" armaba un segundo
+          dia a pie que arrancaba en el Volcan de Santa Ana, a veinte
+          kilometros: un dia caminando al que no se puede llegar caminando.
+
+        La distancia decide, y no una palabra del prompt, porque es lo que
+        distingue los dos casos de verdad: si la zona te contiene, te alojas
+        ahi.
+        """
+        if self.start_place is None:
+            return False
+        if self.return_to_start or numero == 1:
+            return True
+        return self.start_inside_area
 
 
 @dataclass
@@ -604,6 +637,18 @@ class Itinerary:
     @property
     def total_stops(self) -> int:
         return sum(len(d.stops) for d in self.days)
+
+
+def visits_of_day(dia: Day, constraints: Constraints | None) -> int:
+    """Cuantos lugares se visitan en ese dia, sin el punto de partida.
+
+    Misma regla que total_visits y que el tope de paradas: _visit_count. La
+    cabecera del itinerario la aplicaba y la de cada dia no, asi que en la
+    misma pantalla se leia "8 paradas" arriba y 6 + 3 en las pestañas.
+    """
+    if constraints is None:
+        return len(dia.stops)
+    return _visit_count((parada.place for parada in dia.stops), dia.number, constraints)
 
 
 def total_visits(itinerario: Itinerary, constraints: Constraints | None) -> int:
@@ -1110,7 +1155,7 @@ def _fits_the_clock(
     for lugar, hora in zip(
         tentativa, _arrival_times(secuencia, constraints, medidor), strict=False
     ):
-        if _too_late_for(lugar, hora):
+        if _too_late_for(lugar, hora, constraints):
             return False
 
     minutos = _sequence_minutes(secuencia, constraints, medidor)
@@ -1200,9 +1245,25 @@ def build_days(
         if not disponibles and not pendientes and ancla is None:
             break
 
+        reservados = min(_meals_that_fit(constraints, minutos_tipicos), max(0, meal_options))
+        # Si el dia arranca en un comedor, ese comedor ya es la comida del dia
+        # y su cupo reservado sobra. Sin esto se guarda sitio para un almuerzo
+        # que nunca se coloca, y el dia sale con un destino menos del pedido.
+        if ancla is not None and ancla.category == Category.food.value:
+            reservados = max(0, reservados - 1)
+        # El ancla no gasta cupo: quien pide tres paradas habla de lugares
+        # que va a visitar, no del sitio de donde sale. Descontarle una parada
+        # por decir de donde parte le daria menos de lo que pidio.
+        cupo = max(constraints.stops_cap - reservados, 1) + (1 if ancla is not None else 0)
+
+        # Lo que se le guarda a las comidas en tiempo y en kilometros. Es
+        # independiente de los cupos: aunque no se reserve ninguna parada, el
+        # rato de comer y el desvio al restaurante ocurren igual.
+        esperadas = min(_meals_expected(constraints), max(0, meal_options))
+        if ancla is not None and ancla.category == Category.food.value:
+            esperadas = max(0, esperadas - 1)
+
         if ancla is not None:
-            # El ancla es la semilla: el dia se llena alrededor de donde
-            # empieza, que es lo que se pidio.
             semilla = ancla
             dia = [ancla]
             # Puede estar en el catalogo de destinos: no se elige dos veces.
@@ -1211,6 +1272,40 @@ def build_days(
             # es de donde se sale, no lo que se va a ver.
             if pendientes:
                 dia.append(pendientes.pop(0))
+                semilla = dia[-1]
+            else:
+                # **El primer destino se elige por lo que vale, no por lo
+                # cerca que esta del punto de partida.** Anclar el dia lo
+                # volvia miope: se llenaba hacia afuera desde el ancla y el
+                # mejor lugar de la zona no entraba nunca, hubiera o no
+                # presupuesto. Medido con "dos dias en Santa Ana partiendo de
+                # Metrocentro": el Volcan de Santa Ana quedaba fuera incluso
+                # con noventa kilometros disponibles, porque siempre habia un
+                # museo mas cerca, y el dia cerraba a las 15:12 con cinco
+                # horas sin usar.
+                #
+                # `disponibles` ya viene ordenado por score_candidate, asi que
+                # el primero que quepa es el mejor que quepa. Y pasa a ser la
+                # semilla: el resto del dia se agrupa a su alrededor y no
+                # alrededor del ancla.
+                reserva_inicial = _meal_km_reserve(
+                    dia, comidas or [], constraints, medidor, esperadas, numero
+                )
+                for candidato in disponibles:
+                    if _name_key(candidato) in nombres_usados or not cupo_de_sub(candidato):
+                        continue
+                    if not _fits_travel_budget(
+                        dia, candidato, constraints, medidor, numero, ancla, reserva_inicial
+                    ):
+                        continue
+                    if not _fits_the_clock(
+                        dia, candidato, constraints, medidor, numero, ancla, esperadas
+                    ):
+                        continue
+                    dia.append(candidato)
+                    disponibles.remove(candidato)
+                    semilla = candidato
+                    break
         elif pendientes:
             # Un lugar pedido por su nombre manda sobre cualquier otro
             # criterio de semilla: es lo mas concreto que alguien puede pedir.
@@ -1252,24 +1347,6 @@ def build_days(
         # restaurantes para cinco dias, los ultimos dias reservan sitio que no
         # van a llenar. Es una imprecision acotada, a diferencia de la de
         # reservar contra cero.
-        reservados = min(_meals_that_fit(constraints, minutos_tipicos), max(0, meal_options))
-        # Si el dia arranca en un comedor, ese comedor ya es la comida del dia
-        # y su cupo reservado sobra. Sin esto se guarda sitio para un almuerzo
-        # que nunca se coloca, y el dia sale con un destino menos del pedido.
-        if ancla is not None and ancla.category == Category.food.value:
-            reservados = max(0, reservados - 1)
-        # El ancla no gasta cupo: quien pide tres paradas habla de lugares
-        # que va a visitar, no del sitio de donde sale. Descontarle una parada
-        # por decir de donde parte le daria menos de lo que pidio.
-        cupo = max(constraints.stops_cap - reservados, 1) + (1 if ancla is not None else 0)
-
-        # Lo que se le guarda a las comidas en tiempo y en kilometros. Es
-        # independiente de los cupos: aunque no se reserve ninguna parada, el
-        # rato de comer y el desvio al restaurante ocurren igual.
-        esperadas = min(_meals_expected(constraints), max(0, meal_options))
-        if ancla is not None and ancla.category == Category.food.value:
-            esperadas = max(0, esperadas - 1)
-
         while len(dia) < cupo:
             # Se reordena en cada vuelta porque el coste depende de lo que
             # ya haya en el dia, y eso cambia con cada parada agregada.
@@ -2051,17 +2128,28 @@ def _fits_the_day(
     )
 
 
-def _too_late_for(lugar: PlaceHit, hora: time) -> bool:
+def _too_late_for(
+    lugar: PlaceHit, llegada: time, constraints: Constraints | None = None
+) -> bool:
     """Si a esa hora ese lugar ya no se puede visitar.
 
-    Al aire libre manda la luz; bajo techo, la hora de cierre. Un comedor no
-    tiene ninguna de las dos: a las ocho de la noche es justo lo que se busca.
+    **Al aire libre se mira cuando TERMINA, no cuando empieza.** Mirando solo
+    la llegada, un cerro de tres horas que arranca a las 15:37 pasaba el
+    filtro y acababa a las 18:37, veintidos minutos despues de que oscurece:
+    tres horas de monte que terminan a oscuras. La luz no se acaba a la
+    llegada, se acaba cuando se acaba.
+
+    Bajo techo, en cambio, manda la llegada: si el museo cierra a las seis, lo
+    que importa es haber entrado antes, no que te echen a y media.
+
+    Un comedor no tiene ninguna de las dos: a las ocho de la noche es justo lo
+    que se busca.
     """
-    minutos = _as_minutes(hora)
     if lugar.category in OUTDOOR_CATEGORIES:
-        return minutos >= _as_minutes(DUSK)
+        duracion = _stop_minutes(lugar, None, constraints) if constraints is not None else 0
+        return _as_minutes(llegada) + duracion > _as_minutes(DUSK)
     if lugar.category in INDOOR_CATEGORIES:
-        return minutos >= _as_minutes(INDOOR_CLOSES)
+        return _as_minutes(llegada) >= _as_minutes(INDOOR_CLOSES)
     return False
 
 
@@ -2080,7 +2168,7 @@ def _outdoor_after_dusk(
     for (lugar, _), hora in zip(
         secuencia, _arrival_times(secuencia, constraints, travel), strict=False
     ):
-        if _too_late_for(lugar, hora):
+        if _too_late_for(lugar, hora, constraints):
             return lugar
     return None
 

@@ -263,6 +263,12 @@ def score_quality(tags: dict, category: Category) -> float:
     return round(min(score, 1.0), 3)
 
 
+# Una calle numerada: "2a Calle Poniente", "15 Avenida Norte".
+STREET_NAME = re.compile(
+    r"^\s*\d+\s*(a|ª|o|º|era|nda|ra|ta|va)?\.?\s+(calle|avenida|av)\b", re.I
+)
+
+
 def evaluate(tags: dict) -> Verdict:
     """Decide si un lugar entra al catalogo.
 
@@ -294,6 +300,21 @@ def evaluate(tags: dict) -> Verdict:
     # Un nombre sin ninguna letra ("2001", "km 45") no identifica un lugar.
     if not re.search(r"[a-zA-ZáéíóúñÁÉÍÓÚÑ]", name):
         return Verdict(False, reason="nombre_sin_letras")
+
+    # Una calle no es un destino aunque OSM la etiquete como atraccion.
+    #
+    # El caso: "2a Calle Poniente o Via Morena" en Santa Ana, marcada
+    # `tourism=attraction`. Entraba en los itinerarios con noventa minutos de
+    # visita —la duracion por defecto de una atraccion— o sea hora y media de
+    # pie en una calle. Y estaba dos veces, porque son dos nodos de la misma
+    # calle a 220 metros.
+    #
+    # El patron es estrecho a proposito: un ordinal al principio y despues
+    # "calle" o "avenida". "Calle Arce" no se toca, que es una calle con nombre
+    # propio y puede ser un paseo; lo que se descarta es la numerada, que es
+    # nomenclatura y no lugar.
+    if STREET_NAME.match(_deaccent(name)):
+        return Verdict(False, reason="no_es_destino")
 
     classified = classify(tags)
     if classified is None:

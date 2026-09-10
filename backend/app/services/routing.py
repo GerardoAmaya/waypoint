@@ -239,6 +239,23 @@ class ORSClient:
         """El cupo del trazo por carretera."""
         return self.quotas[ENDPOINT_DIRECTIONS]
 
+    def _registrar(self, endpoint: str, respuesta: httpx.Response) -> None:
+        """Anota lo que la respuesta dice del cupo, y despues falla si toca.
+
+        **Un 403 "Quota exceeded" no trae la cabecera del cupo**, asi que sin
+        esto la unica noticia fiable de que no queda nada se perdia. El sintoma
+        estaba en pantalla: la cabecera decia "estas paradas estan lejos de
+        toda carretera y no se pueden medir" mientras el mapa dibujaba siete de
+        nueve tramos por carretera. La causa no era el terreno, era el cupo, y
+        el motor no podia distinguirlo porque un 403 tambien cuenta como
+        peticion hecha.
+        """
+        restante = _remaining_header(respuesta)
+        if respuesta.status_code == 403:
+            restante = 0
+        self.quotas[endpoint].sync_with_server(restante)
+        self._raise_for_status(respuesta)
+
     def _spend(self, endpoint: str) -> None:
         cupo = self.quotas[endpoint]
         if not cupo.try_spend():
@@ -290,8 +307,7 @@ class ORSClient:
         except httpx.HTTPError as exc:
             raise ORSError(f"no se pudo llamar a ORS: {exc}") from exc
 
-        self.quotas[ENDPOINT_MATRIX].sync_with_server(_remaining_header(respuesta))
-        self._raise_for_status(respuesta)
+        self._registrar(ENDPOINT_MATRIX, respuesta)
 
         datos = respuesta.json()
         distancias = datos.get("distances") or []
@@ -344,8 +360,7 @@ class ORSClient:
         except httpx.HTTPError as exc:
             raise ORSError(f"no se pudo llamar a ORS: {exc}") from exc
 
-        self.quotas[ENDPOINT_DIRECTIONS].sync_with_server(_remaining_header(respuesta))
-        self._raise_for_status(respuesta)
+        self._registrar(ENDPOINT_DIRECTIONS, respuesta)
 
         datos = respuesta.json()
         rasgos = datos.get("features") or []
@@ -648,9 +663,13 @@ def load_travel_matrix(
     if not stats.cached and not stats.fetched:
         if client is None:
             stats.reason = "no_key"
-        elif not stats.requests:
-            # El presupuesto se comprueba antes de llamar, asi que quedarse sin
-            # cupo se ve como cero peticiones y no como una peticion fallida.
+        elif not stats.requests or client.matrix_quota.remaining == 0:
+            # Dos formas de quedarse sin cupo y las dos son la misma noticia:
+            # el presupuesto local rechaza antes de llamar —cero peticiones— o
+            # ORS contesta 403 "Quota exceeded", que SI cuenta como peticion
+            # hecha. Sin el segundo caso, un cupo agotado se reportaba como
+            # "estas paradas estan lejos de toda carretera", que es otra cosa y
+            # se arregla de otra forma: una se espera, la otra no tiene arreglo.
             stats.reason = "no_quota"
         else:
             stats.reason = "unroutable"

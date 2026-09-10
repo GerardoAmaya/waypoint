@@ -1348,21 +1348,49 @@ class TestPuntoDePartida:
 
         assert all(restricciones.anchors_day(n) for n in (1, 2, 3))
 
-    def test_sin_regreso_el_ancla_vale_solo_el_primer_dia(self):
-        """Partir de un sitio se hace una vez; dormir ahi, todas las noches."""
-        pizzeria = lugar("Pizzeria", 13.6900, -89.2100, Category.food, 0.5)
+    def test_saliendo_hacia_otra_zona_el_ancla_vale_solo_el_primer_dia(self):
+        """Partir de un sitio se hace una vez; dormir ahi, todas las noches.
+
+        La partida esta LEJOS de la zona a proposito: es el caso de "tres dias
+        por el occidente saliendo de San Salvador", que no vuelve a San
+        Salvador cada noche.
+        """
+        lejos = lugar("Pizzeria", 13.6900, -90.3000, Category.food, 0.5)
         restricciones = Constraints(
             days=3,
             center_lat=13.70,
             center_lon=-89.22,
-            start_place=pizzeria,
+            start_place=lejos,
             return_to_start=False,
             include_meals=False,
         )
 
+        assert not restricciones.start_inside_area
         assert restricciones.anchors_day(1)
         assert not restricciones.anchors_day(2)
         assert not restricciones.anchors_day(3)
+
+    def test_si_la_partida_esta_en_la_zona_todos_los_dias_salen_de_ahi(self):
+        """Quien nombra un sitio dentro de la zona esta diciendo donde se aloja.
+
+        Sin esto, "dos dias en Santa Ana partiendo de Metrocentro Santa Ana"
+        armaba un segundo dia a pie que arrancaba en el Volcan de Santa Ana, a
+        veinte kilometros: un dia caminando al que no se puede llegar
+        caminando.
+        """
+        cerca = lugar("Metrocentro", 13.6900, -89.2100, Category.attraction, 0.5)
+        restricciones = Constraints(
+            days=2,
+            center_lat=13.70,
+            center_lon=-89.22,
+            start_place=cerca,
+            return_to_start=False,
+            include_meals=False,
+        )
+
+        assert restricciones.start_inside_area
+        assert restricciones.anchors_day(1)
+        assert restricciones.anchors_day(2)
 
     def test_sin_ancla_nada_cambia(self):
         restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
