@@ -33,9 +33,9 @@ from app.models import Category
 from app.schemas import ItineraryRequest
 from app.services.geocode import (
     ResolvedArea,
+    buscar_lugar,
     resolve_area,
     resolve_must_visit,
-    resolve_start_place,
     zone_names,
 )
 from app.services.places import PlaceHit
@@ -435,6 +435,33 @@ def _default_client():
     return Anthropic(api_key=settings.anthropic_api_key)
 
 
+def _no_se_encontro(texto: str, sugerencias: list[PlaceHit]) -> str:
+    """El mensaje de que no se encontro el lugar, con lo que si hay parecido.
+
+    **"Probá con el nombre como aparece en el mapa" era un callejon sin
+    salida.** El caso real: alguien escribio "Multiplaza San Salvador", el
+    catalogo tiene "Centro Comercial Multiplaza" —activo, el mismo sitio— y la
+    respuesta le pedia adivinar como estaba escrito. Desde fuera no hay forma.
+
+    Sugerir no es sustituir: el dia sigue sin empezar en un lugar que nadie
+    nombro. Lo que cambia es que ahora se dice cual podria ser, y la persona
+    elige.
+    """
+    if not sugerencias:
+        return (
+            f"no encontré {texto!r} en el catálogo, y no quiero empezar el día "
+            "en otro lugar parecido. Probá con el nombre como aparece en el "
+            "mapa, o decime la zona y armo el día ahí."
+        )
+
+    nombres = [lugar.name for lugar in sugerencias]
+    lista = nombres[0] if len(nombres) == 1 else ", ".join(nombres[:-1]) + " o " + nombres[-1]
+    return (
+        f"no encontré {texto!r} tal cual, y no quiero empezar el día en otro "
+        f"lugar parecido sin preguntarte. ¿Era {lista}? Escribilo así y lo armo."
+    )
+
+
 def interpret(db: Session, frase: str, client=None) -> Interpretation:
     """Traduce la frase a restricciones y resuelve la zona contra el catalogo."""
     frase = (frase or "").strip()
@@ -506,7 +533,8 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
     partida: PlaceHit | None = None
 
     if texto_partida:
-        partida = resolve_start_place(db, texto_partida)
+        buscado = buscar_lugar(db, texto_partida)
+        partida = buscado.hit
         if partida is None:
             # **Se dice, no se sustituye.** El caso real: "Hotel Barcelo" no
             # esta en el catalogo, y con umbral bajo la busqueda difusa devuelve
@@ -516,11 +544,7 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
                 area_text=None,
                 unmapped=unmapped,
                 notes=notes,
-                error=(
-                    f"no encontré {texto_partida!r} en el catálogo, y no quiero "
-                    "empezar el día en otro lugar parecido. Probá con el nombre "
-                    "como aparece en el mapa, o decime la zona y armo el día ahí."
-                ),
+                error=_no_se_encontro(texto_partida, buscado.sugerencias),
             )
 
     texto_area = datos.get("area")

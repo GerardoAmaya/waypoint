@@ -328,6 +328,149 @@ def search_by_name(
     return [_row_to_hit(f) for f in filas]
 
 
+# Cuanto tiene que despegarse el primero del segundo para darlo por bueno.
+#
+# **Sin margen, buscar "Galerias" elegiria entre dos empatados a 1.00**: el
+# centro comercial y un local de comida rapida que esta adentro. Elegir uno de
+# los dos por su calidad seria exactamente la sustitucion silenciosa que el
+# resto del modulo evita. Con margen, un empate se declara ambiguo y quien
+# llama lo dice en vez de adivinar.
+#
+# Una decima esta medido sobre los casos reales: los que despegan lo hacen por
+# 0,25 o mas —Multiplaza 0,36, Volcan de Santa Ana 0,35, Las Cascadas 0,25— y
+# los ambiguos empatan en 0,00 o quedan en 0,05. No hay nada en la franja.
+MARGEN_DE_DESEMPATE = 0.10
+
+# Cuanto tiene que encajar el nombre buscado dentro del encontrado.
+#
+# **El margen protege de los empates y no de un mal candidato solitario.** El
+# caso que lo enseño: "Hotel California de Santa Ana" no esta en el catalogo;
+# al quitarle la zona queda "hotel california de", y eso pesca "Parque Central
+# de California" —por la palabra California— sin que nadie le dispute el
+# puesto, asi que el margen lo daba por bueno.
+#
+# Medido sobre los aciertos y los fallos conocidos, la señal que los separa es
+# esta: los aciertos encajan enteros, con 1,00, y los fallos se quedan por
+# debajo. "las cascadas" contra "7 cascadas" da 0,75; "hotel california de"
+# contra "Parque Central de California", 0,70. Los unicos fallos que llegan a
+# 1,00 son empates —"galerias" contra el centro comercial y contra un local de
+# comida rapida— y de esos se encarga el margen.
+#
+# Se pide 0,95 y no 1,00 exacto para no depender de como redondea el indice de
+# trigramas. Exigir que encaje entero no deja fuera los errores de escritura:
+# de esos se encarga la primera pasada, que compara las cadenas completas.
+ENCAJE_MINIMO = 0.95
+
+# Cuanto tiene que encajar para merecer al menos una sugerencia.
+#
+# Mas bajo que ENCAJE_MINIMO —sugerir es mas barato que elegir— pero no tanto
+# como el umbral de busqueda: con 0,6, a quien escribia "Hotel California de
+# Santa Ana" se le proponia "Parque Central de California", que es justo el
+# candidato que acababamos de rechazar por malo. Una sugerencia equivocada es
+# peor que ninguna, porque manda a la persona a escribir un nombre que no
+# queria.
+ENCAJE_PARA_SUGERIR = 0.80
+
+
+def search_contained_by_name(
+    db: Session,
+    query: str,
+    *,
+    limit: int = 5,
+) -> list[PlaceHit]:
+    """Busca el nombre CONTENIDO dentro de otro mas largo, sin tildes.
+
+    **Es el complemento de search_by_name, no su reemplazo.** `similarity`
+    compara las cadenas enteras, asi que "Multiplaza" contra "Centro Comercial
+    Multiplaza" saca 0,41: el nombre correcto ocupa un tercio del texto y el
+    resto cuenta como diferencia. `word_similarity` busca el mejor tramo de
+    palabras dentro del nombre y da 1,00, que es lo que una persona quiere
+    decir cuando escribe el nombre corto de un centro comercial.
+
+    Las tildes se quitan de los dos lados porque el catalogo viene de
+    OpenStreetMap y las trae, y quien escribe en una caja de texto no.
+
+    Devuelve los candidatos ordenados; **no decide**. Quien llama comprueba el
+    margen contra el segundo, porque un nombre generico como "Museo" empata con
+    veinte lugares y ahi no hay nada que elegir.
+    """
+    limit = min(max(limit, 1), MAX_LIMIT)
+
+    filas = db.execute(
+        text("""
+            SELECT p.id, p.name, p.category::text AS category, p.subcategory,
+                   p.lat, p.lon, p.quality_score, p.tags,
+                   word_similarity(unaccent(lower(:query)), unaccent(lower(p.name)))
+                       AS cercania
+            FROM places p
+            WHERE p.is_active
+              AND word_similarity(unaccent(lower(:query)), unaccent(lower(p.name)))
+                  >= :min_similarity
+            ORDER BY cercania DESC,
+                     similarity(unaccent(lower(p.name)), unaccent(lower(:query))) DESC,
+                     p.quality_score DESC
+            LIMIT :limit
+        """),
+        {"query": query, "min_similarity": 0.6, "limit": limit},
+    ).all()
+
+    return [_row_to_hit(f) for f in filas]
+
+
+def pick_unambiguous(candidatos: list[PlaceHit], db: Session, query: str) -> PlaceHit | None:
+    """El primero, solo si encaja entero Y se despega del segundo.
+
+    Hacen falta las dos condiciones y cada una ataja un fallo distinto: ver
+    ENCAJE_MINIMO para el mal candidato solitario y MARGEN_DE_DESEMPATE para el
+    empate. Con una sola, los dos casos medidos se colaban.
+    """
+    if not candidatos:
+        return None
+
+    cercanias = (
+        db.execute(
+            text("""
+            SELECT word_similarity(unaccent(lower(:query)), unaccent(lower(name)))
+                       AS cercania
+            FROM places WHERE id = ANY(:ids)
+            ORDER BY cercania DESC
+        """),
+            {"query": query, "ids": [c.id for c in candidatos[:2]]},
+        )
+        .scalars()
+        .all()
+    )
+
+    if not cercanias or cercanias[0] < ENCAJE_MINIMO:
+        return None
+    if len(cercanias) < 2:
+        return candidatos[0]
+    return candidatos[0] if cercanias[0] - cercanias[1] >= MARGEN_DE_DESEMPATE else None
+
+
+def rank_suggestions(db: Session, query: str, candidatos: list[PlaceHit]) -> list[PlaceHit]:
+    """Ordena candidatos por lo bien que encajan y descarta los que no llegan.
+
+    Se usa para lo que se le muestra a la persona cuando no se pudo decidir.
+    Ver ENCAJE_PARA_SUGERIR.
+    """
+    if not candidatos:
+        return []
+
+    por_id = {c.id: c for c in candidatos}
+    filas = db.execute(
+        text("""
+            SELECT id, word_similarity(unaccent(lower(:query)), unaccent(lower(name)))
+                       AS cercania
+            FROM places WHERE id = ANY(:ids)
+            ORDER BY cercania DESC
+        """),
+        {"query": query, "ids": list(por_id)},
+    ).all()
+
+    return [por_id[f.id] for f in filas if f.cercania >= ENCAJE_PARA_SUGERIR]
+
+
 def search_in_area(
     db: Session,
     lat: float,

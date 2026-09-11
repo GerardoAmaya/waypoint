@@ -67,12 +67,47 @@ BUDGET_BY_MODE: dict[str, float] = {"driving": 25.0, "walking": 8.0}
 # que no se vuelven rallies —el reloj los sigue limitando—. De 60 a 120 se
 # ganan cinco paradas y se pagan tres kilometros.
 #
-# A pie se queda en ocho porque no hay con que moverlo: el unico caso del banco
-# que camina pide seis kilometros explicitos, que es un limite de la persona y
-# se respeta, y el unico dia a pie observado de verdad uso 3 de 8 y llego a las
-# 19:34. Cambiarlo seria elegir un numero sin medirlo, que es de lo que este
-# bloque viene a curar.
-UNSTATED_BUDGET_BY_MODE: dict[str, float] = {"driving": 60.0, "walking": 8.0}
+# A pie se midio aparte, porque el banco solo tiene dos dias caminando y los dos
+# llevan su numero escrito. Sobre 16 dias a pie de ocho zonas:
+#
+#     techo   paradas   comidas   mediana sin usar   km reales/dia
+#      8 km      48         5          302 min            4,4
+#     12 km      58        11          231 min            7,4
+#     15 km      62        13          213 min            9,5
+#     20 km      69        16           90 min           13,0
+#     30 km      68        19           90 min           12,7
+#
+# Con ocho, un dia a pie desperdiciaba cinco horas de reloj y solo se colocaban
+# cinco comidas en dieciseis dias: el sintoma que lo destapo fue un aviso que
+# rechazaba un comedor por un desvio de 600 metros.
+#
+# **Veinte parecia la rodilla y era un acantilado.** Esa primera lectura miraba
+# la media, que es 13 km, y el numero que decide es el maximo. Sobre 32 dias a
+# pie de ocho zonas:
+#
+#     techo   paradas   comidas   km medios   km MAXIMO   dias al 95% del techo
+#     20 km     137        32        12,9        19,9          5 de 32
+#     25 km     140        34        13,1        23,4          0 de 32
+#     30 km     136        38        12,6        23,4          0 de 32
+#     40 km     128        42        14,9        29,2          0 de 32
+#
+# Un dia a pie natural llega a 23,4 km, asi que con el techo en veinte habia
+# cinco dias apretados contra el limite, y un dia al 99% de su techo no se
+# recorta: se desmorona. El caso concreto: dos dias saliendo de un hotel, el
+# segundo a pie, pasaba de siete paradas con cena a cuatro sin cena porque al
+# poner fecha cambiaba el comedor del almuerzo y la ruta subia de 19,8 a 20,0
+# km. Veinticinco despeja el maximo natural sin inflar nada: la media se queda
+# en 13 y el maximo en 23,4, igual que con treinta.
+#
+# En coche no hace falta el mismo margen: con sesenta hay un solo dia de 62
+# pegado al techo —Metapan, zona fronteriza donde 57 km es un dia legitimo—
+# contra los cinco de 32 que habia a pie.
+#
+# **BUDGET_BY_MODE se queda en ocho a proposito y son cosas distintas.** Ese se
+# usa cuando la persona SI dio un numero pero para otro modo, asi que ahi hay
+# que convertir una intencion suya; esto es no tener ninguna señal. Probablemente
+# ocho tambien sea corto alla, pero eso no esta medido y no se toca sin medirlo.
+UNSTATED_BUDGET_BY_MODE: dict[str, float] = {"driving": 60.0, "walking": 25.0}
 
 # Cuanto se queda uno en cada tipo de lugar, en minutos. Son estimaciones de
 # sentido comun, no datos: un mirador es una parada corta y un parque nacional
@@ -2252,10 +2287,16 @@ def _meal_out_of_reach(
         espera = _minutes_between(dia.end, ventana[0])
         # Igual que en _meal_advice: no se aconseja subir un limite que la
         # persona no puso.
+        # **Aqui el freno es el reloj, y por eso la salida es el horario.** Es
+        # el unico de los dos avisos de comida donde alargar el dia sirve: en
+        # el otro el limite son los kilometros, y mas horas no agregan ni un
+        # metro. No hace falta que calcule nada, solo que diga hasta cuando
+        # puede.
         salida = (
-            "Alargá el día o subí el límite de traslado si querés que llegue"
+            "Decime hasta qué hora podés y lo acomodo, o subí el límite de "
+            "traslado si querés que llegue"
             if pidio_el_tope
-            else "Decime que podés moverte más en el día si querés que llegue"
+            else "Decime hasta qué hora podés y lo acomodo"
         )
         detalle = (
             f"Pediste {nombre} y este día no llega: termina a las "
@@ -2353,20 +2394,35 @@ def _meal_advice(
 
     total = dia.travel_km + costo
     tope = constraints.budget_for(dia.number)
+    modo = constraints.mode_for(dia.number)
 
-    # **No se le dice "tu límite" a un número que no puso.** El techo sin pedir
-    # sale de UNSTATED_BUDGET_BY_MODE, y llamarlo suyo —y aconsejarle subirlo—
-    # es como se descubrio el fallo: alguien que solo habia dicho "de vuelta
-    # antes de las 11 pm" leia que se habia pasado de un limite propio.
+    # **La salida que se ofrece tiene que servir en el modo del dia.** Tres
+    # situaciones distintas, y darles el mismo consejo lo vuelve inservible en
+    # dos de ellas.
     if constraints.budget_was_asked_for:
+        # Puso un numero: piensa en ese numero y se le habla en el.
         cierre = (
             f"sobre tu límite de {tope:.0f}. Llevá {nombre}, o subí el "
             f"límite de traslado a {total:.0f} km"
         )
-    else:
+    elif modo == "walking" and total <= UNSTATED_BUDGET_BY_MODE["driving"]:
+        # **A pie el numero no es una salida, es un absurdo.** Medido sobre
+        # seis zonas, los siete dias que llegaban aca eran todos a pie, y a uno
+        # le decia "pedime un dia de hasta 27 km": cinco o seis horas
+        # caminando. Lo que de verdad destraba ese dia es el modo, porque en
+        # coche el techo pasa de ocho a sesenta.
         cierre = (
-            f"y eso es más de lo que da un día sin decirme cuánto te querés "
-            f"mover. Llevá {nombre}, o pedime un día de hasta {total:.0f} km"
+            f"y eso es más de lo que suele dar un día a pie. Llevá {nombre}, "
+            "o probá ese día en coche, que llega bastante más lejos"
+        )
+    else:
+        # En coche sin numero pedido: no hace falta que calcule nada, solo que
+        # diga que no le importa moverse. El numero va de referencia, no de
+        # tarea.
+        cierre = (
+            f"y eso es más de lo que suele dar un día. Llevá {nombre}, o decime "
+            f"que no te importa moverte más y te lo acomodo (serían unos "
+            f"{total:.0f} km)"
         )
 
     return Advice(

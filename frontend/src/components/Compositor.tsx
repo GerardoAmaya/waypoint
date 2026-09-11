@@ -43,12 +43,37 @@ const PASOS: { fase: Fase; texto: string }[] = [
   El precio es que para escribir lo propio hay que borrar esto primero. Se
   paga una vez y a cambio la pantalla ensena su techo en vez de su suelo.
 */
-export const PETICION_INICIAL =
-  "Me estoy hospedando en Hotel Barceló, quiero un itinerario de 2 días a partir de las 10 am, el primer día en coche y el segundo caminando, realizaré cena en los 2 viajes y quiero estar de vuelta en el hotel antes de las 11 p.m";
+/*
+  La petición que ya viene escrita al abrir el compositor.
 
+  **Es la que más trabaja de toda la interfaz**, porque nadie lee una lista de
+  capacidades: se ve un ejemplo y se entiende de qué es capaz esto. Por eso
+  lleva siete cosas a la vez —fecha, punto de partida, dos días, hora de
+  inicio, un modo distinto por día, cena nombrada y hora de regreso— y no una
+  frase bonita y vacía.
+
+  Bajó de 46 palabras a 32 sin perder ninguna de las siete: la versión larga
+  decía "me estoy hospedando en", "quiero un itinerario de", "realizaré cena en
+  los 2 viajes", y ninguna de esas vueltas agregaba un rasgo. Lo que sí ganó
+  fue la fecha, que antes no estaba y ahora arrastra el clima y los horarios de
+  apertura.
+
+  **No se puede recortar "y vuelvo antes de las 11", aunque lo parezca.** Esa
+  cláusula lleva dos cosas: que el día cierre en el hotel y que el tope sean
+  las 23:00. Sin ella el segundo día termina a las 15:11 y se queda sin la cena
+  que la misma frase pide, así que el ejemplo se contradice solo.
+*/
+export const PETICION_INICIAL =
+  "Dos días desde el Hotel Barceló a partir del sábado a las 10, el primero en carro y el segundo a pie, ceno los dos días y vuelvo antes de las 11";
+
+/*
+  Los tres tocan cosas distintas a propósito: hablar en vago —"odio
+  madrugar"—, nombrar un lugar concreto y una fecha, y decir de dónde se sale.
+  Tres variantes de lo mismo no enseñarían nada.
+*/
 const EJEMPLOS = [
   "Tres días por la Ruta de las Flores, odio madrugar",
-  "Un día en Suchitoto caminando, sin museos",
+  "El sábado en Santa Ana, quiero subir al volcán",
   "Dos días saliendo desde Santa Tecla, en carro",
 ];
 

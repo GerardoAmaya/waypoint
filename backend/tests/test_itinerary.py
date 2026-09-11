@@ -24,6 +24,7 @@ from app.services.itinerary import (
     BUDGET_BY_MODE,
     DEFAULT_DURATIONS,
     DEFAULT_MEAL_MINUTES,
+    DINNER_WINDOW,
     NOMBRE_VAGO_KM,
     SUBCATEGORY_PENALTY_KM,
     UNSTATED_BUDGET_BY_MODE,
@@ -33,6 +34,7 @@ from app.services.itinerary import (
     Stop,
     _fill_cost,
     _insert_meals,
+    _meal_out_of_reach,
     _meals_that_fit,
     _name_key,
     _outdoor_after_dusk,
@@ -2913,10 +2915,77 @@ class TestElTopeDeKilometrosQueNadiePidio:
         aviso = next(c for c in sin_pedir.advice if c.kind == "bring_lunch")
         assert "tu límite" not in aviso.detail
         assert "subí el límite" not in aviso.detail
-        assert "pedime un día de hasta" in aviso.detail
+        assert "decime que no te importa moverte más" in aviso.detail
 
         pedido = assemble([comedor], destinos, Constraints(max_travel_km_per_day=25.0, **base))
         aviso = next(c for c in pedido.advice if c.kind == "bring_lunch")
         # Quien sí puso un límite sigue leyendo que es suyo y cómo subirlo.
         assert "tu límite de 25" in aviso.detail
         assert "subí el límite de traslado" in aviso.detail
+
+
+class TestLaSalidaQueSeOfreceSirveEnSuModo:
+    """Cada aviso de comida tiene que ofrecer algo que de verdad funcione.
+
+    Medido sobre seis zonas: los siete días que caían en el aviso de
+    presupuesto eran **todos a pie**, y a uno le decía "pedime un día de hasta
+    27 km", que son cinco o seis horas caminando. El número no es una salida a
+    pie; lo que destraba ese día es el modo, porque en coche el techo pasa de
+    ocho a sesenta.
+    """
+
+    # El comedor tiene que quedar fuera del techo de SU modo, y los techos sin
+    # pedir son ocho a pie y sesenta en coche.
+    LEJOS = {"walking": 13.78, "driving": 14.30}
+
+    def _escena(self, modo):
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.7015, -89.2215, Category.culture),
+        ]
+        comedor = lugar("Comedor Lejano", self.LEJOS[modo], -89.22, Category.food)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            mode=modo,
+            earliest_start=time(10, 0),
+            latest_end=time(20, 0),
+            include_meals=True,
+        )
+        itinerario = assemble([comedor], destinos, restricciones)
+        return next(c for c in itinerario.advice if c.kind == "bring_lunch")
+
+    def test_a_pie_ofrece_el_coche_y_no_un_numero_de_kilometros(self):
+        aviso = self._escena("walking")
+
+        assert "en coche" in aviso.detail
+        assert "pedime un día de hasta" not in aviso.detail
+
+    def test_en_coche_no_le_pide_que_calcule(self):
+        """El número va de referencia, no de tarea: basta con que diga que no
+        le importa moverse."""
+        aviso = self._escena("driving")
+
+        assert "decime que no te importa moverte más" in aviso.detail
+        assert "en coche" not in aviso.detail
+
+    def test_el_aviso_del_reloj_habla_de_horas_y_no_de_kilometros(self):
+        """El otro aviso, el del día que no llega a la franja de una comida
+        pedida. Ahí el freno sí es el reloj, y más horas sí sirven —mientras
+        que en el del presupuesto no agregarían ni un metro."""
+        dia = Day(
+            number=1,
+            stops=[
+                Stop(
+                    place=lugar("Museo", 13.700, -89.220, Category.culture),
+                    arrival=time(10, 0),
+                    departure=time(15, 0),
+                )
+            ],
+        )
+
+        aviso = _meal_out_of_reach(dia, "dinner", DINNER_WINDOW, pidio_el_tope=False)
+
+        assert "hasta qué hora podés" in aviso.detail
+        assert "km" not in aviso.detail

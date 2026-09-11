@@ -786,9 +786,31 @@ valor por defecto:
 Sesenta es la rodilla, y la columna que lo justifica es la última: con el techo
 en 60 los días siguen recorriendo 24 km de media, o sea que no se vuelven
 rallies — el reloj los sigue limitando. De 60 a 120 se ganan cinco paradas y se
-pagan tres kilómetros. A pie se queda en ocho porque no hay con qué moverlo: el
-único caso del banco que camina pide seis kilómetros explícitos, que es un
-límite de la persona y se respeta.
+pagan tres kilómetros.
+
+**A pie hubo que medirlo aparte, y estaba igual de estrangulado.** El banco solo
+tiene dos días caminando y los dos llevan su número escrito, así que no lo
+detectaba. El síntoma apareció en un aviso: *"Celeste Imperio agrega 0,6 km y
+dejaría el día en 8,4 km, y eso es mucho para un día a pie"* — rechazando un
+comedor por un desvío de **seiscientos metros**. Sobre 16 días a pie de ocho
+zonas:
+
+| techo | paradas | comidas puestas | mediana sin usar | km reales/día |
+|---|---|---|---|---|
+| 8 km | 48 | **5** | **302 min** | 4,4 |
+| 12 km | 58 | 11 | 231 min | 7,4 |
+| 15 km | 62 | 13 | 213 min | 9,5 |
+| **20 km** | **69** | **16** | **90 min** | **13,0** |
+| 30 km | 68 | 19 | 90 min | 12,7 |
+
+Con ocho, un día a pie desperdiciaba cinco horas de reloj y en dieciséis días se
+colocaban cinco comidas. Con veinte, el día resultante camina 13 km de verdad:
+unas tres horas repartidas en toda la jornada, no una maratón.
+
+`BUDGET_BY_MODE` se queda en ocho a propósito, y son cosas distintas: ese se usa
+cuando la persona **sí** dio un número pero para otro modo, así que ahí hay que
+convertir una intención suya; esto es no tener ninguna señal. Probablemente ocho
+también sea corto allá, pero no está medido y no se toca sin medirlo.
 
 El efecto de lado fue el mejor: los días con "llevá comida" cayeron del 24% al
 15%, porque un día con aire alcanza un restaurante.
@@ -796,10 +818,27 @@ El efecto de lado fue el mejor: los días con "llevá comida" cayeron del 24% al
 **Dos cosas más que el fallo dejó al descubierto.**
 
 El aviso no puede llamar "tu límite" a un número que la persona no puso, ni
-aconsejarle subirlo. Ahora distingue los dos casos: quien puso un límite lee
-*"sobre tu límite de 25, subí el límite de traslado a 32 km"*, y quien no puso
-ninguno lee *"eso es más de lo que da un día sin decirme cuánto te querés
-mover, pedime un día de hasta 32 km"*.
+aconsejarle subirlo. Y la primera reescritura tampoco servía: decía *"pedime un
+día de hasta 27 km"*, y medidos sobre seis zonas, **los siete días que llegaban
+a ese aviso eran a pie** — o sea que le proponía a alguien caminando cinco o
+seis horas de caminata. Ahora la salida que se ofrece depende de qué la
+destraba:
+
+| situación | qué se ofrece |
+|---|---|
+| puso un límite | *"sobre tu límite de 25, subí el límite de traslado a 32 km"* |
+| a pie, sin límite puesto | *"probá ese día en coche, que llega bastante más lejos"* |
+| en coche, sin límite puesto | *"decime que no te importa moverte más y te lo acomodo"* |
+
+El número deja de ser una tarea y pasa a ser una referencia entre paréntesis:
+nadie tiene que calcular kilómetros para pedir lo que quiere.
+
+**Y el otro aviso de comida, el del día que no llega a la franja, habla de horas
+y no de kilómetros.** Es el único de los dos donde alargar el día sirve: ahí el
+freno es el reloj, mientras que en el del presupuesto más horas no agregarían ni
+un metro. Dice *"decime hasta qué hora podés y lo acomodo"*. Ofrecer flexibilidad
+horaria contra un problema de kilómetros habría sido la misma falta que el
+proyecto ya corrigió dos veces: dar la causa equivocada.
 
 Y el banco dejó de comprobar el presupuesto cuando nadie lo pidió. Medir al
 motor contra su propia constante no dice si cumplió lo que le pidieron: dice
@@ -812,6 +851,71 @@ techo a las 18:00 y `DUSK` lo de afuera a las 18:15, así que lo único que
 estira un día más allá de las siete de la tarde es la cena, que está exenta con
 razón. Los dos días del reporte terminan ahora a las 20:05 y las 19:34, con
 cena, y eso es lo más lejos que el catálogo permite llegar.
+
+### El nombre con el que la gente llama a un lugar
+
+El reporte: *"Multiplaza San Salvador no existe en nuestro banco de datos?"*.
+Sí existía —`Centro Comercial Multiplaza`, activo, el mismo sitio— y la
+respuesta había sido *"probá con el nombre como aparece en el mapa"*, que desde
+fuera es imposible de adivinar.
+
+La causa es que `similarity` de pg_trgm compara **cadenas enteras**. Contra
+`Centro Comercial Multiplaza`, la palabra `Multiplaza` ocupa un tercio del
+texto y el resto cuenta como diferencia: 0,41 contra un umbral de 0,60. No era
+un hueco del catálogo, era la métrica equivocada. Y no era un caso aislado:
+
+| lo que uno escribe | antes |
+|---|---|
+| `Multiplaza` | no encontrado |
+| `Metrocentro San Salvador` | no encontrado |
+| `Galerías` | no encontrado |
+
+`word_similarity` busca el mejor tramo de palabras **dentro** del nombre, que es
+justo lo que alguien quiere decir al escribir el nombre corto de un centro
+comercial, y `unaccent` quita las tildes que el catálogo trae de OSM y nadie
+teclea. Pero abrir la búsqueda sin más es la receta para la sustitución
+silenciosa que este proyecto evita en todas partes, así que la búsqueda va en
+cuatro pasadas de menos a más permisiva:
+
+1. La de siempre, por parecido de la cadena entera. **Lo que ya funcionaba no
+   cambió**, y hay tests que lo sujetan.
+2. El nombre contenido en otro más largo, y solo si hay un ganador claro.
+3. Lo mismo quitando el nombre de la zona, que es el último recurso.
+4. Nada, pero con sugerencias.
+
+**Hacen falta dos guardianes y cada uno ataja un fallo distinto, los dos
+medidos.** El margen de desempate rechaza los empates: `Galerías` encaja perfecto
+en el centro comercial y en `Go Green Galerias`, un local que está adentro, y
+elegir por calidad sería decidir a dedo. El encaje mínimo rechaza al mal
+candidato solitario: `Hotel California de Santa Ana` no existe, al recortarle la
+zona queda `hotel california de`, y eso pesca `Parque Central de California` por
+una sola palabra **sin que nadie le dispute el puesto**, así que el margen lo
+daba por bueno. La señal que los separa está medida: los aciertos encajan
+enteros con 1,00 y los fallos se quedan en 0,70 o 0,75.
+
+**Y quitar la zona tiene que ser el último paso, no el primero.** Medido:
+`Metrocentro Santa Ana` existe tal cual y recortarlo lo volvería ambiguo entre
+tres Metrocentros; `Volcán de Santa Ana` recortado queda en `volcán de`, que se
+parece igual al Volcán de Izalco. Solo se prueba cuando la frase entera ya no
+encontró nada.
+
+**Sugerir no es sustituir.** El día sigue sin empezar en un lugar que nadie
+nombró; lo que cambia es que ahora se dice cuál podría ser:
+
+> no encontré 'Galerias' tal cual, y no quiero empezar el día en otro lugar
+> parecido sin preguntarte. ¿Era Centro Comercial Galerías o Go Green Galerias?
+> Escribilo así y lo armo.
+
+Las sugerencias llevan su propio umbral, más bajo que el de decidir pero no
+tanto como el de buscar: con el umbral de búsqueda, a quien escribía `Hotel
+California de Santa Ana` se le proponía el parque que acabábamos de rechazar por
+malo. Una sugerencia equivocada es peor que ninguna, porque manda a la persona a
+escribir un nombre que no quería.
+
+**Lo que sigue roto y no es de esta tanda**: la primera pasada acepta `Las
+Cascadas` → `7 cascadas`, una catarata en vez del centro comercial, y `Museo` →
+`Museo Ajá`. Vienen del umbral de la búsqueda de siempre, que no se tocó para
+no mover lo que ya funciona, y se arreglan aparte.
 
 ### Lo que se pide con nombre se cumple o se explica
 
@@ -863,7 +967,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Paradas fuera de hora (luz o cierre) | 0 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
-| Tests | 703 backend, 55 frontend |
+| Tests | 716 backend, 55 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo

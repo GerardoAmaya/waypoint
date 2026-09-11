@@ -213,5 +213,9 @@ class TestLasRestriccionesLleganEnteras:
         # La consecuencia, que es lo que de verdad importaba: el dia 2 se
         # rehace a pie y con el presupuesto de a pie.
         assert restricciones.mode_for(2) == "walking"
-        assert restricciones.budget_for(2) == 8.0
+        # Contra la constante y no contra el numero: lo que importa es que el
+        # dia a pie reciba el presupuesto de a pie y no el del coche, no cual
+        # sea el valor de ese presupuesto hoy.
+        assert restricciones.budget_for(2) == motor.UNSTATED_BUDGET_BY_MODE["walking"]
+        assert restricciones.budget_for(2) < motor.UNSTATED_BUDGET_BY_MODE["driving"]
         assert restricciones.anchors_day(2) is True

@@ -17,13 +17,20 @@ escritura con trigramas.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass, field, replace
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.services.places import PlaceHit, search_by_name
+from app.services.places import (
+    PlaceHit,
+    pick_unambiguous,
+    rank_suggestions,
+    search_by_name,
+    search_contained_by_name,
+)
 
 
 @dataclass(frozen=True)
@@ -445,6 +452,103 @@ def resolve_area(
 MIN_SIMILARITY_PARTIDA = 0.60
 
 
+@dataclass
+class LugarBuscado:
+    """El resultado de buscar un lugar por su nombre.
+
+    Lleva las sugerencias ademas del hallazgo porque **"no lo encontre" a secas
+    era un callejon sin salida**. El caso real: alguien escribio "Multiplaza
+    San Salvador", el catalogo tiene "Centro Comercial Multiplaza" —activo, a
+    dos kilometros de donde esa persona creia—, y la respuesta fue que probara
+    con el nombre como aparece en el mapa. No hay forma de adivinar cual es ese
+    nombre desde fuera.
+
+    Sugerir no es sustituir: se sigue sin empezar el dia en un lugar que nadie
+    nombro, pero ahora se dice cual podria ser.
+    """
+
+    hit: PlaceHit | None = None
+    sugerencias: list[PlaceHit] = field(default_factory=list)
+
+
+def _sin_tildes(texto: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn"
+    ).lower()
+
+
+def _sin_el_nombre_de_la_zona(texto: str) -> str | None:
+    """La consulta sin el nombre de zona que la acompaña, o None si no lleva.
+
+    "Multiplaza San Salvador" es un lugar mas una ciudad, y la ciudad ya es un
+    concepto aparte en este sistema. Como texto para buscar un nombre propio,
+    sobra: los tokens de la ciudad se llevan la busqueda difusa hacia cualquier
+    cosa que tambien se llame asi.
+
+    **Es el ultimo recurso y no el primero, y hay dos motivos medidos.**
+    "Metrocentro Santa Ana" existe tal cual en el catalogo y recortarlo lo
+    volveria ambiguo entre tres Metrocentros; y "Volcan de Santa Ana" recortado
+    queda en "volcan de", que se parece igual al Volcan de Izalco. Por eso solo
+    se prueba cuando la busqueda de la frase entera ya no encontro nada.
+    """
+    base = _sin_tildes(texto)
+    for zona in sorted(zone_names(), key=len, reverse=True):
+        nombre = _sin_tildes(zona)
+        if nombre in base and len(base) > len(nombre) + 2:
+            recorte = re.sub(r"\s+", " ", base.replace(nombre, " ")).strip(" ,.-")
+            if len(recorte) >= 4:
+                return recorte
+    return None
+
+
+def buscar_lugar(db: Session, texto: str) -> LugarBuscado:
+    """Busca un lugar por su nombre, en cuatro pasadas de menos a mas permisiva.
+
+    1. La busqueda de siempre, por parecido de la cadena entera. Lo que hoy
+       funciona sigue exactamente igual.
+    2. El nombre contenido dentro de otro mas largo: "Multiplaza" dentro de
+       "Centro Comercial Multiplaza". Solo si hay un ganador claro.
+    3. Lo mismo quitando el nombre de la zona, que es el ultimo recurso porque
+       recortar puede empeorar la busqueda. Ver _sin_el_nombre_de_la_zona.
+    4. Nada, pero con sugerencias para que quien pregunta pueda corregir.
+
+    **Cada pasada es mas permisiva y ninguna decide sin margen.** Un nombre
+    generico como "Museo" empata con veinte lugares, y ahi no se elige: se
+    sugiere.
+    """
+    hits = search_by_name(db, texto, limit=5, min_similarity=MIN_SIMILARITY_PARTIDA)
+    if hits:
+        return LugarBuscado(hit=hits[0])
+
+    candidatos = search_contained_by_name(db, texto, limit=5)
+    elegido = pick_unambiguous(candidatos, db, texto)
+    if elegido is not None:
+        return LugarBuscado(hit=elegido)
+
+    recorte = _sin_el_nombre_de_la_zona(texto)
+    del_recorte: list[PlaceHit] = []
+    if recorte:
+        del_recorte = search_contained_by_name(db, recorte, limit=5)
+        elegido = pick_unambiguous(del_recorte, db, recorte)
+        if elegido is not None:
+            return LugarBuscado(hit=elegido)
+
+    # **Las sugerencias salen de las dos busquedas, y las del recorte primero.**
+    # A quien escribia "Metrocentro San Salvador" se le ofrecian los
+    # Metrocentros de San Miguel y Santa Ana, que son los que se parecen a la
+    # frase entera, y no el "Metrocentro" a secas que es el de San Salvador y
+    # el que estaba buscando.
+    vistos: set = set()
+    sugerencias: list[PlaceHit] = []
+    for candidato in [*del_recorte, *candidatos]:
+        if candidato.id not in vistos:
+            vistos.add(candidato.id)
+            sugerencias.append(candidato)
+
+    ordenadas = rank_suggestions(db, recorte or texto, sugerencias)
+    return LugarBuscado(sugerencias=ordenadas[:3])
+
+
 def resolve_start_place(db: Session, texto: str) -> PlaceHit | None:
     """El lugar del que sale el dia, buscado por nombre en el catalogo.
 
@@ -456,22 +560,21 @@ def resolve_start_place(db: Session, texto: str) -> PlaceHit | None:
 
     Devuelve None cuando no hay nada lo bastante parecido, y quien llama tiene
     que decirlo. Arrancar el dia en un sitio que el usuario no nombro es peor
-    que admitir que no se encontro.
+    que admitir que no se encontro. Para el detalle de las sugerencias,
+    buscar_lugar().
     """
-    hits = search_by_name(db, texto, limit=5, min_similarity=MIN_SIMILARITY_PARTIDA)
-    return hits[0] if hits else None
+    return buscar_lugar(db, texto).hit
 
 
 def resolve_must_visit(db: Session, texto: str) -> PlaceHit | None:
     """Un lugar que la persona pidio visitar, buscado por nombre.
 
-    Mismo umbral que el punto de partida y por el mismo motivo: con uno bajo,
-    "Jardin Botanico" trae cualquier jardin, y un itinerario que promete el
-    lugar que pediste y te lleva a otro es peor que uno que admite no haberlo
-    encontrado. Quien llama tiene que decir que no se encontro.
+    Mismo criterio que el punto de partida y por el mismo motivo: con umbral
+    bajo, "Jardin Botanico" trae cualquier jardin, y un itinerario que promete
+    el lugar que pediste y te lleva a otro es peor que uno que admite no
+    haberlo encontrado. Quien llama tiene que decir que no se encontro.
     """
-    hits = search_by_name(db, texto, limit=5, min_similarity=MIN_SIMILARITY_PARTIDA)
-    return hits[0] if hits else None
+    return buscar_lugar(db, texto).hit
 
 
 def zone_names() -> list[str]:
