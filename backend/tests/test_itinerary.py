@@ -6,7 +6,7 @@ ni base de datos ni catalogo para verificar que una restriccion se respeta.
 
 import uuid
 from dataclasses import replace
-from datetime import time
+from datetime import date, time
 
 import pytest
 from pydantic import ValidationError
@@ -2597,3 +2597,217 @@ class TestUnCentroComercialPorViaje:
 
         assert "Metrocentro Santa Ana" in nombres, "el punto de partida abre el dia"
         assert "Galerías" in nombres, "y todavia cabe un centro comercial de visita"
+
+
+class TestUnaZonaSinLugaresNoRevienta:
+    """`assemble` ligaba `medidor` dentro del bucle de los dias.
+
+    Una zona cuyos grupos salen todos vacios —cualquier punto del pais sin
+    lugares cerca— llegaba a `advise()` con el nombre sin asignar y reventaba
+    con UnboundLocalError, o sea un 500 en produccion. El arreglo es pasar
+    `travel` en vez de un medidor ya resuelto, que es la regla que el propio
+    `assemble` enuncia para todo lo demas.
+    """
+
+    def test_sin_candidatos_devuelve_un_itinerario_vacio(self):
+        restricciones = Constraints(
+            days=1,
+            center_lat=12.5,
+            center_lon=-89.5,
+            radius_m=5_000,
+        )
+
+        itinerario = assemble([], [], restricciones)
+
+        assert itinerario.days == []
+        assert itinerario.advice == []
+
+    def test_con_comidas_pero_sin_destinos_tampoco(self):
+        """El otro camino al mismo fallo: hay comida en la zona y ningun destino."""
+        restricciones = Constraints(days=1, center_lat=13.7, center_lon=-89.22)
+        comida = lugar("Comedor", 13.70, -89.22, Category.food)
+
+        itinerario = assemble([comida], [], restricciones)
+
+        assert itinerario.days == []
+
+
+class TestNoTeSientaEnUnComedorCerrado:
+    """La regla de horarios, que es lo unico que se quedo de esa tanda.
+
+    Medido sobre 42 itinerarios con fecha en seis zonas y los siete dias de la
+    semana: 2 de 70 comidas caian en un comedor que se sabe cerrado, y con la
+    regla son 0 sin perder ni una comida —sustituye, no quita.
+
+    **Tres estados y no dos.** De los 2.717 lugares de comida del catalogo, 419
+    traen horario y 381 en formato legible: el 86% no dice nada. Descartar lo
+    desconocido dejaria media zona del pais sin comida por un hueco de
+    OpenStreetMap.
+    """
+
+    # 2026-09-20 es domingo; 09-21 lunes.
+    DOMINGO = date(2026, 9, 20)
+
+    def _comedor(self, nombre, lat, lon, horario=None):
+        return PlaceHit(
+            id=uuid.uuid4(),
+            name=nombre,
+            category=Category.food.value,
+            subcategory="restaurant",
+            lat=lat,
+            lon=lon,
+            quality_score=0.7,
+            tags={"opening_hours": horario} if horario else None,
+        )
+
+    def _restricciones(self, fecha=DOMINGO):
+        return Constraints(
+            days=1,
+            start_date=fecha,
+            center_lat=13.70,
+            center_lon=-89.22,
+            max_travel_km_per_day=60,
+            earliest_start=time(10, 0),
+            latest_end=time(20, 0),
+            include_meals=True,
+            max_stops_per_day=3,
+        )
+
+    def _comidas_del_dia(self, itinerario):
+        return [p.place.name for d in itinerario.days for p in d.stops if p.meal is not None]
+
+    def test_el_que_cierra_el_domingo_no_entra(self):
+        """El caso real: un café con `Mo-Sa 08:00-18:00` colocado un domingo."""
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.702, -89.222, Category.culture),
+        ]
+        cerrado = self._comedor("Cierra Domingos", 13.701, -89.221, "Mo-Sa 08:00-18:00")
+        abierto = self._comedor("Abre Siempre", 13.703, -89.223, "Mo-Su 08:00-22:00")
+
+        itinerario = assemble([cerrado, abierto], destinos, self._restricciones())
+
+        assert self._comidas_del_dia(itinerario) == ["Abre Siempre"]
+
+    def test_el_de_horario_desconocido_sigue_entrando(self):
+        """Sin dato no se castiga al lugar: es el 86% del catálogo."""
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.702, -89.222, Category.culture),
+        ]
+        sin_dato = self._comedor("Sin Horario", 13.701, -89.221)
+
+        itinerario = assemble([sin_dato], destinos, self._restricciones())
+
+        assert self._comidas_del_dia(itinerario) == ["Sin Horario"]
+
+    def test_sin_fecha_la_regla_no_se_aplica(self):
+        """`opening_hours` habla de días de la semana: sin fecha no hay con qué
+        responder, y suponer un día sería inventarlo."""
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.702, -89.222, Category.culture),
+        ]
+        cerrado = self._comedor("Cierra Domingos", 13.701, -89.221, "Mo-Sa 08:00-18:00")
+
+        sin_fecha = replace(self._restricciones(), start_date=None)
+        itinerario = assemble([cerrado], destinos, sin_fecha)
+
+        assert self._comidas_del_dia(itinerario) == ["Cierra Domingos"]
+
+    def test_un_horario_ilegible_no_descarta_el_comedor(self):
+        """ "Todos los dias 10am a 8:30pm" y compañía: 38 de los 419 valores."""
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.702, -89.222, Category.culture),
+        ]
+        raro = self._comedor("Prosa Libre", 13.701, -89.221, "Todos los dias 10am a 8:30pm")
+
+        itinerario = assemble([raro], destinos, self._restricciones())
+
+        assert self._comidas_del_dia(itinerario) == ["Prosa Libre"]
+
+    def test_no_alcanza_con_abrir_al_llegar(self):
+        """Un comedor que cierra a las 14:00 no sirve para un almuerzo de
+        noventa minutos que empieza a las 13:00: entrar y que te levanten no es
+        comer."""
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.702, -89.222, Category.culture),
+        ]
+        justo = self._comedor("Cierra Temprano", 13.701, -89.221, "Mo-Su 08:00-12:30")
+        amplio = self._comedor("Cierra Tarde", 13.703, -89.223, "Mo-Su 08:00-22:00")
+
+        itinerario = assemble([justo, amplio], destinos, self._restricciones())
+
+        assert self._comidas_del_dia(itinerario) == ["Cierra Tarde"]
+
+    def test_prefiere_el_que_se_sabe_abierto_sobre_el_que_no_se_sabe(self):
+        """Vale un desvío corto cambiar "probablemente abra" por "abre".
+
+        Medido: sin esta preferencia, 35 de 70 comidas caían en un sitio del
+        que no se sabe nada; con ella, 62 de 70 en uno que se sabe abierto, y
+        cuesta 8,4 km repartidos en 42 días. Ver OPEN_HOURS_BONUS_KM.
+        """
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.702, -89.222, Category.culture),
+        ]
+        # El de horario desconocido queda MÁS cerca, así que sin el bono gana él.
+        sin_dato = self._comedor("Sin Horario", 13.7010, -89.2210)
+        con_dato = self._comedor("Abre Seguro", 13.7060, -89.2260, "Mo-Su 08:00-22:00")
+
+        itinerario = assemble([sin_dato, con_dato], destinos, self._restricciones())
+
+        assert self._comidas_del_dia(itinerario) == ["Abre Seguro"]
+
+    def test_pero_no_a_cualquier_precio(self):
+        """El bono son 1,5 km: un desvío mayor no lo compensa."""
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.702, -89.222, Category.culture),
+        ]
+        sin_dato = self._comedor("Sin Horario", 13.7010, -89.2210)
+        # A unos veinte kilómetros: se sabe que abre y da igual.
+        lejano = self._comedor("Abre Seguro Pero Lejos", 13.88, -89.22, "Mo-Su 08:00-22:00")
+
+        itinerario = assemble([sin_dato, lejano], destinos, self._restricciones())
+
+        assert self._comidas_del_dia(itinerario) == ["Sin Horario"]
+
+    def test_el_aviso_sigue_diciendo_los_kilometros_de_verdad(self):
+        """El bono entra en el puntaje, nunca en el costo que se reporta.
+
+        `costo` son kilómetros reales y el aviso los escribe. Mezclarle la
+        preferencia lo volvería un número falso —y además perdía catorce de las
+        setenta comidas medidas en cuanto el bono pasaba de tres kilómetros.
+
+        Se comprueba por invariante y no por umbral: el mismo comedor, a la
+        misma distancia, tiene que reportar los mismos kilómetros con horario y
+        sin él. Un umbral suelto no lo detectaba, porque restar 1,5 km a un
+        desvío de cuarenta seguía pasando la prueba.
+        """
+        # Dos destinos para que el día llegue a la franja de almuerzo: con uno
+        # solo termina a las 11:15 y no hay nada que aconsejar.
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.702, -89.222, Category.culture),
+        ]
+        estrecho = replace(self._restricciones(), max_travel_km_per_day=2)
+
+        def km_del_aviso(horario):
+            # Único comedor del día, fuera del presupuesto, así que el aviso
+            # tiene que decir cuánto se pasaría.
+            comedor = self._comedor("Único", 14.10, -89.22, horario)
+            itinerario = assemble([comedor], destinos, estrecho)
+            aviso = next(c for c in itinerario.advice if c.kind == "bring_lunch")
+            return float(aviso.detail.split("agrega ")[1].split(" km")[0])
+
+        sin_horario = km_del_aviso(None)
+        con_horario = km_del_aviso("Mo-Su 08:00-22:00")
+
+        assert sin_horario > 40, "el escenario dejó de servir: el desvío es corto"
+        assert con_horario == sin_horario, (
+            f"el costo reportado salió contaminado por el bono: "
+            f"{con_horario} con horario contra {sin_horario} sin él"
+        )

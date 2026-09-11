@@ -23,6 +23,7 @@ from datetime import date, time, timedelta
 from sqlalchemy.orm import Session
 
 from app.models import Category
+from app.services import horarios
 from app.services.clima import ClimaDelViaje, DiaDeClima
 from app.services.geo import EstimatedTravel, TravelProvider, haversine_km
 from app.services.places import PlaceHit, nombre_legible, search_in_area
@@ -991,6 +992,29 @@ def _two_opt(ruta: list[PlaceHit], travel: TravelProvider | None = None) -> list
 # paradas de 317, y de ahi en adelante no compra nada. Las categorias por dia
 # no se mueven en todo el barrido, que es la senal de que lo que cambio fue el
 # largo del dia y no el criterio.
+# Cuanto vale, en kilometros, saber que un comedor abre.
+#
+# No es una distancia: es lo que se esta dispuesto a desviarse para cambiar un
+# "probablemente abra" por un "abre". El 86% de los lugares de comida del
+# catalogo no trae horario, asi que sin esto la mitad de las comidas caen en
+# sitios de los que no se sabe nada.
+#
+# **El valor es el mas chico que consigue todo el efecto.** Barrido sobre 42
+# itinerarios con fecha en seis zonas y los siete dias de la semana, midiendo
+# cuantas de las 70 comidas colocadas caen en un sitio que se SABE abierto:
+#
+#     sin bono   35 de 70 (50%)   1.222,4 km
+#     0,5 km     55 de 70 (79%)   1.224,0 km
+#     1,5 km     62 de 70 (89%)   1.230,8 km
+#     2,5 km     62 de 70 (89%)   1.230,8 km   <- ya no cambia nada
+#     4,0 km     62 de 70 (89%)   1.230,8 km
+#
+# De 1,5 para arriba esta saturado: las ocho comidas que quedan son franjas
+# donde no hay ningun sitio con horario conocido, y ningun bono las arregla.
+# Cuesta 8,4 km repartidos en 42 dias —doscientos metros por dia— y no pierde
+# ni una comida.
+OPEN_HOURS_BONUS_KM = 1.5
+
 REPEAT_PENALTY_KM = 24.0
 
 # Lo que cuesta repetir la SUBCATEGORIA, ademas de la categoria.
@@ -1577,6 +1601,69 @@ def _meal_candidates(
     return sorted(comidas, key=cercania)[:limit]
 
 
+def _estado_del_comedor(
+    comida: PlaceHit,
+    llegada: time,
+    tipo: str,
+    constraints: Constraints,
+    numero: int,
+) -> horarios.Apertura:
+    """Lo que se sabe de ese comedor durante esa comida.
+
+    Sin fecha todo es DESCONOCIDO: `opening_hours` habla de dias de la semana y
+    sin saber en que dia cae el itinerario no hay con que responder. Suponer un
+    dia seria inventarlo.
+    """
+    fecha = constraints.date_of_day(numero)
+    if fecha is None:
+        return horarios.Apertura.DESCONOCIDO
+
+    texto = (comida.tags or {}).get("opening_hours")
+    if not texto:
+        return horarios.Apertura.DESCONOCIDO
+
+    salida = _add_minutes(llegada, _stop_minutes(comida, tipo, constraints))
+    return horarios.estado(texto, fecha, llegada, salida)
+
+
+def _abierto_seguro(
+    comida: PlaceHit,
+    llegada: time,
+    tipo: str,
+    constraints: Constraints,
+    numero: int,
+) -> bool:
+    """Si se SABE que ese comedor abre durante toda la comida. Ver OPEN_HOURS_BONUS_KM."""
+    return (
+        _estado_del_comedor(comida, llegada, tipo, constraints, numero)
+        is horarios.Apertura.ABIERTO
+    )
+
+
+def _cerrado_a_esa_hora(
+    comida: PlaceHit,
+    llegada: time,
+    tipo: str,
+    constraints: Constraints,
+    numero: int,
+) -> bool:
+    """Si se SABE que ese comedor no abre durante toda la comida.
+
+    **Solo descarta lo que sabe cerrado, nunca lo que no sabe.** De los 2.717
+    lugares de comida del catalogo, 419 traen `opening_hours` y 381 en un
+    formato legible: el 86% no dice nada. Descartar lo desconocido dejaria los
+    itinerarios sin comida en media zona del pais por falta de un dato de
+    OpenStreetMap, que es un castigo al usuario por un hueco del mapa.
+
+    Sin fecha no se comprueba nada, y lo desconocido nunca cuenta como cerrado:
+    ver _estado_del_comedor.
+    """
+    return (
+        _estado_del_comedor(comida, llegada, tipo, constraints, numero)
+        is horarios.Apertura.CERRADO
+    )
+
+
 def _best_meal_insertion(
     secuencia: list[tuple[PlaceHit, str | None]],
     disponibles: list[PlaceHit],
@@ -1622,7 +1709,7 @@ def _best_meal_insertion(
 
     base_km = _sequence_km(secuencia, travel)
     limite_temprano = _add_minutes(ventana[0], -MEAL_EARLY_TOLERANCE_MINUTES)
-    mejor: tuple[float, list[tuple[PlaceHit, str | None]], PlaceHit] | None = None
+    mejor: tuple[float, list[tuple[PlaceHit, str | None]], PlaceHit, float] | None = None
 
     for comida in disponibles:
         for posicion in range(1, len(secuencia) + 1):
@@ -1641,18 +1728,32 @@ def _best_meal_insertion(
                 continue
             if horas[posicion] > ventana[1]:
                 continue
+            if _cerrado_a_esa_hora(comida, horas[posicion], tipo, constraints, numero):
+                continue
 
             total = _sequence_km(tentativa, travel)
             if enforce_budget and total > constraints.budget_for(numero):
                 continue
 
             costo = total - base_km
-            if mejor is None or costo < mejor[0]:
-                mejor = (costo, tentativa, comida)
+
+            # **El bono entra en el puntaje, nunca en el costo.** `costo` son
+            # kilometros de verdad: se devuelve a quien llama y el aviso lo
+            # escribe —"agrega 20,3 km"—, asi que mezclarle una preferencia lo
+            # volveria un numero falso. Mezclado, ademas, se perdian catorce de
+            # las setenta comidas medidas en cuanto el bono pasaba de tres
+            # kilometros; separado no se pierde ninguna ni con el bono en
+            # cuatro.
+            puntaje = costo
+            if _abierto_seguro(comida, horas[posicion], tipo, constraints, numero):
+                puntaje -= OPEN_HOURS_BONUS_KM
+
+            if mejor is None or puntaje < mejor[0]:
+                mejor = (puntaje, tentativa, comida, costo)
 
     if mejor is None:
         return secuencia, None, 0.0
-    return mejor[1], mejor[2], mejor[0]
+    return mejor[1], mejor[2], mejor[3]
 
 
 def _insert_meals(
@@ -2161,6 +2262,20 @@ def _meal_advice(
     )
 
     if comida is None:
+        # **Aqui hubo un aviso para "estan todos cerrados" y se quito por no
+        # llegar a ocurrir nunca.** La idea era buena —"no cae en la franja" y
+        # "ese dia no abre" son causas distintas con salidas distintas, y las
+        # dos usan la palabra horario— pero medido sobre 126 combinaciones de
+        # zona y dia, mas 20 comedores aislados por siete dias y dos radios,
+        # disparo cero veces. El motivo es estructural: con 2.717 lugares de
+        # comida en el catalogo, si el mejor esta cerrado el motor elige otro, y
+        # para que esta rama hablara tendrian que estar bloqueados por horario
+        # TODOS los candidatos de la franja, teniendo el 86% sin horario
+        # registrado. Costaba una segunda busqueda completa y un parametro.
+        #
+        # Lo que si se quedo, porque se midio y cambia respuestas, es la regla
+        # dura: no colocar un comedor que se sabe cerrado. Ver
+        # _cerrado_a_esa_hora.
         return Advice(
             kind,
             dia.number,
@@ -2481,7 +2596,18 @@ def assemble(
         unused_candidates=len(destinos) - sum(len(g) for g in grupos),
     )
     itinerario.violations = validate(itinerario, constraints)
-    itinerario.advice = advise(itinerario, constraints, comidas, medidor, clima)
+    # **A advise() se le pasa `travel`, no `medidor`, y arregla dos cosas.**
+    #
+    # La primera es un 500: `medidor` se liga dentro del bucle de arriba, asi
+    # que una zona cuyos grupos salen todos vacios —sin destinos utilizables—
+    # llegaba aca con el nombre sin asignar y reventaba con UnboundLocalError.
+    # Se ve en cualquier punto del pais sin lugares cerca.
+    #
+    # La segunda es la regla que este mismo archivo enuncia doce lineas mas
+    # arriba y que a advise() se le habia escapado: con un medidor ya resuelto,
+    # los avisos de un viaje que mezcla modos se calculaban todos con la red
+    # del ultimo dia, asi que el dia a pie recibia consejos medidos en carro.
+    itinerario.advice = advise(itinerario, constraints, comidas, travel, clima)
     return itinerario
 
 

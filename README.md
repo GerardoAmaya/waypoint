@@ -662,6 +662,91 @@ recalculaba `violations` y dejaba `advice` en la lista vacía con que nace
 incluidos los de días que nadie pidió tocar, y desde el cliente eso no se ve
 como un campo que falta — se ve como si el problema se hubiera resuelto solo.
 
+### El horario de apertura: inviable para los destinos, viable para la comida
+
+El README decía que `opening_hours` no da para nada, y era verdad a medias.
+Nadie había mirado la comida por separado:
+
+| categoría | activos | con horario | |
+|---|---|---|---|
+| **food** | 2.717 | **419** | **15,4%** |
+| nature | 2.024 | 55 | 2,7% |
+| lodging | 515 | 25 | 4,9% |
+| culture | 286 | 9 | 3,1% |
+| attraction | 209 | 8 | 3,8% |
+| viewpoint | 35 | 0 | 0% |
+
+Para los destinos sigue siendo inviable y `INDOOR_CLOSES` sigue siendo una
+constante. Para los comedores no: **el motor te podía sentar en uno cerrado**,
+porque elegía solo por distancia. Y el prerrequisito era la fecha, porque
+`opening_hours` habla de días de la semana.
+
+**El lector va contra los datos, no contra la especificación.** La gramática de
+`opening_hours` es enorme y casi nada de ella aparece en El Salvador. Lo que sí
+aparece son varias reglas por `;`, listas de días, dos turnos separados por
+coma, `off`, cruces de medianoche, días sin horas, horas sin días y un guion
+Unicode U+2011. Lee **381 de los 419 valores reales (90,9%)**; los 38 que no son
+prosa libre de verdad —`sunrise-sunset`, `Lun-dom 8 a. m.-8:30 p. m.`, `Todos
+los dias 10am a 8:30pm`— y quedan como no entendidos, sin adivinar.
+
+**Tres estados y no dos, que es la decisión que da forma a todo.** El 86% de la
+comida no dice nada. Con dos estados hay que elegir entre dos errores grandes:
+dar por cerrado lo desconocido vacía los itinerarios por un hueco de
+OpenStreetMap, y darlo por abierto es lo que el motor hacía. Así que ABIERTO,
+CERRADO y DESCONOCIDO, y la diferencia se usa: **nunca se coloca uno que se sabe
+cerrado, y se prefiere el que se sabe abierto sobre el que no se sabe.**
+
+Se exige la visita completa y no solo la llegada. Un comedor que cierra a las
+14:00 no sirve para sentarse a las 13:42 si el almuerzo dura noventa minutos:
+entrar y que te levanten no es comer.
+
+**Lo medido.** El banco de 26 casos no puede medir esto, porque sus casos no
+llevan fecha. Así que se armaron 42 itinerarios con fecha —seis zonas por los
+siete días de la semana, 70 comidas colocadas— con `scripts/medir_horarios.py`:
+
+| | comidas | se sabe abierto | se sabe cerrado | km |
+|---|---|---|---|---|
+| antes | 70 | 35 (50%) | **2** | 1.222,4 |
+| solo la regla dura | 70 | 35 | **0** | 1.222,4 |
+| con la preferencia | 70 | **62 (89%)** | 0 | 1.230,8 |
+
+La regla dura quita dos respuestas lisa y llanamente incorrectas sin perder
+ninguna comida: sustituye. La preferencia sube la certeza del 50% al 89% por 8,4
+km repartidos en 42 días —doscientos metros por día—. `OPEN_HOURS_BONUS_KM` es
+1,5 porque es el valor más chico que consigue todo el efecto: de ahí para arriba
+el barrido no cambia nada, y las ocho comidas que quedan son franjas donde no
+hay ningún sitio con horario conocido.
+
+**Tres cosas que la medición corrigió, y las tres importan más que la función.**
+
+El bono va en el puntaje y nunca en el costo. `costo` son kilómetros de verdad
+—el aviso los escribe, "agrega 20,3 km"— así que mezclarle una preferencia lo
+volvería un número falso. Mezclado, además, perdía catorce de las setenta
+comidas en cuanto el bono pasaba de tres kilómetros; separado no pierde ninguna
+ni con el bono en cuatro. La primera prueba que escribí para esto no detectaba
+la contaminación, porque comparaba contra un umbral y restar 1,5 km a un desvío
+de cuarenta seguía pasando; ahora compara el mismo comedor con horario y sin él,
+que es el invariante.
+
+Una regla ilegible se salta, no vuelve desconocido el horario entero. Se
+consideró lo contrario, porque saltarla puede dar un cierre falso. Pero los dos
+fallos no pesan igual: un cierre falso descarta un comedor que abría y pierde
+una opción; una apertura falsa sienta a alguien en uno cerrado, y **eso se
+descubre frente a la puerta**. Es la misma regla que el resto del proyecto, se
+dice y no se sustituye. El caso que puso la política a prueba resultó ser un
+hueco del lector —días separados por espacio, `Fr Sa 09:00-21:00`, un solo caso
+en el catálogo— y se arregló ahí, que era donde correspondía.
+
+Y se escribió un aviso para "están todos cerrados" que se quitó por no ocurrir
+nunca. La idea era buena: "no cae en la franja" y "ese día no abre" son causas
+distintas con salidas distintas, y las dos usan la palabra *horario*. Pero
+medido sobre 126 combinaciones de zona y día, más 20 comedores aislados por
+siete días y dos radios, disparó cero veces. El motivo es estructural: con 2.717
+lugares de comida, si el mejor está cerrado el motor elige otro, y para que ese
+aviso hablara tendrían que estar bloqueados por horario **todos** los candidatos
+de la franja teniendo el 86% sin horario. Es la tercera pieza que este proyecto
+borra por no ganarse su sitio.
+
 ### Lo que se pide con nombre se cumple o se explica
 
 `include_meals` es un booleano y significa "meteme comidas donde quepan". No
@@ -832,6 +917,15 @@ se queda sin el dato. La salida sería la climatología: bajar los promedios
 mensuales del archivo histórico de Open-Meteo una sola vez, guardarlos en tabla,
 y responder "en esa época llueve casi todas las tardes" — sin llamada en vivo y
 sin gastar cupo. No está hecho.
+
+**Una zona sin lugares devolvía un 500.** `assemble` ligaba `medidor` dentro
+del bucle de los días, así que un punto del país sin nada cerca llegaba a
+`advise()` con el nombre sin asignar y reventaba con `UnboundLocalError`. El
+arreglo es pasar `travel` en vez de un medidor ya resuelto, que es la regla que
+el propio `assemble` enuncia doce líneas más arriba y que a `advise()` se le
+había escapado; de paso, los avisos de un viaje que mezcla modos se calculaban
+todos con la red del último día, así que el día a pie recibía consejos medidos
+en carro.
 
 **El clima informa y aconseja, pero todavía no decide.** El motor sabe que
 llueve sobre el mirador de las 15:00 y lo dice; lo que no hace es preferir un
@@ -1645,14 +1739,25 @@ imperativo— y quedó como dependencia muerta.
 ## Guiones
 
 ```bash
-make test            # los 578 del backend
-npm test             # los 28 del frontend, desde frontend/
+make test            # los 697 del backend
+npm test             # los 55 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante (3 de matriz)
 make ors-trace       # dice si el trazo por carretera funciona ahora (1 de direcciones)
 make ors-calibrate   # mide desvío y velocidad contra el catálogo
 make ors-warm        # dice cuanto costaria precalentar; no gasta nada
 make ors-warm-apply  # lo hace: 20 peticiones de matriz
 ```
+
+```bash
+docker compose exec api python -m scripts.evaluate        # los 26 casos del banco
+docker compose exec api python -m scripts.medir_horarios  # comidas en comedores cerrados
+```
+
+El banco no puede medir los horarios de apertura: sus casos no llevan fecha, y
+`opening_hours` habla de días de la semana. `medir_horarios` arma 42
+itinerarios con fecha —seis zonas por los siete días— y cuenta cuántas comidas
+caen en un sitio que se sabe cerrado. Sale con código distinto de cero si
+encuentra alguna, así que también sirve de guardia.
 
 `ors-warm` solo dice cuánto costaría; `ors-warm-apply` lo hace. Son dos
 objetivos y no una bandera porque `make ors-warm --apply` **no funciona**: make
