@@ -1547,7 +1547,8 @@ imperativo— y quedó como dependencia muerta.
 ```bash
 make test            # los 578 del backend
 npm test             # los 28 del frontend, desde frontend/
-make ors-check       # verifica la llave y lee el cupo restante
+make ors-check       # verifica la llave y lee el cupo restante (3 de matriz)
+make ors-trace       # dice si el trazo por carretera funciona ahora (1 de direcciones)
 make ors-calibrate   # mide desvío y velocidad contra el catálogo
 make ors-warm        # dice cuanto costaria precalentar; no gasta nada
 make ors-warm-apply  # lo hace: 20 peticiones de matriz

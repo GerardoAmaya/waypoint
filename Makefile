@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-calibrate ors-warm ors-warm-apply ors-warm-zone zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
+.PHONY: up down logs migrate test lint psql ors-check ors-trace ors-calibrate ors-warm ors-warm-apply ors-warm-zone zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
 
 up:
 	docker compose up -d --build
@@ -36,6 +36,12 @@ ors-calibrate:
 # aparenta gastar y no gasta es peor que uno que no existe.
 #
 # ors-warm no gasta nada: dice cuanto costaria. ors-warm-apply gasta.
+# Una peticion de direcciones para saber si el trazo del mapa funciona ahora.
+# check-ors prueba la matriz, que lleva su cupo aparte: uno puede estar agotado
+# y el otro respondiendo.
+ors-trace:
+	docker compose exec api python -m scripts.check_directions
+
 ors-warm:
 	docker compose exec api python -m scripts.warm_travel_cache
 
