@@ -198,7 +198,17 @@ def _check_travel_budget(dia, constraints: Constraints, reporte: Report) -> None
     """Se recalcula la suma en vez de leer dia.travel_km.
 
     Leer la propiedad seria confiar en la misma cuenta que hizo el motor.
+
+    **Sin limite pedido no hay nada que comprobar.** El techo que el motor se
+    pone cuando la persona no dijo ninguno sale de UNSTATED_BUDGET_BY_MODE, o
+    sea del propio motor, y medir al motor contra su propia constante no dice
+    si cumplio lo que le pidieron: dice que sabe sumar. Los casos del banco que
+    de verdad prueban el presupuesto —poco-carro, muy-poco-carro, a-pie— llevan
+    su numero escrito, que es un limite de la persona y ahi si se exige.
     """
+    if constraints.max_travel_km_per_day is None:
+        return
+
     total = round(sum(p.travel_km_from_previous for p in dia.stops), 2)
     if total > constraints.max_travel_km_per_day + 0.01:
         reporte.add(

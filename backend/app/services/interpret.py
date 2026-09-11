@@ -79,9 +79,11 @@ inventar una.
 - "earliest_start": "HH:MM". Hora minima de inicio del dia. "odio madrugar" o \
 "salir tarde" son cerca de las 10:00 u 11:00. Por defecto "09:00".
 - "latest_end": "HH:MM". Hora maxima de fin. Por defecto "20:00".
-- "max_travel_km_per_day": numero. Kilometros maximos de traslado por dia. \
-"no quiero pasarme el dia en el carro" es cerca de 30. "caminando" o "sin \
-carro" es cerca de 8. Por defecto 25.
+- "max_travel_km_per_day": numero o null. Kilometros maximos de traslado por \
+dia. Ponelo SOLO si habla de cuanto se quiere mover: "no quiero pasarme el dia \
+en el carro" es cerca de 30, "poco carro" cerca de 15, un numero dicho se \
+respeta. Si no habla de eso, null: el largo del dia lo deciden el horario y \
+las ganas, y un techo inventado le recorta el viaje que si pidio.
 - "mode": "driving" o "walking". Por defecto "driving". Es el modo de todo el \
 viaje.
 - "day_modes": objeto de numero de dia a modo, SOLO cuando distintos dias van \
@@ -629,8 +631,20 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             radius_m=area.radius_m,
             earliest_start=inicio,
             latest_end=fin,
-            max_travel_km_per_day=_clamp(
-                datos.get("max_travel_km_per_day"), 1.0, 500.0, 25.0, notes, "max_travel_km"
+            # Sin numero pedido se deja en None y manda el reloj, igual que
+            # max_stops_per_day. _clamp necesita un valor por defecto, asi que
+            # la ausencia se resuelve antes de llamarlo.
+            max_travel_km_per_day=(
+                _clamp(
+                    datos.get("max_travel_km_per_day"),
+                    1.0,
+                    500.0,
+                    25.0,
+                    notes,
+                    "max_travel_km",
+                )
+                if datos.get("max_travel_km_per_day") is not None
+                else None
             ),
             mode=datos.get("mode")
             if datos.get("mode") in ("driving", "walking")

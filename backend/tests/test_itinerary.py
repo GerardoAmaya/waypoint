@@ -26,6 +26,7 @@ from app.services.itinerary import (
     DEFAULT_MEAL_MINUTES,
     NOMBRE_VAGO_KM,
     SUBCATEGORY_PENALTY_KM,
+    UNSTATED_BUDGET_BY_MODE,
     Constraints,
     Day,
     Itinerary,
@@ -1763,7 +1764,9 @@ class TestModoPorDia:
         restricciones = Constraints(days=3, center_lat=13.70, center_lon=-89.22)
 
         assert {restricciones.mode_for(n) for n in (1, 2, 3)} == {"driving"}
-        assert {restricciones.budget_for(n) for n in (1, 2, 3)} == {25.0}
+        assert {restricciones.budget_for(n) for n in (1, 2, 3)} == {
+            UNSTATED_BUDGET_BY_MODE["driving"]
+        }
 
 
 class TestDuracionDeLasComidas:
@@ -2811,3 +2814,109 @@ class TestNoTeSientaEnUnComedorCerrado:
             f"el costo reportado salió contaminado por el bono: "
             f"{con_horario} con horario contra {sin_horario} sin él"
         )
+
+
+class TestElTopeDeKilometrosQueNadiePidio:
+    """`None` es "no lo dijo", no "veinticinco".
+
+    El fallo: alguien pidió estar "de vuelta en el hotel antes de las 11 pm" y
+    el día cerraba a las 14:38 sin la cena que también había pedido, con seis
+    horas sin usar. El techo de 25 km era un número inventado que pisaba dos
+    instrucciones de verdad, y el motor encima aconsejaba "subí el límite de
+    traslado" —un límite que quien preguntaba nunca había puesto—. Es el mismo
+    error que ya se había corregido en max_stops_per_day.
+    """
+
+    def test_sin_pedirlo_el_techo_es_el_de_su_modo(self):
+        sin_pedir = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+
+        assert sin_pedir.max_travel_km_per_day is None
+        assert not sin_pedir.budget_was_asked_for
+        assert sin_pedir.budget_for(1) == UNSTATED_BUDGET_BY_MODE["driving"]
+
+    def test_a_pie_sin_pedirlo_no_hereda_el_techo_del_coche(self):
+        """Sesenta kilómetros caminando no es un día largo, es un día imposible."""
+        sin_pedir = Constraints(days=1, center_lat=13.70, center_lon=-89.22, mode="walking")
+
+        assert sin_pedir.budget_for(1) == UNSTATED_BUDGET_BY_MODE["walking"]
+        assert sin_pedir.budget_for(1) < UNSTATED_BUDGET_BY_MODE["driving"]
+
+    def test_un_numero_pedido_manda_sobre_el_techo_propio(self):
+        """ "poco carro" es un límite de la persona y gana, aunque sea más bajo."""
+        pedido = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, max_travel_km_per_day=10.0
+        )
+
+        assert pedido.budget_was_asked_for
+        assert pedido.budget_for(1) == 10.0
+
+    def test_un_numero_pedido_gana_aunque_sea_mas_alto(self):
+        pedido = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, max_travel_km_per_day=200.0
+        )
+
+        assert pedido.budget_for(1) == 200.0
+
+    def test_el_dia_entra_mas_paradas_sin_el_techo_inventado(self):
+        """El caso del hotel, reducido.
+
+        Los candidatos van repartidos cada seis kilómetros, así que la cadena
+        entera son sesenta: con el techo en 25 el día se corta aunque sobren
+        candidatos, luz y reloj.
+
+        **No se comprueba que el día llegue a las 23:00, porque no puede.**
+        `INDOOR_CLOSES` y `DUSK` cierran las visitas alrededor de las 18:00 pase
+        lo que pase, y lo único que estira un día más allá es la cena, que está
+        exenta. Lo que el techo inventado sí decide es cuántas paradas entran
+        antes de eso.
+        """
+        candidatos = [
+            lugar(f"Lugar {i}", 13.70 + i * 0.06, -89.22, Category.culture) for i in range(10)
+        ]
+        base = dict(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            radius_m=90_000,
+            earliest_start=time(9, 0),
+            latest_end=time(23, 0),
+            include_meals=False,
+        )
+
+        con_techo = assemble([], candidatos, Constraints(max_travel_km_per_day=25.0, **base))
+        sin_techo = assemble([], candidatos, Constraints(**base))
+
+        assert len(sin_techo.days[0].stops) > len(con_techo.days[0].stops)
+        assert sin_techo.days[0].travel_km > con_techo.days[0].travel_km
+
+    def test_no_le_aconseja_subir_un_limite_que_no_puso(self):
+        """La otra mitad del fallo, y la que la persona leyó.
+
+        El aviso decía "sobre tu límite de 25" y "subí el límite de traslado" a
+        alguien que solo había dicho a qué hora quería estar de vuelta.
+        """
+        destinos = [
+            lugar("Museo", 13.700, -89.220, Category.culture),
+            lugar("Teatro", 13.702, -89.222, Category.culture),
+        ]
+        comedor = lugar("Comedor Lejano", 14.30, -89.22, Category.food)
+        base = dict(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(10, 0),
+            latest_end=time(20, 0),
+            include_meals=True,
+        )
+
+        sin_pedir = assemble([comedor], destinos, Constraints(**base))
+        aviso = next(c for c in sin_pedir.advice if c.kind == "bring_lunch")
+        assert "tu límite" not in aviso.detail
+        assert "subí el límite" not in aviso.detail
+        assert "pedime un día de hasta" in aviso.detail
+
+        pedido = assemble([comedor], destinos, Constraints(max_travel_km_per_day=25.0, **base))
+        aviso = next(c for c in pedido.advice if c.kind == "bring_lunch")
+        # Quien sí puso un límite sigue leyendo que es suyo y cómo subirlo.
+        assert "tu límite de 25" in aviso.detail
+        assert "subí el límite de traslado" in aviso.detail

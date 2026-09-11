@@ -747,6 +747,72 @@ aviso hablara tendrían que estar bloqueados por horario **todos** los candidato
 de la franja teniendo el 86% sin horario. Es la tercera pieza que este proyecto
 borra por no ganarse su sitio.
 
+### El techo de kilómetros que nadie pidió
+
+El reporte que lo destapó: *"me estoy hospedando en Hotel Barceló, quiero un
+itinerario de 2 días a partir de las 10 am, el primer día en coche y el segundo
+caminando, realizaré cena en los 2 viajes y quiero estar de vuelta en el hotel
+antes de las 11 p.m"*. El día 1 cerraba a las 14:38, sin la cena pedida, con seis
+horas sin usar. Y el aviso decía **"subí el límite de traslado"** — un límite que
+quien preguntaba nunca había puesto.
+
+El traductor entendió todo bien: 10:00, 23:00, coche y a pie, cena, vuelta al
+hotel. Lo único que nadie dijo era `max_travel_km_per_day`, y ahí el traductor
+rellenaba 25. Es el mismo error que ya se había corregido en
+`max_stops_per_day`, cuyo propio comentario lo enuncia: *"None es 'no lo dijo',
+no 'cinco': sin número pedido, el largo del día lo deciden el horario y los
+kilómetros, que son límites que sí vienen de la persona"*. Los kilómetros, en
+este caso, no venían de la persona.
+
+**El techo no es permiso para conducir más: es aire para las reservas.** Lo que
+lo vuelve contraintuitivo es que el día del reporte usaba 23,0 km de 25 y aun
+así rechazaba candidatos. Instrumentando los dos filtros del llenado salieron
+42 rechazos, **todos por kilómetros y ninguno por reloj**: al llenar un día hay
+que reservar de antemano el desvío al comedor y el cierre del recorrido, y con
+25 esa reserva se comía el presupuesto entero. Los kilómetros que faltaban
+estaban reservados, no recorridos.
+
+Barrido sobre los 62 días del banco, moviendo solo los casos que estaban en el
+valor por defecto:
+
+| techo | paradas | mediana sin usar | días que acaban 3h+ antes | **km reales/día** |
+|---|---|---|---|---|
+| 25 km | 302 | 160 min | 28 de 62 | 14,8 |
+| 40 km | 313 | 121 min | 23 de 62 | 20,0 |
+| **60 km** | **321** | **88 min** | **22 de 62** | **24,3** |
+| 80 km | 324 | 77 min | 21 de 62 | 24,6 |
+| 120 km | 326 | 57 min | 21 de 62 | 27,4 |
+
+Sesenta es la rodilla, y la columna que lo justifica es la última: con el techo
+en 60 los días siguen recorriendo 24 km de media, o sea que no se vuelven
+rallies — el reloj los sigue limitando. De 60 a 120 se ganan cinco paradas y se
+pagan tres kilómetros. A pie se queda en ocho porque no hay con qué moverlo: el
+único caso del banco que camina pide seis kilómetros explícitos, que es un
+límite de la persona y se respeta.
+
+El efecto de lado fue el mejor: los días con "llevá comida" cayeron del 24% al
+15%, porque un día con aire alcanza un restaurante.
+
+**Dos cosas más que el fallo dejó al descubierto.**
+
+El aviso no puede llamar "tu límite" a un número que la persona no puso, ni
+aconsejarle subirlo. Ahora distingue los dos casos: quien puso un límite lee
+*"sobre tu límite de 25, subí el límite de traslado a 32 km"*, y quien no puso
+ninguno lee *"eso es más de lo que da un día sin decirme cuánto te querés
+mover, pedime un día de hasta 32 km"*.
+
+Y el banco dejó de comprobar el presupuesto cuando nadie lo pidió. Medir al
+motor contra su propia constante no dice si cumplió lo que le pidieron: dice
+que sabe sumar. Los casos que de verdad prueban el presupuesto llevan su número
+escrito.
+
+**Lo que este caso enseñó de paso, y no se arregló**: un día no puede llegar a
+las 23:00 con destinos, pase lo que pase. `INDOOR_CLOSES` cierra lo de bajo
+techo a las 18:00 y `DUSK` lo de afuera a las 18:15, así que lo único que
+estira un día más allá de las siete de la tarde es la cena, que está exenta con
+razón. Los dos días del reporte terminan ahora a las 20:05 y las 19:34, con
+cena, y eso es lo más lejos que el catálogo permite llegar.
+
 ### Lo que se pide con nombre se cumple o se explica
 
 `include_meals` es un booleano y significa "meteme comidas donde quepan". No
@@ -782,7 +848,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Qué | Cuánto |
 |---|---|
 | Cumplimiento de límites duros | 96% (25 de 26 casos) |
-| Lugares inventados | 0 de 302 paradas generadas |
+| Lugares inventados | 0 de 321 paradas generadas |
 | Factor de desvío medido | 1.45, mediana sobre 812 pares |
 | Velocidad efectiva en carro | 35 a 62 km/h según el tramo |
 | Pares sin ruta en ORS | 7% (58 de 870) |
@@ -791,13 +857,13 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Lugares en el catálogo | 5.786 activos de 6.449 bajados |
 | Descarte del filtro de calidad | 5.9% (370 registros) |
 | Duplicados fusionados | 4.4% (274 registros) |
-| Días con recomendación de llevar comida | 34% (21 de 62) |
+| Días con recomendación de llevar comida | 15% (9 de 62) |
 | Repetición de categoría por paso | 26% |
 | Repetición de subcategoría por paso | 15% |
 | Paradas fuera de hora (luz o cierre) | 0 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
-| Tests | 578 backend, 28 frontend |
+| Tests | 703 backend, 55 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo

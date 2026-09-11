@@ -32,7 +32,47 @@ from app.services.places import by_ids as places_by_ids
 # Kilometros por dia por defecto segun el modo. Solo se usan cuando un dia va
 # en otro modo que el itinerario: es el numero que el prompt ya le sugiere al
 # modelo para "caminando" y para "en carro", puesto donde el motor lo necesita.
+# El techo de kilometros de un dia que va en otro modo que el itinerario: quien
+# pide ocho kilometros caminando y tiene un dia en coche no quiso ocho en coche.
 BUDGET_BY_MODE: dict[str, float] = {"driving": 25.0, "walking": 8.0}
+
+# El techo cuando la persona NO dijo ninguno.
+#
+# **Existe porque 25 km era un numero inventado que pisaba instrucciones de
+# verdad.** El caso que lo destapo: "de vuelta en el hotel antes de las 11 pm",
+# y el dia cerraba a las 14:38 sin la cena que se habia pedido, con seis horas
+# sin usar. El motor incluso aconsejaba "subi el limite de traslado" —un limite
+# que quien preguntaba nunca habia puesto—. Es el mismo error que ya se
+# corrigio en max_stops_per_day: ausencia no es cero ni es un valor por defecto.
+#
+# **El techo no es permiso para conducir mas, es aire para las reservas.** Los
+# kilometros que el dia gasta de verdad no los decide este numero sino el
+# reloj: al llenar el dia hay que reservar de antemano el desvio al comedor y
+# el cierre del recorrido, y con 25 esa reserva se comia el presupuesto
+# entero. En el caso medido el dia usaba 12,2 km de 25 y aun asi rechazaba
+# candidatos: los otros 13 estaban reservados, no recorridos.
+#
+# Barrido sobre los 62 dias del banco, moviendo solo los casos que estaban en
+# el valor por defecto:
+#
+#     techo   paradas   mediana sin usar   dias que acaban 3h+ antes   km reales/dia
+#      25 km    302        160 min               28 de 62                 14,8
+#      40 km    313        121 min               23 de 62                 20,0
+#      60 km    321         88 min               22 de 62                 24,3
+#      80 km    324         77 min               21 de 62                 24,6
+#     120 km    326         57 min               21 de 62                 27,4
+#
+# Sesenta es la rodilla de la curva, y la columna que lo justifica es la
+# ultima: con el techo en 60 los dias siguen recorriendo 24 km de media, o sea
+# que no se vuelven rallies —el reloj los sigue limitando—. De 60 a 120 se
+# ganan cinco paradas y se pagan tres kilometros.
+#
+# A pie se queda en ocho porque no hay con que moverlo: el unico caso del banco
+# que camina pide seis kilometros explicitos, que es un limite de la persona y
+# se respeta, y el unico dia a pie observado de verdad uso 3 de 8 y llego a las
+# 19:34. Cambiarlo seria elegir un numero sin medirlo, que es de lo que este
+# bloque viene a curar.
+UNSTATED_BUDGET_BY_MODE: dict[str, float] = {"driving": 60.0, "walking": 8.0}
 
 # Cuanto se queda uno en cada tipo de lugar, en minutos. Son estimaciones de
 # sentido comun, no datos: un mirador es una parada corta y un parque nacional
@@ -411,7 +451,11 @@ class Constraints:
     latest_end: time = time(20, 0)
     # Limite duro de traslado por dia. Es la traduccion de "quiero caminar
     # poco" o "no quiero pasarme el dia en el carro".
-    max_travel_km_per_day: float = 25.0
+    #
+    # None es "no lo dijo", no "veinticinco": sin numero pedido el techo sale
+    # de UNSTATED_BUDGET_BY_MODE y el largo del dia lo decide el reloj, que es
+    # un limite que si viene de la persona. Ver budget_for().
+    max_travel_km_per_day: float | None = None
     mode: str = "driving"
 
     preferred_categories: list[Category] = field(default_factory=list)
@@ -465,9 +509,20 @@ class Constraints:
         y manda sobre el valor por defecto.
         """
         modo = self.mode_for(numero)
+        if self.max_travel_km_per_day is None:
+            return UNSTATED_BUDGET_BY_MODE.get(modo, UNSTATED_BUDGET_BY_MODE["driving"])
         if modo == self.mode:
             return self.max_travel_km_per_day
         return BUDGET_BY_MODE.get(modo, self.max_travel_km_per_day)
+
+    @property
+    def budget_was_asked_for(self) -> bool:
+        """Si el techo de kilometros lo puso la persona.
+
+        Hace falta para no aconsejarle que suba un limite que nunca puso, que
+        es como se descubrio el fallo.
+        """
+        return self.max_travel_km_per_day is not None
 
     include_meals: bool = True
 
@@ -2178,21 +2233,34 @@ def advise(
             # son "donde quepan"; cuando alguien dijo que iba a cenar, lo que
             # hay que decirle es que ese dia no da, y por que.
             if tipo in pedidas:
-                consejos.append(_meal_out_of_reach(dia, tipo, ventana))
+                consejos.append(
+                    _meal_out_of_reach(dia, tipo, ventana, constraints.budget_was_asked_for)
+                )
 
     return consejos
 
 
-def _meal_out_of_reach(dia: Day, tipo: str, ventana: tuple[time, time]) -> Advice:
+def _meal_out_of_reach(
+    dia: Day,
+    tipo: str,
+    ventana: tuple[time, time],
+    pidio_el_tope: bool = True,
+) -> Advice:
     """El dia no llega a la franja de una comida que se pidio con nombre."""
     nombre, kind = MEAL_LABELS[tipo]
     if dia.end is not None and dia.end < ventana[0]:
         espera = _minutes_between(dia.end, ventana[0])
+        # Igual que en _meal_advice: no se aconseja subir un limite que la
+        # persona no puso.
+        salida = (
+            "Alargá el día o subí el límite de traslado si querés que llegue"
+            if pidio_el_tope
+            else "Decime que podés moverte más en el día si querés que llegue"
+        )
         detalle = (
             f"Pediste {nombre} y este día no llega: termina a las "
             f"{dia.end:%H:%M} y la {nombre} empieza a las {ventana[0]:%H:%M}, "
-            f"o sea {espera // 60} h {espera % 60:02d} min de espera. Alargá el "
-            f"día o subí el límite de traslado si querés que llegue"
+            f"o sea {espera // 60} h {espera % 60:02d} min de espera. {salida}"
         )
     else:
         detalle = (
@@ -2284,13 +2352,28 @@ def _meal_advice(
         )
 
     total = dia.travel_km + costo
+    tope = constraints.budget_for(dia.number)
+
+    # **No se le dice "tu límite" a un número que no puso.** El techo sin pedir
+    # sale de UNSTATED_BUDGET_BY_MODE, y llamarlo suyo —y aconsejarle subirlo—
+    # es como se descubrio el fallo: alguien que solo habia dicho "de vuelta
+    # antes de las 11 pm" leia que se habia pasado de un limite propio.
+    if constraints.budget_was_asked_for:
+        cierre = (
+            f"sobre tu límite de {tope:.0f}. Llevá {nombre}, o subí el "
+            f"límite de traslado a {total:.0f} km"
+        )
+    else:
+        cierre = (
+            f"y eso es más de lo que da un día sin decirme cuánto te querés "
+            f"mover. Llevá {nombre}, o pedime un día de hasta {total:.0f} km"
+        )
+
     return Advice(
         kind,
         dia.number,
         f"El lugar para comer más conveniente es {comida.name}, que agrega "
-        f"{costo:.1f} km y dejaría el día en {total:.1f} km, sobre tu límite de "
-        f"{constraints.budget_for(dia.number):.0f}. Llevá {nombre}, o subí el "
-        f"límite de traslado a {total:.0f} km",
+        f"{costo:.1f} km y dejaría el día en {total:.1f} km, {cierre}",
     )
 
 

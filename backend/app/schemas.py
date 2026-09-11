@@ -100,7 +100,11 @@ class ItineraryRequest(BaseModel):
     radius_m: int = Field(default=20_000, ge=1, le=100_000)
     earliest_start: time = time(9, 0)
     latest_end: time = time(20, 0)
-    max_travel_km_per_day: float = Field(default=25.0, gt=0, le=500)
+    # None es "no lo dijo", no "veinticinco". Un techo inventado pisa
+    # instrucciones de verdad: con 25 por defecto, "de vuelta en el hotel antes
+    # de las 11 pm" cerraba el dia a las 14:38 y sin la cena pedida. Ver
+    # Constraints.budget_for.
+    max_travel_km_per_day: float | None = Field(default=None, gt=0, le=500)
     mode: Literal["driving", "walking"] = "driving"
 
     preferred_categories: list[Category] = Field(default_factory=list)
