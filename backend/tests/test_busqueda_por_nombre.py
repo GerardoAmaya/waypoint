@@ -146,14 +146,15 @@ class TestNoSustituyeCuandoNoSabe:
 
 
 class TestLasSugerenciasSonUtiles:
-    def test_ofrece_el_de_verdad_y_no_solo_los_que_riman(self, catalogo):
+    def test_quitar_la_ciudad_encuentra_el_nombre_a_secas(self, catalogo):
         """A "Metrocentro San Salvador" se le ofrecían los Metrocentros de San
         Miguel y Santa Ana —los que se parecen a la frase entera— y no el
-        "Metrocentro" a secas, que es el de San Salvador y el que se buscaba."""
-        resultado = buscar_lugar(catalogo, "Metrocentro San Salvador")
+        "Metrocentro" a secas, que es el de San Salvador y el que se buscaba.
 
-        assert resultado.hit is None
-        assert "Metrocentro" in {s.name for s in resultado.sugerencias}
+        Quitada la ciudad, el nombre que queda coincide exacto, así que ya no
+        hace falta sugerir nada.
+        """
+        assert buscar_lugar(catalogo, "Metrocentro San Salvador").hit.name == "Metrocentro"
 
     def test_no_sugiere_cualquier_cosa(self, catalogo):
         """Una sugerencia equivocada es peor que ninguna: manda a la persona a
@@ -161,3 +162,51 @@ class TestLasSugerenciasSonUtiles:
         resultado = buscar_lugar(catalogo, "Hotel California de Santa Ana")
 
         assert "Parque Central de California" not in {s.name for s in resultado.sugerencias}
+
+
+class TestElEncajeMandaSobreElParecido:
+    """El parecido de cadena entera castiga a los nombres largos.
+
+    Los dos fallos que lo enseñaron vivían en la búsqueda de siempre, la que no
+    se había tocado por no mover lo que funcionaba.
+    """
+
+    def test_la_catarata_no_le_gana_al_centro_comercial(self, catalogo):
+        """ "Las Cascadas" devolvía "7 cascadas".
+
+        De cadena entera se parecen 0,64 y "Centro Comercial Las Cascadas" se
+        queda en 0,44 por ser más largo. Por encaje es al revés: 1,00 contra
+        0,75, y el encaje es el que dice cuál contiene el nombre buscado.
+        """
+        encontrado = buscar_lugar(catalogo, "Las Cascadas").hit
+
+        assert encontrado.name == "Centro Comercial Las Cascadas"
+
+    def test_un_nombre_generico_no_se_resuelve_a_dedo(self, catalogo):
+        """ "Museo" encajaba perfecto en todos y devolvía uno por su calidad."""
+        resultado = buscar_lugar(catalogo, "Metrocentro San")
+
+        assert resultado.hit is None
+
+    def test_un_error_de_escritura_sigue_funcionando(self, catalogo):
+        """La regla del encaje no puede tumbar lo que el parecido sí resuelve.
+
+        "Volcan de Sant Ana" saca 0,86 contra el nombre correcto, y ninguna
+        regla de contención debería poder con eso.
+        """
+        assert buscar_lugar(catalogo, "Volcan de Sant Ana").hit.name == "Volcán de Santa Ana"
+
+    def test_el_parecido_no_desempata_un_encaje_igualado(self, catalogo):
+        """Usarlo de segundo criterio elegía siempre el nombre más corto.
+
+        De dos que encajan igual gana el que tiene menos texto alrededor, y con
+        eso "Galerías" se iba al local de comida rápida en vez del centro
+        comercial. Un empate de encaje es un empate de verdad.
+        """
+        resultado = buscar_lugar(catalogo, "Galerias")
+
+        assert resultado.hit is None
+        assert {s.name for s in resultado.sugerencias} == {
+            "Centro Comercial Galerías",
+            "Go Green Galerias",
+        }

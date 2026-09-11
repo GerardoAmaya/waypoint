@@ -26,10 +26,10 @@ from sqlalchemy.orm import Session
 
 from app.services.places import (
     PlaceHit,
-    pick_unambiguous,
-    rank_suggestions,
+    elegir,
     search_by_name,
-    search_contained_by_name,
+    search_candidates,
+    suggestions,
 )
 
 
@@ -502,51 +502,44 @@ def _sin_el_nombre_de_la_zona(texto: str) -> str | None:
 
 
 def buscar_lugar(db: Session, texto: str) -> LugarBuscado:
-    """Busca un lugar por su nombre, en cuatro pasadas de menos a mas permisiva.
+    """Busca un lugar por su nombre, y dice que hacer cuando no esta seguro.
 
-    1. La busqueda de siempre, por parecido de la cadena entera. Lo que hoy
-       funciona sigue exactamente igual.
-    2. El nombre contenido dentro de otro mas largo: "Multiplaza" dentro de
-       "Centro Comercial Multiplaza". Solo si hay un ganador claro.
-    3. Lo mismo quitando el nombre de la zona, que es el ultimo recurso porque
-       recortar puede empeorar la busqueda. Ver _sin_el_nombre_de_la_zona.
-    4. Nada, pero con sugerencias para que quien pregunta pueda corregir.
+    Se traen los candidatos por las dos medidas a la vez —parecido de cadena
+    entera y encaje del nombre dentro de otro— y decide elegir(), que es donde
+    vive la regla y donde estan explicados los fallos que la formaron.
 
-    **Cada pasada es mas permisiva y ninguna decide sin margen.** Un nombre
-    generico como "Museo" empata con veinte lugares, y ahi no se elige: se
-    sugiere.
+    **Si no hay nada, se prueba una vez mas sin el nombre de la zona.** Es el
+    ultimo recurso y no el primero: ver _sin_el_nombre_de_la_zona.
+
+    Y si tampoco, se devuelven sugerencias. Sugerir no es sustituir: el dia
+    sigue sin empezar en un lugar que nadie nombro, pero ahora se dice cual
+    podria ser.
     """
-    hits = search_by_name(db, texto, limit=5, min_similarity=MIN_SIMILARITY_PARTIDA)
-    if hits:
-        return LugarBuscado(hit=hits[0])
-
-    candidatos = search_contained_by_name(db, texto, limit=5)
-    elegido = pick_unambiguous(candidatos, db, texto)
-    if elegido is not None:
-        return LugarBuscado(hit=elegido)
+    candidatos = search_candidates(db, texto)
+    encontrado = elegir(candidatos)
+    if encontrado is not None:
+        return LugarBuscado(hit=encontrado)
 
     recorte = _sin_el_nombre_de_la_zona(texto)
-    del_recorte: list[PlaceHit] = []
     if recorte:
-        del_recorte = search_contained_by_name(db, recorte, limit=5)
-        elegido = pick_unambiguous(del_recorte, db, recorte)
-        if elegido is not None:
-            return LugarBuscado(hit=elegido)
+        del_recorte = search_candidates(db, recorte)
+        encontrado = elegir(del_recorte)
+        if encontrado is not None:
+            return LugarBuscado(hit=encontrado)
+        # Las sugerencias del recorte van primero: a quien escribia
+        # "Metrocentro San Salvador" se le ofrecian los Metrocentros de San
+        # Miguel y Santa Ana —los que se parecen a la frase entera— y no el
+        # "Metrocentro" a secas, que es el de San Salvador.
+        candidatos = [*del_recorte, *candidatos]
 
-    # **Las sugerencias salen de las dos busquedas, y las del recorte primero.**
-    # A quien escribia "Metrocentro San Salvador" se le ofrecian los
-    # Metrocentros de San Miguel y Santa Ana, que son los que se parecen a la
-    # frase entera, y no el "Metrocentro" a secas que es el de San Salvador y
-    # el que estaba buscando.
     vistos: set = set()
-    sugerencias: list[PlaceHit] = []
-    for candidato in [*del_recorte, *candidatos]:
-        if candidato.id not in vistos:
-            vistos.add(candidato.id)
-            sugerencias.append(candidato)
+    unicos: list = []
+    for candidato in candidatos:
+        if candidato.hit.id not in vistos:
+            vistos.add(candidato.hit.id)
+            unicos.append(candidato)
 
-    ordenadas = rank_suggestions(db, recorte or texto, sugerencias)
-    return LugarBuscado(sugerencias=ordenadas[:3])
+    return LugarBuscado(sugerencias=suggestions(unicos))
 
 
 def resolve_start_place(db: Session, texto: str) -> PlaceHit | None:

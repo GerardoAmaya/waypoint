@@ -371,104 +371,156 @@ ENCAJE_MINIMO = 0.95
 # queria.
 ENCAJE_PARA_SUGERIR = 0.80
 
+# Un nombre practicamente igual al buscado: gana sin mirar nada mas.
+#
+# Es lo que deja pasar los errores de escritura. "Volcan de Sant Ana" contra
+# "Volcán de Santa Ana" son 0,86; el siguiente candidato, 0,50.
+CASI_EXACTO = 0.85
 
-def search_contained_by_name(
-    db: Session,
-    query: str,
-    *,
-    limit: int = 5,
-) -> list[PlaceHit]:
-    """Busca el nombre CONTENIDO dentro de otro mas largo, sin tildes.
+# Por debajo de esto no se mira siquiera. Es el umbral de la busqueda, no el de
+# la decision: sirve para traer candidatos que luego se filtran.
+MIN_SIMILARITY_BUSQUEDA = 0.6
 
-    **Es el complemento de search_by_name, no su reemplazo.** `similarity`
-    compara las cadenas enteras, asi que "Multiplaza" contra "Centro Comercial
-    Multiplaza" saca 0,41: el nombre correcto ocupa un tercio del texto y el
-    resto cuenta como diferencia. `word_similarity` busca el mejor tramo de
-    palabras dentro del nombre y da 1,00, que es lo que una persona quiere
-    decir cuando escribe el nombre corto de un centro comercial.
+# Quitar las tildes para comparar, sin depender de la extension `unaccent`.
+#
+# **La primera version creaba esa extension en una migracion, y eso podia tirar
+# el sitio.** Las migraciones corren al arrancar el contenedor —ver
+# backend/start.sh, que explica por que no van en el preDeployCommand de
+# Railway—, asi que un `CREATE EXTENSION` sin permisos en el Postgres
+# administrado no seria un fallo de busqueda: seria un contenedor que no
+# levanta.
+#
+# `translate` mapea caracter a caracter y no necesita nada instalado. Es exacto
+# para lo que hay: comparado con la extension sobre los 5.786 lugares activos
+# del catalogo coinciden 5.785, y el unico que difiere es "¡Hey Cipote!", que no
+# cambia ninguna busqueda.
+#
+# La comilla tipografica entra aunque no sea una tilde, y paga sola: el catalogo
+# trae "Oma’s Coffee Shop" con la comilla curva de OpenStreetMap y nadie la
+# teclea.
+#
+# Un caracter nuevo que no este aqui no rompe nada: esa busqueda queda un poco
+# peor, no falla.
+CON_TILDES = "áàâäãåçéèêëíìîïñóòôöõúùûüýÿ’¡¿"
+SIN_TILDES = "aaaaaaceeeeiiiinooooouuuuyy'!?"
 
-    Las tildes se quitan de los dos lados porque el catalogo viene de
-    OpenStreetMap y las trae, y quien escribe en una caja de texto no.
 
-    Devuelve los candidatos ordenados; **no decide**. Quien llama comprueba el
-    margen contra el segundo, porque un nombre generico como "Museo" empata con
-    veinte lugares y ahi no hay nada que elegir.
+def _literal(texto: str) -> str:
+    """Un literal de texto para SQL, con las comillas simples escapadas.
+
+    Hace falta porque SIN_TILDES lleva una comilla simple —la comilla
+    tipografica se convierte en la recta— y sin escaparla cierra la cadena
+    antes de tiempo. Son constantes del modulo y no entrada de nadie, asi que
+    esto es correccion, no defensa.
+    """
+    escapado = texto.replace("'", "''")
+    return f"'{escapado}'"
+
+
+def _llano(columna: str) -> str:
+    """La expresion SQL que normaliza un texto antes de compararlo."""
+    return f"translate(lower({columna}), {_literal(CON_TILDES)}, {_literal(SIN_TILDES)})"
+
+
+_CONSULTA = _llano(":query")
+_NOMBRE = _llano("name")
+_NOMBRE_P = _llano("p.name")
+
+
+@dataclass(frozen=True)
+class Candidato:
+    """Un lugar que podria ser el que se busca, con las dos medidas que lo dicen.
+
+    Las dos hacen falta y miden cosas distintas. `parecido` compara las cadenas
+    enteras y es lo que aguanta los errores de escritura: "Volcan de Sant Ana"
+    saca 0,86 contra el nombre correcto. `encaje` busca el mejor tramo de
+    palabras DENTRO del nombre y es lo que encuentra el nombre corto de un
+    sitio: "Multiplaza" saca 1,00 dentro de "Centro Comercial Multiplaza",
+    donde el parecido se queda en 0,41 porque el resto del texto cuenta como
+    diferencia.
+    """
+
+    hit: PlaceHit
+    parecido: float
+    encaje: float
+
+
+def search_candidates(db: Session, query: str, *, limit: int = 8) -> list[Candidato]:
+    """Los lugares que se parecen al texto, por cualquiera de las dos medidas.
+
+    Ordenados por encaje y despues por parecido. **No decide nada**: quien
+    llama aplica elegir(), porque un nombre generico como "Museo" encaja
+    perfecto en veinte lugares y ahi no hay nada que elegir.
     """
     limit = min(max(limit, 1), MAX_LIMIT)
 
     filas = db.execute(
-        text("""
+        text(f"""
             SELECT p.id, p.name, p.category::text AS category, p.subcategory,
                    p.lat, p.lon, p.quality_score, p.tags,
-                   word_similarity(unaccent(lower(:query)), unaccent(lower(p.name)))
-                       AS cercania
+                   similarity({_NOMBRE_P}, {_CONSULTA}) AS parecido,
+                   word_similarity({_CONSULTA}, {_NOMBRE_P}) AS encaje
             FROM places p
             WHERE p.is_active
-              AND word_similarity(unaccent(lower(:query)), unaccent(lower(p.name)))
-                  >= :min_similarity
-            ORDER BY cercania DESC,
-                     similarity(unaccent(lower(p.name)), unaccent(lower(:query))) DESC,
-                     p.quality_score DESC
+              AND (similarity({_NOMBRE_P}, {_CONSULTA}) >= :minimo
+                   OR word_similarity({_CONSULTA}, {_NOMBRE_P}) >= :minimo)
+            ORDER BY encaje DESC, parecido DESC, p.quality_score DESC
             LIMIT :limit
         """),
-        {"query": query, "min_similarity": 0.6, "limit": limit},
+        {"query": query, "minimo": MIN_SIMILARITY_BUSQUEDA, "limit": limit},
     ).all()
 
-    return [_row_to_hit(f) for f in filas]
+    return [Candidato(_row_to_hit(f), f.parecido, f.encaje) for f in filas]
 
 
-def pick_unambiguous(candidatos: list[PlaceHit], db: Session, query: str) -> PlaceHit | None:
-    """El primero, solo si encaja entero Y se despega del segundo.
+def elegir(candidatos: list[Candidato]) -> PlaceHit | None:
+    """El lugar, o None si no hay uno que se despegue.
 
-    Hacen falta las dos condiciones y cada una ataja un fallo distinto: ver
-    ENCAJE_MINIMO para el mal candidato solitario y MARGEN_DE_DESEMPATE para el
-    empate. Con una sola, los dos casos medidos se colaban.
+    Tres reglas, en orden, y cada una nacio de un fallo concreto:
+
+    1. **Un nombre practicamente igual gana y no se discute.** Es lo que hace
+       que los errores de escritura sigan funcionando: "Volcan de Sant Ana"
+       contra "Volcán de Santa Ana" son 0,86 de parecido, y ninguna regla de
+       encaje deberia poder tumbar eso.
+
+    2. **Si no, manda el encaje y no el parecido.** El fallo: "Las Cascadas"
+       devolvia "7 cascadas" —una catarata— porque de cadena entera se parecen
+       0,64, mientras "Centro Comercial Las Cascadas" se quedaba en 0,44 por
+       ser mas largo. Por encaje es al reves: 1,00 contra 0,75.
+
+    3. **Y el primero tiene que despegarse del segundo.** "Museo" encaja
+       perfecto en veinte museos y "Galerias" en el centro comercial y en un
+       local de comida rapida que esta adentro. Elegir uno seria la sustitucion
+       silenciosa que el resto del modulo evita.
+
+    **El parecido no desempata, y se probo que no debia.** Usarlo de segundo
+    criterio elegia sistematicamente el nombre mas corto —de dos que encajan
+    igual, gana el que tiene menos texto alrededor— y con eso "Galerias" se iba
+    al local de comida rapida en vez del centro comercial. Un empate de encaje
+    es un empate de verdad.
     """
     if not candidatos:
         return None
 
-    cercanias = (
-        db.execute(
-            text("""
-            SELECT word_similarity(unaccent(lower(:query)), unaccent(lower(name)))
-                       AS cercania
-            FROM places WHERE id = ANY(:ids)
-            ORDER BY cercania DESC
-        """),
-            {"query": query, "ids": [c.id for c in candidatos[:2]]},
-        )
-        .scalars()
-        .all()
-    )
+    casi_exacto = max(candidatos, key=lambda c: c.parecido)
+    if casi_exacto.parecido >= CASI_EXACTO:
+        return casi_exacto.hit
 
-    if not cercanias or cercanias[0] < ENCAJE_MINIMO:
+    mejor = candidatos[0]
+    if mejor.encaje < ENCAJE_MINIMO:
         return None
-    if len(cercanias) < 2:
-        return candidatos[0]
-    return candidatos[0] if cercanias[0] - cercanias[1] >= MARGEN_DE_DESEMPATE else None
+    if len(candidatos) == 1:
+        return mejor.hit
+    return mejor.hit if mejor.encaje - candidatos[1].encaje >= MARGEN_DE_DESEMPATE else None
 
 
-def rank_suggestions(db: Session, query: str, candidatos: list[PlaceHit]) -> list[PlaceHit]:
-    """Ordena candidatos por lo bien que encajan y descarta los que no llegan.
+def suggestions(candidatos: list[Candidato], *, limit: int = 3) -> list[PlaceHit]:
+    """Lo que se le muestra a la persona cuando no se pudo decidir.
 
-    Se usa para lo que se le muestra a la persona cuando no se pudo decidir.
-    Ver ENCAJE_PARA_SUGERIR.
+    Ver ENCAJE_PARA_SUGERIR: el umbral es mas bajo que el de elegir —sugerir es
+    mas barato— pero no tanto como el de buscar.
     """
-    if not candidatos:
-        return []
-
-    por_id = {c.id: c for c in candidatos}
-    filas = db.execute(
-        text("""
-            SELECT id, word_similarity(unaccent(lower(:query)), unaccent(lower(name)))
-                       AS cercania
-            FROM places WHERE id = ANY(:ids)
-            ORDER BY cercania DESC
-        """),
-        {"query": query, "ids": list(por_id)},
-    ).all()
-
-    return [por_id[f.id] for f in filas if f.cercania >= ENCAJE_PARA_SUGERIR]
+    return [c.hit for c in candidatos if c.encaje >= ENCAJE_PARA_SUGERIR][:limit]
 
 
 def search_in_area(

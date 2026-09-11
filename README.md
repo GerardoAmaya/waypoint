@@ -872,26 +872,42 @@ un hueco del catálogo, era la métrica equivocada. Y no era un caso aislado:
 
 `word_similarity` busca el mejor tramo de palabras **dentro** del nombre, que es
 justo lo que alguien quiere decir al escribir el nombre corto de un centro
-comercial, y `unaccent` quita las tildes que el catálogo trae de OSM y nadie
-teclea. Pero abrir la búsqueda sin más es la receta para la sustitución
-silenciosa que este proyecto evita en todas partes, así que la búsqueda va en
-cuatro pasadas de menos a más permisiva:
+comercial. Se traen candidatos por las dos medidas y decide una regla de tres
+pasos, donde cada paso nació de un fallo concreto:
 
-1. La de siempre, por parecido de la cadena entera. **Lo que ya funcionaba no
-   cambió**, y hay tests que lo sujetan.
-2. El nombre contenido en otro más largo, y solo si hay un ganador claro.
-3. Lo mismo quitando el nombre de la zona, que es el último recurso.
-4. Nada, pero con sugerencias.
+1. **Un nombre prácticamente igual gana y no se discute.** Es lo que deja pasar
+   los errores de escritura: `Volcan de Sant Ana` contra `Volcán de Santa Ana`
+   son 0,86, y ninguna regla de contención debería poder tumbar eso.
+2. **Si no, manda el encaje y no el parecido.** El fallo: `Las Cascadas`
+   devolvía `7 cascadas`, una catarata, porque de cadena entera se parecen 0,64
+   mientras `Centro Comercial Las Cascadas` se queda en 0,44 **por ser más
+   largo**. Por encaje es al revés: 1,00 contra 0,75.
+3. **Y el primero tiene que despegarse del segundo.** `Museo` encaja perfecto en
+   veinte museos y `Galerías` en el centro comercial y en `Go Green Galerias`,
+   un local que está adentro. Elegir uno sería la sustitución silenciosa que el
+   resto del módulo evita.
 
-**Hacen falta dos guardianes y cada uno ataja un fallo distinto, los dos
-medidos.** El margen de desempate rechaza los empates: `Galerías` encaja perfecto
-en el centro comercial y en `Go Green Galerias`, un local que está adentro, y
-elegir por calidad sería decidir a dedo. El encaje mínimo rechaza al mal
-candidato solitario: `Hotel California de Santa Ana` no existe, al recortarle la
-zona queda `hotel california de`, y eso pesca `Parque Central de California` por
-una sola palabra **sin que nadie le dispute el puesto**, así que el margen lo
-daba por bueno. La señal que los separa está medida: los aciertos encajan
-enteros con 1,00 y los fallos se quedan en 0,70 o 0,75.
+**El parecido no desempata, y se probó que no debía.** Usarlo de segundo criterio
+elegía sistemáticamente el nombre más corto —de dos que encajan igual gana el
+que tiene menos texto alrededor— y con eso `Galerías` se iba al local de comida
+rápida. Un empate de encaje es un empate de verdad.
+
+Hay además un encaje mínimo que ataja al mal candidato solitario, que el margen
+no ve: `Hotel California de Santa Ana` no existe, al recortarle la zona queda
+`hotel california de`, y eso pesca `Parque Central de California` por una sola
+palabra **sin que nadie le dispute el puesto**. La señal está medida: los
+aciertos encajan enteros con 1,00 y los fallos se quedan en 0,70 o 0,75.
+
+**Las tildes se quitan con `translate` y no con la extensión `unaccent`, y el
+motivo es de despliegue.** Las migraciones corren al arrancar el contenedor —ver
+`backend/start.sh`, que explica por qué no van en el `preDeployCommand` de
+Railway— así que un `CREATE EXTENSION` sin permisos en el Postgres administrado
+no sería un fallo de búsqueda: sería un contenedor que no levanta. `translate`
+mapea carácter a carácter y no necesita nada instalado; comparado con la
+extensión sobre los 5.786 lugares activos coinciden 5.785, y el único que
+difiere es `¡Hey Cipote!`. Entra también la comilla tipográfica, que paga sola:
+el catálogo trae `Oma’s Coffee Shop` con la comilla curva de OSM y nadie la
+teclea.
 
 **Y quitar la zona tiene que ser el último paso, no el primero.** Medido:
 `Metrocentro Santa Ana` existe tal cual y recortarlo lo volvería ambiguo entre
@@ -912,10 +928,13 @@ California de Santa Ana` se le proponía el parque que acabábamos de rechazar p
 malo. Una sugerencia equivocada es peor que ninguna, porque manda a la persona a
 escribir un nombre que no quería.
 
-**Lo que sigue roto y no es de esta tanda**: la primera pasada acepta `Las
-Cascadas` → `7 cascadas`, una catarata en vez del centro comercial, y `Museo` →
-`Museo Ajá`. Vienen del umbral de la búsqueda de siempre, que no se tocó para
-no mover lo que ya funciona, y se arreglan aparte.
+| lo que uno escribe | antes | ahora |
+|---|---|---|
+| `Multiplaza San Salvador` | no encontrado | Centro Comercial Multiplaza |
+| `Metrocentro San Salvador` | no encontrado | Metrocentro |
+| `Las Cascadas` | **7 cascadas** (una catarata) | Centro Comercial Las Cascadas |
+| `Museo` | **Museo Ajá**, a dedo | sugiere los tres |
+| `Galerías` | no encontrado | sugiere los dos |
 
 ### Lo que se pide con nombre se cumple o se explica
 
@@ -967,7 +986,7 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Paradas fuera de hora (luz o cierre) | 0 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
-| Tests | 716 backend, 55 frontend |
+| Tests | 720 backend, 55 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
