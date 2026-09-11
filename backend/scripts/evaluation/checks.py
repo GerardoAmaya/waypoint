@@ -21,7 +21,16 @@ from dataclasses import dataclass, field
 from datetime import time
 
 from app.services.geo import haversine_km
-from app.services.itinerary import DINNER_WINDOW, LUNCH_WINDOW, Constraints, Itinerary
+from app.services.itinerary import (
+    DINNER_WINDOW,
+    DUSK,
+    INDOOR_CATEGORIES,
+    INDOOR_CLOSES,
+    LUNCH_WINDOW,
+    OUTDOOR_CATEGORIES,
+    Constraints,
+    Itinerary,
+)
 
 
 @dataclass
@@ -38,7 +47,7 @@ class Failure:
 # solucion del mundo real es llevar almuerzo. Mezclarlas con las duras hacia
 # que el porcentaje de cumplimiento no significara nada: la mitad de los
 # "fallos" eran zonas rurales sin restaurante cerca.
-SOFT_CHECKS = frozenset({"include_meals"})
+SOFT_CHECKS = frozenset({"include_meals", "fuera_de_hora"})
 
 
 @dataclass
@@ -91,6 +100,7 @@ def check_all(
         _check_avoided(dia, constraints, reporte)
         _check_within_radius(dia, constraints, reporte)
         _check_meals(dia, constraints, reporte)
+        _check_hours(dia, reporte)
 
     return reporte
 
@@ -216,6 +226,43 @@ def _check_travel_budget(dia, constraints: Constraints, reporte: Report) -> None
             dia.number,
             f"{total} km y el limite era {constraints.max_travel_km_per_day}",
         )
+
+
+def _check_hours(dia, reporte: Report) -> None:
+    """Paradas que terminan despues de que se acaba la luz o de que cierran.
+
+    **Existia como afirmacion en el README y no como medicion, y dejo de ser
+    cierta sin que nada avisara.** La tabla decia "Paradas fuera de hora: 0",
+    que era verdad el dia que se midio a mano; hoy son once de 240. Las reglas
+    del motor miran al llenar el dia, y despues el orden cambia dos veces —el
+    recorrido se optimiza y las comidas se intercalan—, asi que una parada
+    puede acabar corrida.
+
+    Va como comprobacion blanda: es calidad y no un limite que la persona haya
+    puesto, igual que la comida. Y va aqui y no en validate() por la regla de
+    siempre: el motor no puede ser juez de su propio trabajo.
+    """
+    for parada in dia.stops:
+        # Los comedores no tienen hora de cierre en esta regla, que es la misma
+        # excepcion que hace el motor: cenar a las ocho es lo normal.
+        if parada.meal is not None:
+            continue
+
+        categoria = parada.place.category
+        if categoria in OUTDOOR_CATEGORIES:
+            tope = DUSK
+        elif categoria in INDOOR_CATEGORIES:
+            tope = INDOOR_CLOSES
+        else:
+            continue
+
+        if parada.departure > tope:
+            reporte.add(
+                "fuera_de_hora",
+                dia.number,
+                f"{parada.place.name} termina {parada.departure:%H:%M} y el tope "
+                f"es {tope:%H:%M}",
+            )
 
 
 def _check_avoided(dia, constraints: Constraints, reporte: Report) -> None:

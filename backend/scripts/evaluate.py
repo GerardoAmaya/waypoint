@@ -148,6 +148,7 @@ def main() -> int:
     fallos_por_check: Counter[str] = Counter()
     cumplidos = 0
     recomendaciones = 0
+    fuera_de_hora = 0
     total_dias = 0
     motivos_consejo: Counter[str] = Counter()
     marginales: list[float] = []
@@ -184,7 +185,11 @@ def main() -> int:
                 fallos_por_check[fallo.check] += 1
                 if fallo.check == "invented_place":
                     inventados += 1
-            recomendaciones += len(reporte.soft)
+            # Las blandas se cuentan por separado: son dos cosas distintas y
+            # sumarlas hacia que la cifra de "llevá comida" subiera al agregar
+            # la de horarios, midiendo otra cosa con el mismo numero.
+            recomendaciones += sum(1 for f in reporte.soft if f.check == "include_meals")
+            fuera_de_hora += sum(1 for f in reporte.soft if f.check == "fuera_de_hora")
 
             if reporte.passed:
                 cumplidos += 1
@@ -224,6 +229,11 @@ def main() -> int:
         )
         for motivo, cuantos in sorted(motivos_consejo.items(), key=lambda kv: -kv[1]):
             print(f"  {motivo:<28} {cuantos:>4}")
+
+    # **Existia como afirmacion en el README y no como medicion.** La tabla
+    # decia cero, que era verdad el dia que se conto a mano, y dejo de serlo sin
+    # que nada avisara.
+    print(f"\nParadas que terminan fuera de hora (luz o cierre): {fuera_de_hora}")
 
     if marginales:
         print(

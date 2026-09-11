@@ -1660,6 +1660,25 @@ def _arrival_times(
 # se queda esperando de brazos cruzados a que sirvan.
 MEAL_EARLY_TOLERANCE_MINUTES = 30
 
+# Lo mismo, pero para una comida que se pidio por su nombre y que sin esta
+# holgura no existiria.
+#
+# **Es un rescate, no un umbral mas ancho, y la diferencia se midio.** Subir
+# MEAL_EARLY_TOLERANCE_MINUTES de 30 a 45 ganaba una cena sobre dieciseis dias
+# y a cambio duplicaba la espera total —159 a 319 minutos—, porque con mas
+# holgura la insercion elige posiciones mas baratas en kilometros y paga la
+# diferencia en tiempo muerto. O sea que empeoraba las cenas que ya estaban
+# bien para rescatar una.
+#
+# Asi que se prueba primero con la tolerancia normal y solo se reintenta con
+# esta cuando no salio nada. Lo que se rescata es el caso del reporte: un dia
+# que terminaba a las 17:21 con la cena pedida a las 18:00, rechazada por nueve
+# minutos, y la persona leyendo "llevá cena" con el restaurante ahi.
+#
+# Cuarenta y cinco porque es donde la curva se aplana: de 45 para arriba no
+# entra ninguna cena mas, solo se espera mas rato.
+MEAL_RESCUE_TOLERANCE_MINUTES = 45
+
 # Cuantos restaurantes se consideran por dia. Eran cuatro, elegidos por
 # cercania a la PRIMERA parada del dia, y las dos cosas estaban mal.
 #
@@ -1763,6 +1782,7 @@ def _best_meal_insertion(
     travel: TravelProvider,
     enforce_budget: bool = True,
     numero: int = 1,
+    tolerancia: int = MEAL_EARLY_TOLERANCE_MINUTES,
 ) -> tuple[list[tuple[PlaceHit, str | None]], PlaceHit | None, float]:
     """Mete la comida donde menos kilometros cueste, entre las posiciones que dan la hora.
 
@@ -1798,7 +1818,7 @@ def _best_meal_insertion(
         return secuencia, None, 0.0
 
     base_km = _sequence_km(secuencia, travel)
-    limite_temprano = _add_minutes(ventana[0], -MEAL_EARLY_TOLERANCE_MINUTES)
+    limite_temprano = _add_minutes(ventana[0], -tolerancia)
     mejor: tuple[float, list[tuple[PlaceHit, str | None]], PlaceHit, float] | None = None
 
     for comida in disponibles:
@@ -1879,24 +1899,51 @@ def _insert_meals(
     medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
     disponibles = list(comidas)
 
-    secuencia, almuerzo, _ = _best_meal_insertion(
-        secuencia, disponibles, "lunch", LUNCH_WINDOW, constraints, medidor, numero=numero
+    secuencia, almuerzo, _ = _colocar_comida(
+        secuencia, disponibles, "lunch", LUNCH_WINDOW, constraints, medidor, numero
     )
     if almuerzo is not None:
         disponibles.remove(almuerzo)
 
     if disponibles:
-        secuencia, _, _ = _best_meal_insertion(
-            secuencia,
-            disponibles,
-            "dinner",
-            DINNER_WINDOW,
-            constraints,
-            medidor,
-            numero=numero,
+        secuencia, _, _ = _colocar_comida(
+            secuencia, disponibles, "dinner", DINNER_WINDOW, constraints, medidor, numero
         )
 
     return secuencia
+
+
+def _colocar_comida(
+    secuencia: list[tuple[PlaceHit, str | None]],
+    disponibles: list[PlaceHit],
+    tipo: str,
+    ventana: tuple[time, time],
+    constraints: Constraints,
+    medidor: TravelProvider,
+    numero: int,
+):
+    """Coloca una comida, con un reintento paciente si se pidio por su nombre.
+
+    Ver MEAL_RESCUE_TOLERANCE_MINUTES: la holgura extra es un rescate y no un
+    umbral mas ancho, porque ensancharlo para todos empeoraba las comidas que
+    ya salian bien.
+    """
+    resultado = _best_meal_insertion(
+        secuencia, disponibles, tipo, ventana, constraints, medidor, numero=numero
+    )
+    if resultado[1] is not None or tipo not in constraints.must_include_meals:
+        return resultado
+
+    return _best_meal_insertion(
+        secuencia,
+        disponibles,
+        tipo,
+        ventana,
+        constraints,
+        medidor,
+        numero=numero,
+        tolerancia=MEAL_RESCUE_TOLERANCE_MINUTES,
+    )
 
 
 def schedule_day(
@@ -1964,7 +2011,81 @@ def schedule_day(
         )
         momento = salida
 
+    _repartir_la_espera(dia, constraints)
     return dia
+
+
+def _limite_de_salida(lugar: PlaceHit, constraints: Constraints) -> time:
+    """Hasta que hora tiene sentido seguir en ese lugar.
+
+    Son los mismos dos limites que el motor ya respeta al colocar paradas: la
+    luz para lo de afuera y la hora de cierre para lo de bajo techo. Un comedor
+    no tiene tope, que es la misma excepcion de siempre.
+    """
+    if lugar.category in OUTDOOR_CATEGORIES:
+        return DUSK
+    if lugar.category in INDOOR_CATEGORIES:
+        return INDOOR_CLOSES
+    return constraints.latest_end
+
+
+def _repartir_la_espera(dia: Day, constraints: Constraints) -> None:
+    """Convierte la espera antes de una comida en rato en los lugares anteriores.
+
+    **La escapatoria es quedarse mas, no esperar sentado.** Una comida no puede
+    empezar antes de su franja, asi que un dia que termina sus visitas a las
+    17:21 con la cena a las 18:00 tenia treinta y nueve minutos muertos en un
+    estacionamiento. Los mismos treinta y nueve minutos en el mirador son rato
+    de viaje.
+
+    Se reparte hacia atras, de la parada mas cercana a la comida hacia las
+    primeras, y cada una toma lo que puede sin pasarse de su propio limite: la
+    luz si es al aire libre, la hora de cierre si es bajo techo. Lo que ninguna
+    pueda absorber se queda como espera, que es honesto: significa que el dia
+    de verdad se quedo corto.
+
+    Ir hacia atras y no hacia adelante importa. Estirar una parada empuja a
+    todas las siguientes, asi que hacerlo en la mas cercana a la comida mueve
+    lo menos posible; cada paso mas atras tiene que comprobar que las
+    intermedias siguen dentro de su limite, y por eso se hace en ese orden.
+    """
+    for indice, parada in enumerate(dia.stops):
+        if parada.meal is None or indice == 0:
+            continue
+
+        hueco = _minutes_between(dia.stops[indice - 1].departure, parada.arrival)
+        viaje = parada.travel_minutes_from_previous
+        espera = hueco - viaje
+        if espera <= 0:
+            continue
+
+        # De la parada pegada a la comida hacia atras.
+        for anterior in range(indice - 1, -1, -1):
+            if espera <= 0:
+                break
+            lugar = dia.stops[anterior]
+            # Las comidas anteriores no se estiran: su duracion la puso la
+            # persona y alargarla es cambiarle el pedido.
+            if lugar.meal is not None:
+                continue
+
+            tope = _limite_de_salida(lugar.place, constraints)
+            margen = _minutes_between(lugar.departure, tope)
+            # Las que ya estan en su limite o pasadas no dan nada.
+            toma = max(0, min(espera, margen))
+            if toma == 0:
+                continue
+
+            dia.stops[anterior] = replace(lugar, departure=_add_minutes(lugar.departure, toma))
+            # Todo lo que va entre esa parada y la comida se corre igual.
+            for medio in range(anterior + 1, indice):
+                corrida = dia.stops[medio]
+                dia.stops[medio] = replace(
+                    corrida,
+                    arrival=_add_minutes(corrida.arrival, toma),
+                    departure=_add_minutes(corrida.departure, toma),
+                )
+            espera -= toma
 
 
 # --------------------------------------------------------------------------

@@ -34,6 +34,7 @@ from app.schemas import ItineraryRequest
 from app.services.geocode import (
     ResolvedArea,
     buscar_lugar,
+    find_place_name,
     resolve_area,
     resolve_must_visit,
     zone_names,
@@ -435,6 +436,26 @@ def _default_client():
     return Anthropic(api_key=settings.anthropic_api_key)
 
 
+def _partida_que_es_zona(db: Session, texto: str) -> ResolvedArea | None:
+    """La ciudad que alguien nombro como punto de partida, si lo es.
+
+    **"Saliendo desde Santa Tecla" no nombra una puerta, nombra una ciudad.**
+    Buscarla en el catalogo de lugares da restaurantes que se llaman como
+    ella: antes devolvia "Carymar Santa Tecla" y el dia arrancaba en un
+    comedor que nadie habia mencionado, en silencio. Ahora la busqueda no
+    sustituye, asi que salia un error con tres restaurantes de sugerencia,
+    que es honesto y sigue sin servir.
+
+    Lo que la persona quiso decir esta en el nomenclator —Santa Tecla esta ahi
+    como municipio y como ciudad— y la respuesta correcta es tratarla como
+    zona: el viaje ocurre ahi y no hay punto de partida.
+
+    Solo se consulta cuando la busqueda de lugares ya fallo, asi que un hotel
+    que se llame como un pueblo sigue ganando como punto de partida.
+    """
+    return find_place_name(db, texto)
+
+
 def _no_se_encontro(texto: str, sugerencias: list[PlaceHit]) -> str:
     """El mensaje de que no se encontro el lugar, con lo que si hay parecido.
 
@@ -532,10 +553,16 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
     texto_partida = texto_partida.strip() if isinstance(texto_partida, str) else None
     partida: PlaceHit | None = None
 
+    # Cuando lo que nombro como partida es en realidad una ciudad, no hay punto
+    # de partida que buscar: hay zona. Ver _partida_que_es_zona.
+    partida_como_zona: ResolvedArea | None = None
+
     if texto_partida:
         buscado = buscar_lugar(db, texto_partida)
         partida = buscado.hit
         if partida is None:
+            partida_como_zona = _partida_que_es_zona(db, texto_partida)
+        if partida is None and partida_como_zona is None:
             # **Se dice, no se sustituye.** El caso real: "Hotel Barcelo" no
             # esta en el catalogo, y con umbral bajo la busqueda difusa devuelve
             # "Hotel La Parcela", que es otro sitio a veinte kilometros. Un dia
@@ -552,7 +579,11 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
 
     area: ResolvedArea | None = None
 
-    if not texto_area and partida is not None:
+    if not texto_area and partida is None and partida_como_zona is not None:
+        # "saliendo desde Santa Tecla" es una ciudad entera: el viaje ocurre
+        # ahi, y no hay una puerta concreta de la que salir.
+        area = partida_como_zona
+    elif not texto_area and partida is not None:
         # El punto de partida ya dice donde buscar: quien nombra de donde sale
         # y nada mas no tiene que nombrar tambien la zona.
         area = ResolvedArea(

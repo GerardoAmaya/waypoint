@@ -210,3 +210,40 @@ class TestElEncajeMandaSobreElParecido:
             "Centro Comercial Galerías",
             "Go Green Galerias",
         }
+
+
+class TestUnaCiudadNoEsUnPuntoDePartida:
+    """ "Saliendo desde Santa Tecla" nombra una ciudad, no una puerta.
+
+    Buscarla en el catálogo de lugares daba restaurantes que se llaman como
+    ella: antes devolvía "Carymar Santa Tecla" y el día arrancaba en un comedor
+    que nadie mencionó, en silencio. Con la búsqueda que no sustituye salía un
+    error honesto que seguía sin servir. Lo que la persona quiso decir está en
+    el nomenclátor.
+    """
+
+    def test_la_ciudad_se_vuelve_la_zona_del_viaje(self, sesion, monkeypatch):
+        from app.services import interpret as modulo
+        from app.services.geocode import ResolvedArea
+
+        # El nomenclátor vive en su propia tabla y aquí interesa el camino, no
+        # su contenido: se fija para que el test diga lo que dice comprobar.
+        monkeypatch.setattr(
+            modulo,
+            "find_place_name",
+            lambda db, texto: ResolvedArea(
+                "Santa Tecla", 13.6737, -89.2886, 12_000, "gazetteer"
+            ),
+        )
+
+        zona = modulo._partida_que_es_zona(sesion, "Santa Tecla")
+
+        assert zona is not None
+        assert zona.name == "Santa Tecla"
+
+    def test_un_nombre_que_no_es_ciudad_no_se_inventa_una_zona(self, sesion, monkeypatch):
+        from app.services import interpret as modulo
+
+        monkeypatch.setattr(modulo, "find_place_name", lambda db, texto: None)
+
+        assert modulo._partida_que_es_zona(sesion, "Hotel que no existe") is None

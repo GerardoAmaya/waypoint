@@ -58,13 +58,18 @@ const PASOS: { fase: Fase; texto: string }[] = [
   fue la fecha, que antes no estaba y ahora arrastra el clima y los horarios de
   apertura.
 
-  **No se puede recortar "y vuelvo antes de las 11", aunque lo parezca.** Esa
-  cláusula lleva dos cosas: que el día cierre en el hotel y que el tope sean
-  las 23:00. Sin ella el segundo día termina a las 15:11 y se queda sin la cena
-  que la misma frase pide, así que el ejemplo se contradice solo.
+  **No se puede recortar "y vuelvo antes de las 11 p.m.", aunque lo parezca.**
+  Esa cláusula lleva dos cosas: que el día cierre en el hotel y que el tope
+  sean las 23:00. Sin ella el segundo día termina a las 15:11 y se queda sin la
+  cena que la misma frase pide, así que el ejemplo se contradice solo.
+
+  El "a.m." y el "p.m." van escritos porque "a las 10" y "antes de las 11" son
+  ambiguos leídos por una persona, que es quien tiene que entender el ejemplo:
+  el modelo los resuelve bien por contexto, pero el ejemplo está para enseñar
+  qué se puede pedir, y para eso tiene que leerse sin dudas.
 */
 export const PETICION_INICIAL =
-  "Dos días desde el Hotel Barceló a partir del sábado a las 10, el primero en carro y el segundo a pie, ceno los dos días y vuelvo antes de las 11";
+  "Dos días desde el Hotel Barceló a partir del sábado a las 10 a.m., el primero en carro y el segundo a pie, ceno los dos días y vuelvo antes de las 11 p.m.";
 
 /*
   Los tres tocan cosas distintas a propósito: hablar en vago —"odio

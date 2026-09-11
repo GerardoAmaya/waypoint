@@ -936,6 +936,56 @@ escribir un nombre que no quería.
 | `Museo` | **Museo Ajá**, a dedo | sugiere los tres |
 | `Galerías` | no encontrado | sugiere los dos |
 
+### La espera antes de comer es rato en el lugar, no en el estacionamiento
+
+Una comida no puede empezar antes de su franja, así que un día que terminaba
+sus visitas a las 17:21 con la cena pedida a las 18:00 tenía **treinta y nueve
+minutos muertos**. Y como la tolerancia para llegar temprano eran treinta, la
+cena se rechazaba por nueve minutos y la persona leía *"llevá cena"* con el
+restaurante ahí.
+
+La primera salida fue ensanchar la tolerancia, y **la medición la descartó**:
+de 30 a 45 minutos ganaba una cena sobre dieciséis días y a cambio duplicaba la
+espera total, de 159 a 319 minutos. Con más holgura la inserción elige
+posiciones más baratas en kilómetros y paga la diferencia en tiempo muerto, o
+sea que empeoraba las cenas que ya salían bien para rescatar una. Quedó como
+**rescate**: se prueba con la tolerancia normal y solo se reintenta con 45
+cuando no salió nada y la comida se pidió por su nombre. Quince cenas, un aviso
+menos, y 211 minutos de espera en vez de 319.
+
+**Pero la espera en sí no tenía por qué existir.** La idea la puso el usuario:
+si faltan treinta y nueve minutos para la cena, se pueden pasar en el mirador en
+vez de en el estacionamiento. Los mismos minutos, y uno es tiempo de viaje.
+
+Se reparte hacia atrás, de la parada pegada a la comida hacia las primeras, y
+cada una toma lo que puede sin pasarse de su propio límite: la luz si es al aire
+libre, la hora de cierre si es bajo techo. Ir hacia atrás importa, porque
+estirar una parada empuja a todas las siguientes: hacerlo en la más cercana a la
+comida mueve lo menos posible.
+
+Medido sobre dieciséis días de ocho zonas: **346 minutos muertos en once casos,
+y quedan cero**. Repartir hacia atrás alcanza más de lo que parecía —estirando
+solo la parada anterior se absorbía el 62%— porque las paradas tempranas están
+más lejos del anochecer.
+
+### Una ciudad nombrada como punto de partida es una zona
+
+*"Dos días saliendo desde Santa Tecla, en carro"* —uno de los ejemplos del
+compositor— fallaba. Santa Tecla es un municipio y está en el nomenclátor, pero
+`start_place` se busca en el catálogo de lugares, donde lo que hay son
+restaurantes que se llaman como ella.
+
+Lo que devolvía antes era peor que el error: `Carymar Santa Tecla`, o sea que el
+día arrancaba en un comedor que nadie había mencionado **y no lo decía**. Con la
+búsqueda que no sustituye pasó a ser un error honesto —*"¿Era Carymar Santa
+Tecla, Don Pollo Santa Tecla o Pizza Hut Santa Tecla?"*— que seguía sin servir.
+
+Nombrar una ciudad como punto de partida no es nombrar una puerta: es decir
+dónde ocurre el viaje. Así que cuando la búsqueda de lugares falla se consulta
+el nomenclátor, y si el texto es una ciudad se usa como zona y el día no lleva
+punto de partida. Se consulta **después** y no antes, para que un hotel que se
+llame como un pueblo siga ganando como punto de partida.
+
 ### Lo que se pide con nombre se cumple o se explica
 
 `include_meals` es un booleano y significa "meteme comidas donde quepan". No
@@ -983,10 +1033,10 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Días con recomendación de llevar comida | 15% (9 de 62) |
 | Repetición de categoría por paso | 26% |
 | Repetición de subcategoría por paso | 15% |
-| Paradas fuera de hora (luz o cierre) | 0 |
+| Paradas fuera de hora (luz o cierre) | 11 de 240 — ahora medido en el banco |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
-| Tests | 720 backend, 55 frontend |
+| Tests | 726 backend, 55 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -1115,6 +1165,14 @@ el propio `assemble` enuncia doce líneas más arriba y que a `advise()` se le
 había escapado; de paso, los avisos de un viaje que mezcla modos se calculaban
 todos con la red del último día, así que el día a pie recibía consejos medidos
 en carro.
+
+**Once paradas de 240 terminan fuera de hora, y la tabla decía cero.** Era
+verdad el día que se contó a mano y dejó de serlo sin que nada avisara: las
+reglas de luz y cierre miran al llenar el día, y después el orden cambia dos
+veces —el recorrido se optimiza y las comidas se intercalan—, así que una parada
+puede acabar corrida. Ahora es una comprobación blanda del banco en vez de una
+afirmación del README, así que no puede volver a moverse en silencio. Arreglarlo
+es aparte.
 
 **El clima informa y aconseja, pero todavía no decide.** El motor sabe que
 llueve sobre el mirador de las 15:00 y lo dice; lo que no hace es preferir un

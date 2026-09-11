@@ -25,6 +25,8 @@ from app.services.itinerary import (
     DEFAULT_DURATIONS,
     DEFAULT_MEAL_MINUTES,
     DINNER_WINDOW,
+    DUSK,
+    INDOOR_CLOSES,
     NOMBRE_VAGO_KM,
     SUBCATEGORY_PENALTY_KM,
     UNSTATED_BUDGET_BY_MODE,
@@ -36,6 +38,7 @@ from app.services.itinerary import (
     _insert_meals,
     _meal_out_of_reach,
     _meals_that_fit,
+    _minutes_between,
     _name_key,
     _outdoor_after_dusk,
     _route_km,
@@ -2989,3 +2992,70 @@ class TestLaSalidaQueSeOfreceSirveEnSuModo:
 
         assert "hasta qué hora podés" in aviso.detail
         assert "km" not in aviso.detail
+
+
+class TestLaEsperaSeVuelveRatoEnElLugar:
+    """Una comida no puede empezar antes de su franja, y eso dejaba hueco.
+
+    El reporte: un día terminaba sus visitas a las 17:21 con la cena a las
+    18:00, o sea treinta y nueve minutos muertos en un estacionamiento. La
+    escapatoria es quedarse más rato en los lugares anteriores: los mismos
+    treinta y nueve minutos en el mirador son rato de viaje.
+
+    Medido sobre dieciséis días de ocho zonas: 346 minutos muertos en once
+    casos, y con esto quedan cero.
+    """
+
+    def _dia(self, categoria, duracion_museo=None):
+        destino = lugar("Mirador", 13.700, -89.220, categoria)
+        comedor = lugar("Comedor", 13.701, -89.221, Category.food)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(15, 0),
+            latest_end=time(22, 0),
+            include_meals=True,
+            must_include_meals=["dinner"],
+        )
+        return schedule_day(1, [(destino, None), (comedor, "dinner")], restricciones)
+
+    def test_la_parada_anterior_se_estira_hasta_la_comida(self):
+        """Sin esto, la parada terminaba temprano y el hueco quedaba muerto."""
+        dia = self._dia(Category.viewpoint)
+
+        mirador, cena = dia.stops
+        assert cena.arrival == DINNER_WINDOW[0]
+        # El mirador se queda hasta que toca salir hacia la cena, sin hueco.
+        hueco = _minutes_between(mirador.departure, cena.arrival)
+        assert hueco == cena.travel_minutes_from_previous
+
+    def test_no_se_estira_mas_alla_de_la_luz(self):
+        """Un mirador no se disfruta a oscuras: el tope sigue siendo DUSK."""
+        dia = self._dia(Category.viewpoint)
+
+        assert dia.stops[0].departure <= DUSK
+
+    def test_lo_de_bajo_techo_para_en_su_hora_de_cierre(self):
+        dia = self._dia(Category.culture)
+
+        assert dia.stops[0].departure <= INDOOR_CLOSES
+
+    def test_una_comida_anterior_no_se_alarga(self):
+        """La duración de una comida la puso la persona; estirarla es cambiarle
+        el pedido."""
+        almuerzo = lugar("Almuerzo", 13.700, -89.220, Category.food)
+        cena = lugar("Cena", 13.701, -89.221, Category.food)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(12, 0),
+            latest_end=time(22, 0),
+            meal_minutes=60,
+            include_meals=True,
+        )
+
+        dia = schedule_day(1, [(almuerzo, "lunch"), (cena, "dinner")], restricciones)
+
+        assert _minutes_between(dia.stops[0].arrival, dia.stops[0].departure) == 60
