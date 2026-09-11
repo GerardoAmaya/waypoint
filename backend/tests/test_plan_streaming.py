@@ -188,7 +188,7 @@ class TestCompatibilidad:
         eventos = list(plan_streaming(None, restricciones, client=ClienteFalso()))
         final = next(e for e in eventos if isinstance(e, PlanReady))
 
-        itinerario, stats = plan_with_routing(None, restricciones, client=ClienteFalso())
+        itinerario, stats, _ = plan_with_routing(None, restricciones, client=ClienteFalso())
 
         assert itinerario.total_stops == final.itinerary.total_stops
         assert stats.fetched == final.stats.fetched

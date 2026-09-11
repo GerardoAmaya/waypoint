@@ -22,12 +22,13 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import time
+from datetime import date, time, timedelta
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.reloj import en_palabras, hoy
 from app.models import Category
 from app.schemas import ItineraryRequest
 from app.services.geocode import (
@@ -42,6 +43,14 @@ from app.services.places import PlaceHit
 logger = logging.getLogger(__name__)
 
 MAX_PHRASE_LENGTH = 600
+
+# Hasta cuando se acepta una fecha de viaje.
+#
+# Un año es generoso para planificar y suficiente para atajar el error real: el
+# modelo resuelve "el 20 de diciembre" contra el año en curso, y si se equivoca
+# de año la fecha sale disparada en vez de quedar cerca. Mas alla de esto se
+# avisa y se planifica para hoy, que es lo unico que no puede estar mal.
+HORIZONTE_DIAS = 365
 
 # Radio de busqueda cuando lo unico que se dijo es de donde se sale.
 #
@@ -61,6 +70,12 @@ Campos:
 - "area": string. La zona o lugar donde quiere viajar, tal como lo nombro. \
 Si no menciona ninguno, null.
 - "days": entero de 1 a 7. Si no lo dice, 1.
+- "start_date": "YYYY-MM-DD" o null. El dia en que arranca el viaje, SOLO si \
+lo dice. "hoy", "manana", "el sabado", "el 20 de diciembre", "el otro fin de \
+semana" son fechas: resolvelas contra el dia de hoy, que va al final de estas \
+instrucciones. Un dia de la semana a secas es el proximo que viene, no el que \
+ya paso. Si no habla de cuando viaja, null: mas vale no saber la fecha que \
+inventar una.
 - "earliest_start": "HH:MM". Hora minima de inicio del dia. "odio madrugar" o \
 "salir tarde" son cerca de las 10:00 u 11:00. Por defecto "09:00".
 - "latest_end": "HH:MM". Hora maxima de fin. Por defecto "20:00".
@@ -214,6 +229,41 @@ def _parse_time(valor, por_defecto: time, notes: list[str], campo: str) -> time:
         return por_defecto
 
 
+def _parse_date(valor, referencia: date, notes: list[str]) -> date | None:
+    """Valida la fecha que devolvio el modelo, o devuelve None con aviso.
+
+    **Se comprueba aunque la haya resuelto el modelo.** Darle el dia de hoy
+    hace que pueda resolver "el sabado"; no hace que la aritmetica le salga
+    bien. Las dos formas en que se equivoca son medibles y las dos se atajan
+    aqui: una fecha que ya paso y una que cae a años de distancia.
+
+    None es "no hay fecha utilizable", y quien llama la reemplaza por hoy. Se
+    avisa siempre: planificar para otro dia del que se pidio, en silencio, es
+    la clase de fallo que se descubre estando en el lugar equivocado.
+    """
+    if not isinstance(valor, str) or not valor.strip():
+        return None
+
+    try:
+        fecha = date.fromisoformat(valor.strip())
+    except ValueError:
+        notes.append(f"no entendí {valor!r} como una fecha; se planificó para hoy")
+        return None
+
+    if fecha < referencia:
+        notes.append(
+            f"{fecha.isoformat()} ya pasó; se planificó para hoy. Si querías otra "
+            "fecha, escribila con el día y el mes"
+        )
+        return None
+
+    if fecha > referencia + timedelta(days=HORIZONTE_DIAS):
+        notes.append(f"{fecha.isoformat()} queda a más de un año; se planificó para hoy")
+        return None
+
+    return fecha
+
+
 def _clamp(valor, minimo, maximo, por_defecto, notes: list[str], campo: str):
     """Recorta al rango permitido y deja constancia de que se recorto.
 
@@ -335,7 +385,21 @@ def _strings(valores) -> list[str]:
     return [str(v).strip() for v in valores if str(v).strip()]
 
 
-def _call_model(frase: str, client=None) -> dict:
+def _fecha_de_hoy_para_el_modelo(fecha: date) -> str:
+    """La linea que le dice al modelo en que dia vive.
+
+    **Sin esto no puede resolver "el sabado".** Un modelo no sabe que dia es
+    hoy: lo unico que tiene son las fechas de su entrenamiento, asi que sin
+    decirselo resuelve los dias de la semana contra un año cualquiera y la
+    fecha sale plausible y equivocada.
+    """
+    return (
+        f"Hoy es {en_palabras(fecha)} de {fecha.year}, o sea {fecha.isoformat()}. "
+        'Resolve contra esa fecha "hoy", "manana" y los dias de la semana.'
+    )
+
+
+def _call_model(frase: str, client=None, fecha: date | None = None) -> dict:
     """Le pide al modelo el JSON y lo devuelve parseado."""
     if client is None:
         client = _default_client()
@@ -343,7 +407,7 @@ def _call_model(frase: str, client=None) -> dict:
     respuesta = client.messages.create(
         model=settings.planner_model,
         max_tokens=1024,
-        system=SYSTEM_PROMPT,
+        system=(f"{SYSTEM_PROMPT}\n\n{_fecha_de_hoy_para_el_modelo(fecha or hoy())}"),
         messages=[{"role": "user", "content": frase}],
     )
 
@@ -379,14 +443,25 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             error=f"la peticion es muy larga, el maximo son {MAX_PHRASE_LENGTH} caracteres"
         )
 
+    # Una sola lectura del reloj para toda la interpretacion: si se leyera dos
+    # veces, una peticion hecha a las 23:59:59 podria resolver "manana" contra
+    # un dia y validarlo contra el siguiente.
+    hoy_ = hoy()
+
     try:
-        datos = _call_model(frase, client)
+        datos = _call_model(frase, client, hoy_)
     except InterpretError as exc:
         logger.warning("no se pudo interpretar la frase: %s", exc)
         return Interpretation(error=str(exc))
 
     notes: list[str] = []
     unmapped = _strings(datos.get("unmapped"))
+
+    # Sin fecha se planifica para hoy, que es lo que quiere quien no la dice:
+    # "un dia por Suchitoto" es un plan para ahora, no un plan sin cuando. La
+    # fecha se devuelve al cliente y se muestra, asi que suponerla no es
+    # suponerla en silencio.
+    fecha_inicio = _parse_date(datos.get("start_date"), hoy_, notes) or hoy_
 
     pedidos: list[PlaceHit] = []
     minutos_por_lugar: dict[uuid.UUID, int] = {}
@@ -548,6 +623,7 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
     try:
         peticion = ItineraryRequest(
             days=_clamp(datos.get("days"), 1, 7, 1, notes, "days"),
+            start_date=fecha_inicio,
             center_lat=area.lat,
             center_lon=area.lon,
             radius_m=area.radius_m,

@@ -6,6 +6,7 @@ romper el contrato que consume el frontend.
 
 from __future__ import annotations
 
+import datetime
 import uuid
 from datetime import time
 from typing import Annotated, Literal
@@ -86,6 +87,13 @@ class ItineraryRequest(BaseModel):
     """
 
     days: int = Field(default=1, ge=1, le=7)
+
+    # El dia en que arranca el viaje. None es "no se sabe", no "hoy": el motor
+    # es puro y no le pregunta la fecha al reloj, asi que quien interpreta la
+    # frase es el que resuelve la ausencia. Sin fecha el itinerario sigue
+    # armandose igual; lo que se pierde es todo lo que dependa del calendario,
+    # como el clima.
+    start_date: datetime.date | None = None
     center_lat: float = Field(ge=-90, le=90)
     center_lon: float = Field(ge=-180, le=180)
 
@@ -189,6 +197,17 @@ class StopOut(BaseModel):
 
 class DayOut(BaseModel):
     number: int
+    # La fecha de este dia, o None si no se supo cuando es el viaje.
+    #
+    # **Se devuelve para que la persona vea que fecha se entendio.** "el
+    # sabado" lo resuelve el modelo contra el dia de hoy, y si se equivoco el
+    # unico modo de notarlo es verlo escrito.
+    #
+    # El tipo va por el modulo, `datetime.date`, y no importado a secas: el
+    # campo se llama igual que el tipo, y con `from datetime import date`
+    # Pydantic resuelve la anotacion contra el campo en vez del tipo y falla al
+    # construir la clase.
+    date: datetime.date | None = None
     stops: list[StopOut]
     travel_km: float
     start: time | None = None
@@ -197,6 +216,9 @@ class DayOut(BaseModel):
     # porque el icono del traslado dice como se va, y en un viaje mixto decir
     # "en coche" en el dia que se camina es decir algo falso.
     mode: str = "driving"
+    # El clima de este dia, o None si no se supo.
+    weather: WeatherDayOut | None = None
+
     # Lugares que se visitan de verdad, sin contar el punto de partida.
     #
     # **Va del backend porque el cliente no puede deducirlo.** La cabecera del
@@ -205,6 +227,48 @@ class DayOut(BaseModel):
     # arriba y 6 + 3 en las pestañas. Quien lo sabe es el motor, que es el que
     # tiene las restricciones a mano.
     visits: int = 0
+
+
+class WeatherDayOut(BaseModel):
+    """El clima de un dia, resumido a las horas en que se viaja.
+
+    Se devuelve como dato y no como consejo: que llueva a las 21:00 de un dia
+    que termina a las 18:00 se muestra, pero no genera un aviso. El consejo
+    esta reservado para lo que se puede accionar, que es la lluvia que le cae
+    encima a una parada al aire libre.
+    """
+
+    temp_max: int
+    temp_min: int
+    rain_mm: float
+    # Las horas del reloj que cuentan como lluviosas: [14, 15, 16].
+    rain_hours: list[int] = Field(default_factory=list)
+    description: str
+    # El codigo WMO crudo, ademas de la descripcion ya traducida.
+    #
+    # **Va para que el cliente elija el icono sin adivinar por el texto.**
+    # Decidir entre sol, nube y tormenta comparando la cadena "chubascos
+    # ligeros" ataria el dibujo a la redaccion: cambiar una palabra en el
+    # backend apagaria un icono en el frontend sin que nada lo delate.
+    code: int
+
+
+class WeatherSourceOut(BaseModel):
+    """De donde salio el clima, o por que no hay.
+
+    Mismo patron que las distancias: la respuesta dice siempre de donde vienen
+    los datos, y cuando faltan, por que. Callarse deja a la persona sin saber
+    si no llueve o si nadie miro.
+    """
+
+    # "forecast" cuando hay pronostico; None cuando no.
+    source: str | None = None
+    # "sin_fecha", "sin_proveedor", "fuera_de_pronostico", "sin_servicio".
+    reason: str | None = None
+    # Open-Meteo se publica con licencia CC-BY 4.0, que obliga a atribuir donde
+    # se muestren los datos. Viaja con la respuesta para que el cliente no
+    # tenga que llevar el credito escrito a mano y se le olvide al cambiarlo.
+    attribution: str = "Datos del clima de Open-Meteo (CC-BY 4.0)"
 
 
 class ViolationOut(BaseModel):
@@ -266,6 +330,8 @@ class ItineraryOut(BaseModel):
     total_stops: int
     unused_candidates: int
     travel: TravelSourceOut
+    # Siempre presente: cuando no hay clima, trae la razon.
+    weather: WeatherSourceOut = Field(default_factory=WeatherSourceOut)
 
 
 # --------------------------------------------------------------------------

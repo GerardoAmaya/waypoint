@@ -73,8 +73,29 @@ const FUENTE: Record<string, string> = {
 */
 const CAUSA: Record<string, string> = {
   no_key: "falta configurar OpenRouteService",
-  no_quota: "se acabó el cupo diario para medirlas; el trazo del mapa no se ve afectado",
-  unroutable: "estas paradas están lejos de toda carretera y no se pueden medir",
+  no_quota:
+    "se acabó el cupo diario para medirlas; el trazo del mapa no se ve afectado",
+  unroutable:
+    "estas paradas están lejos de toda carretera y no se pueden medir",
+};
+
+/*
+  Por qué un itinerario puede no traer clima. Son cuatro y cada una pide algo
+  distinto: esperar, no esperar nada, o que el viaje se acerque.
+
+  "fuera_de_pronostico" es la que más importa que se lea: el pronóstico llega a
+  dieciséis días, y quien planifica para diciembre tiene que saber que el dato
+  no existe todavía en vez de deducir que no va a llover.
+
+  "sin_fecha" no se explica porque no puede pasar desde la interfaz: la fecha
+  se supone hoy cuando nadie la dice. Queda por si el endpoint se usa a mano.
+*/
+const SIN_CLIMA: Record<string, string> = {
+  fuera_de_pronostico:
+    "Todavía no hay pronóstico para esas fechas: llega hasta dieciséis días.",
+  sin_servicio: "No se pudo consultar el clima esta vez.",
+  sin_proveedor: "",
+  sin_fecha: "",
 };
 
 export default function Panel({
@@ -145,9 +166,8 @@ export default function Panel({
 
     // El foco sigue a la seleccion: si se queda atras, la flecha siguiente
     // vuelve a partir del dia viejo.
-    const botones = pestanas.current?.querySelectorAll<HTMLButtonElement>(
-      '[role="tab"]',
-    );
+    const botones =
+      pestanas.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
     botones?.[itinerary.days.indexOf(siguiente)]?.focus();
   };
 
@@ -197,8 +217,8 @@ export default function Panel({
             expandido ? "hidden" : ""
           }`}
         >
-          {itinerary.days.length} {itinerary.days.length === 1 ? "día" : "días"} ·{" "}
-          {itinerary.total_stops} paradas
+          {itinerary.days.length} {itinerary.days.length === 1 ? "día" : "días"}{" "}
+          · {itinerary.total_stops} paradas
         </p>
         <p
           className={`mt-1 text-dato leading-relaxed text-tinta-tenue lg:block ${
@@ -221,9 +241,48 @@ export default function Panel({
               {itinerary.travel.reason && CAUSA[itinerary.travel.reason]
                 ? `: ${CAUSA[itinerary.travel.reason]}`
                 : ""}
+              {/*
+                El crédito del clima va pegado a esta línea y no en una propia.
+                No es decorativo —Open-Meteo es CC-BY 4.0 y atribuir es la
+                condición de poder usar los datos— pero la licencia no exige
+                que ocupe un renglón, y ocupándolo metía una tercera línea gris
+                bajo el título.
+
+                Queda corto y el nombre lleva al aviso de licencia, que es lo
+                que la atribución tiene que dejar alcanzable. El crédito
+                completo, con la licencia escrita, va en el texto que se copia,
+                donde no le quita sitio a nada.
+              */}
+              {itinerary.weather.source && (
+                <>
+                  {" · clima de "}
+                  <a
+                    href="https://open-meteo.com/en/license"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline decoration-borde-fuerte underline-offset-2 hover:text-tinta-suave"
+                  >
+                    Open-Meteo
+                  </a>
+                </>
+              )}
             </>
           )}
         </p>
+
+        {/*
+          Cuando no hubo clima se dice por qué, con el mismo criterio que las
+          distancias: callarse deja sin saber si no llueve o si nadie miró.
+          Solo aparece cuando hay algo que explicar, así que no es una línea
+          fija.
+        */}
+        {!expandido &&
+          !itinerary.weather.source &&
+          SIN_CLIMA[itinerary.weather.reason ?? ""] && (
+            <p className="mt-1 text-menudo text-tinta-tenue">
+              {SIN_CLIMA[itinerary.weather.reason ?? ""]}
+            </p>
+          )}
 
         {/*
           Lo que el modelo entendio y no pudo representar se muestra, no se
@@ -232,8 +291,8 @@ export default function Panel({
         */}
         {!!interpretation?.unmapped?.length && (
           <p className="mt-3 border-l-2 border-acento pl-3 text-menudo leading-relaxed text-tinta-suave">
-            No supe cómo usar esto: {interpretation.unmapped.join(", ")}. El resto
-            sí está aplicado.
+            No supe cómo usar esto: {interpretation.unmapped.join(", ")}. El
+            resto sí está aplicado.
           </p>
         )}
 
@@ -270,7 +329,9 @@ export default function Panel({
                 tabIndex={activo ? 0 : -1}
                 onClick={() => onSelectDay(d.number)}
                 className={`relative rounded-md px-3 py-1.5 text-menudo transition-colors ${
-                  activo ? "text-sobre-acento" : "text-tinta-suave hover:text-tinta"
+                  activo
+                    ? "text-sobre-acento"
+                    : "text-tinta-suave hover:text-tinta"
                 }`}
               >
                 {/*
@@ -384,12 +445,18 @@ export default function Panel({
           >
             {revising ? "Rehaciendo" : "Aplicar"}
             {!revising && (
-              <FontAwesomeIcon icon={faArrowRight} aria-hidden className="size-3" />
+              <FontAwesomeIcon
+                icon={faArrowRight}
+                aria-hidden
+                className="size-3"
+              />
             )}
           </button>
         </div>
         {reviseError && (
-          <p className="mt-2 text-dato leading-relaxed text-aviso">{reviseError}</p>
+          <p className="mt-2 text-dato leading-relaxed text-aviso">
+            {reviseError}
+          </p>
         )}
       </footer>
     </section>

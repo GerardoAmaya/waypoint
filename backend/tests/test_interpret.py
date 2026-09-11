@@ -6,12 +6,13 @@ que la capa que lo rodea aguante todo lo que un modelo puede devolver mal.
 """
 
 import json
-from datetime import time
+from datetime import date, time
 
 import pytest
 
 from app.models import Category
 from app.services import interpret as modulo
+from app.services import itinerary as motor
 from app.services.geocode import ResolvedArea, find_zone
 from app.services.interpret import interpret
 
@@ -39,6 +40,11 @@ class ModeloFalso:
     def create(self, **kwargs):
         self.llamadas.append(kwargs)
         return RespuestaFalsa(self.texto)
+
+
+# Centinela para distinguir "el modelo no devolvio el campo" de "lo devolvio
+# vacio": las dos cosas tienen que acabar en hoy, pero por caminos distintos.
+_SIN_CAMPO = object()
 
 
 def modelo(payload, crudo=None):
@@ -358,3 +364,103 @@ class TestTiempoPorCategoria:
 
         assert resultado.request.category_minutes == {}
         assert any("nature" in n for n in resultado.notes)
+
+
+class TestFechaDeInicio:
+    """La fecha del viaje.
+
+    El modelo la resuelve —es el que lee "el sabado"— pero no se le cree: se
+    valida contra el dia de hoy, que es un dato que aqui se fija para que las
+    pruebas no cambien de resultado mañana.
+    """
+
+    HOY = date(2026, 9, 11)
+
+    @pytest.fixture(autouse=True)
+    def reloj_fijo(self, monkeypatch):
+        monkeypatch.setattr(modulo, "hoy", lambda: self.HOY)
+
+    def _interpretar(self, valor_fecha, **extra):
+        payload = {**BASE, **extra}
+        if valor_fecha is not _SIN_CAMPO:
+            payload["start_date"] = valor_fecha
+        falso = modelo(payload)
+        return interpret(None, "dos dias en Suchitoto", falso), falso
+
+    def test_sin_fecha_se_planifica_para_hoy(self):
+        """Quien no dice cuando viaja quiere viajar ahora."""
+        resultado, _ = self._interpretar(_SIN_CAMPO)
+
+        assert resultado.ok
+        assert resultado.request.start_date == self.HOY
+        # No es un ajuste que haya que explicar: suponer hoy no recorta nada de
+        # lo que se pidio, y la fecha se muestra igual.
+        assert resultado.notes == []
+
+    def test_respeta_una_fecha_futura(self):
+        resultado, _ = self._interpretar("2026-12-20")
+
+        assert resultado.request.start_date == date(2026, 12, 20)
+        assert resultado.notes == []
+
+    def test_acepta_hoy_mismo(self):
+        """El borde: hoy no es pasado."""
+        resultado, _ = self._interpretar(self.HOY.isoformat())
+
+        assert resultado.request.start_date == self.HOY
+        assert resultado.notes == []
+
+    def test_una_fecha_que_ya_paso_se_avisa(self):
+        """El fallo real: el modelo resuelve el dia de la semana hacia atras."""
+        resultado, _ = self._interpretar("2026-09-05")
+
+        assert resultado.request.start_date == self.HOY
+        assert any("ya pasó" in nota for nota in resultado.notes)
+
+    def test_una_fecha_a_años_de_distancia_se_avisa(self):
+        """El otro fallo real: se equivoca de año y la fecha sale disparada."""
+        resultado, _ = self._interpretar("2030-01-02")
+
+        assert resultado.request.start_date == self.HOY
+        assert any("más de un año" in nota for nota in resultado.notes)
+
+    @pytest.mark.parametrize("basura", ["el sábado", "2026-13-45", "", 20261220, []])
+    def test_lo_que_no_es_una_fecha_no_tumba_la_peticion(self, basura):
+        """Un campo mal devuelto pierde la fecha, no el viaje entero."""
+        resultado, _ = self._interpretar(basura)
+
+        assert resultado.ok
+        assert resultado.request.start_date == self.HOY
+
+    def test_una_fecha_ilegible_se_avisa(self):
+        resultado, _ = self._interpretar("el sábado")
+
+        assert any("no entendí" in nota for nota in resultado.notes)
+
+    def test_el_modelo_recibe_el_dia_de_hoy(self):
+        """Sin esto no puede resolver "el sabado" y devuelve un año cualquiera."""
+        _, falso = self._interpretar(_SIN_CAMPO)
+
+        sistema = falso.llamadas[0]["system"]
+        assert "2026-09-11" in sistema
+        assert "viernes" in sistema
+
+    def test_los_dias_siguientes_son_consecutivos(self):
+        """La fecha del dia 2 no la calcula el cliente."""
+        resultado, _ = self._interpretar("2026-12-20", days=3)
+
+        restricciones = motor.Constraints(
+            days=3,
+            start_date=resultado.request.start_date,
+            center_lat=13.9,
+            center_lon=-89.0,
+        )
+        assert restricciones.date_of_day(1) == date(2026, 12, 20)
+        assert restricciones.date_of_day(3) == date(2026, 12, 22)
+
+    def test_sin_fecha_el_motor_no_inventa_ninguna(self):
+        """El motor es puro: no le pregunta la fecha al reloj."""
+        restricciones = motor.Constraints(days=2, center_lat=13.9, center_lon=-89.0)
+
+        assert restricciones.date_of_day(1) is None
+        assert restricciones.date_of_day(2) is None

@@ -45,6 +45,25 @@ def limites_limpios():
     yield
 
 
+@pytest.fixture(autouse=True)
+def sin_clima_de_verdad(monkeypatch):
+    """Apaga el clima en todos los tests que no lo pidan explicitamente.
+
+    **Hace falta porque Open-Meteo no lleva llave.** Las rutas reales no tocan
+    la red en los tests por accidente feliz: sin ORS_API_KEY el cliente sale
+    None y el motor degrada. El clima no tiene ese freno, asi que sin esto la
+    bateria saldria a internet de verdad —lenta, dependiente de que el servicio
+    este arriba, y gastando cupo ajeno por armar un itinerario de prueba.
+
+    Los tests que prueban el clima inyectan su propio proveedor, que es la
+    unica forma de fijar "llueve toda la tarde" sin esperar a que llueva.
+    """
+    from app.services import clima
+
+    monkeypatch.setattr(clima, "provider_from_settings", lambda: None)
+    yield
+
+
 @pytest.fixture(scope="session")
 def engine():
     engine = create_engine(database_url(), pool_pre_ping=True)

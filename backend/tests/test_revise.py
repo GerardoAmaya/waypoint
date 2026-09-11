@@ -292,3 +292,66 @@ class TestElRegresoNoSeDuplica:
         dia1 = next(d for d in resultado.itinerary.days if d.number == 1)
 
         assert [s.place.name for s in dia1.stops].count("Casa") == 2
+
+
+class TestLosConsejosSeRecalculan:
+    """Revisar un dia borraba TODOS los consejos del itinerario.
+
+    `revise_day` asignaba `violations` y dejaba `advice` en la lista vacia con
+    que nace Itinerary. Desde el cliente eso no se ve como un campo que falta:
+    se ve como si el problema se hubiera resuelto solo, en dias que nadie pidio
+    tocar.
+    """
+
+    @pytest.fixture
+    def con_comidas(self):
+        return Constraints(
+            days=3,
+            center_lat=13.72,
+            center_lon=-89.24,
+            max_travel_km_per_day=80,
+            include_meals=True,
+            max_stops_per_day=2,
+        )
+
+    def test_el_consejo_de_la_comida_no_desaparece(self, catalogo, con_comidas):
+        resultado = revise_day(None, con_comidas, estado(), target=3)
+
+        assert resultado.itinerary.advice, (
+            "revisar un dia dejaba el itinerario sin ningun consejo"
+        )
+
+    def test_avisa_de_la_lluvia_sobre_una_parada_al_aire_libre(self, catalogo, con_comidas):
+        """El aviso de lluvia tiene que sobrevivir a una revision.
+
+        Si no, pedir un cambio en el dia 2 hace desaparecer la advertencia del
+        dia 1, que es cuando mas se necesita: el plan ya esta casi cerrado.
+        """
+        from datetime import date, timedelta
+
+        from app.services.clima import ClimaDelViaje, DiaDeClima, HoraDeClima
+
+        arranque = date(2026, 9, 22)
+        # Llueve todo el dia, asi que le toca a cualquier parada que salga.
+        horas = tuple(
+            HoraDeClima(hora=h, lluvia_prob=90, lluvia_mm=4.0, temperatura=27.0, codigo=63)
+            for h in range(24)
+        )
+        clima = ClimaDelViaje(
+            dias={
+                arranque + timedelta(days=n): DiaDeClima(
+                    fecha=arranque + timedelta(days=n), horas=horas
+                )
+                for n in range(3)
+            }
+        )
+        con_fecha = replace(con_comidas, start_date=arranque)
+
+        resultado = revise_day(None, con_fecha, estado(), target=3, clima=clima)
+
+        assert any(c.kind == "rain_outdoors" for c in resultado.itinerary.advice)
+
+    def test_sin_clima_no_aparecen_avisos_de_clima(self, catalogo, con_comidas):
+        resultado = revise_day(None, con_comidas, estado(), target=3)
+
+        assert not any(c.kind == "rain_outdoors" for c in resultado.itinerary.advice)

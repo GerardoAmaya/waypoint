@@ -163,7 +163,7 @@ def main() -> int:
 
         for caso in casos:
             if args.real_routes:
-                itinerario, _ = plan_with_routing(db, caso.constraints)
+                itinerario, _, _ = plan_with_routing(db, caso.constraints)
             else:
                 itinerario = plan(db, caso.constraints)
 

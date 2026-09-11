@@ -34,6 +34,9 @@ curl -s -X POST localhost:8100/itinerary \
 Sin llave de OpenRouteService funciona igual, con distancias estimadas. La
 respuesta lo dice en el campo `travel.source`.
 
+El clima no necesita ninguna llave: Open-Meteo no la pide para uso no comercial.
+Se apaga con `WEATHER_ENABLED=false` y la respuesta lo dice en `weather.reason`.
+
 ---
 
 ## Cómo está partido el problema
@@ -576,6 +579,89 @@ cuando el orden ya está decidido, y **por su nombre y no por su costo**: el
 recorte de kilómetros elige la parada que más traslado suma, que casi nunca es
 la que cae tarde.
 
+### La lluvia es la misma regla que la luz, con otro insumo
+
+El motor ya sabía que un cerro a las 19:22 no se ve y que una iglesia a las
+19:56 está cerrada. "Este mirador es al aire libre y va a estar lloviendo" no es
+una idea nueva: es `_outdoor_after_dusk` con otro dato de entrada. En El
+Salvador tampoco es un lujo — de mayo a octubre llueve casi todas las tardes.
+
+El clima sale de **Open-Meteo**, que es lo contrario de OpenRouteService en
+justo lo que más cuesta de OpenRouteService: no pide llave, no hay nada que
+configurar en producción, y el techo de uso no comercial es de 10.000 peticiones
+diarias contra las 500 de la matriz. Licencia CC-BY 4.0, así que hay que atribuir.
+
+El crédito va pegado a la línea que ya dice de dónde salieron las distancias —
+*"Distancias estimadas en línea recta · clima de Open-Meteo"* — y no en un
+renglón propio: la licencia obliga a atribuir, no a gastar una línea, y
+gastándola metía una tercera franja gris bajo el título. El nombre enlaza al
+aviso de licencia, que es lo que la atribución tiene que dejar alcanzable, y el
+crédito completo con la licencia escrita va en el texto que se copia, donde no
+le quita sitio a nada.
+
+**Primero hubo que saber cuándo es el viaje.** El itinerario no tenía fecha: un
+plan de tres días eran "tres días", no "del 22 al 24". La fecha la resuelve el
+modelo, porque es quien lee "el sábado", y para eso se le manda el día de hoy en
+el prompt — un modelo no sabe en qué día vive, y sin decírselo resuelve los días
+de la semana contra un año cualquiera y devuelve algo plausible y equivocado.
+Pero **no se le cree**: se valida contra hoy, porque las dos formas en que se
+equivoca son medibles — una fecha que ya pasó y una que cae a años de distancia —
+y las dos acaban planificando para hoy con un aviso. Y la fecha entendida se
+escribe en la cabecera del día, que es la única manera de que alguien note que
+se resolvió mal.
+
+**El umbral que puse primero estaba mal, y la medición lo dijo.** La idea
+original era exigir dos condiciones: probabilidad de lluvia ≥60% y ≥1 mm en la
+hora. Parecía prudente. Sobre 640 horas de pronóstico de cuatro zonas del país:
+
+| | horas |
+|---|---|
+| con ≥1 mm de lluvia | 61 |
+| de esas, con probabilidad declarada <60% | **28** |
+| con probabilidad ≥60% pero <1 mm (trazas de 0.0 a 0.9) | 79 |
+| con ≥1 mm, poca probabilidad y cielo sin lluvia — el falso positivo que justificaba el umbral | **0** |
+
+O sea que el umbral de probabilidad tiraba el 46% de la lluvia real y atajaba un
+caso que no ocurre; el de milímetros filtraba 79 horas de gotas. El caso concreto
+que lo destapó: Santa Ana, 21 de septiembre a las 13:00, código WMO 95 —
+tormenta — con 1.8 mm y un 33% declarado, que la regla de dos condiciones
+llamaba "sin lluvia". La razón de fondo es que cuanto más lejos está el día, más
+reparte el conjunto de modelos la probabilidad, así que exigirla alta apagaba la
+función **justo en los días que alguien planifica con tiempo**. Quedó un solo
+umbral, el milímetro. La probabilidad se sigue guardando y mostrando: informa,
+pero no decide.
+
+**Avisa de lo accionable y calla el resto.** Que llueva mientras se está en un
+museo no es un problema que la persona tenga que resolver, y que llueva a las
+21:00 de un día que terminó a las 18:00 tampoco. Eso va en la ficha del clima
+del día, que es un dato. El consejo está reservado a la lluvia que le cae encima
+a una parada al aire libre, con los nombres y la franja: *"Se espera lluvia de
+13:00 a 15:59, y Cerro Guazapa y El Talpetatón están al aire libre a esa hora"*.
+Las franjas se agrupan por horas seguidas para no decir "de 14:00 a 20:00"
+cuando lo que hay son dos chubascos con una tarde seca en medio.
+
+**El pronóstico llega a dieciséis días y no se disimula.** Quien planifica para
+diciembre recibe "todavía no hay pronóstico para esas fechas", no una predicción
+inventada. Un viaje que empieza dentro del horizonte y termina fuera se pide
+hasta donde llega: cinco días con clima y dos sin él es mejor respuesta que
+ninguno con clima. Y como las distancias, el campo dice siempre de dónde salió
+el dato y, cuando falta, por qué: callarse deja sin saber si no va a llover o si
+nadie miró.
+
+Dos detalles que se documentan en vez de disimularse. Open-Meteo etiqueta
+`precipitation` como la suma de la hora **anterior** a la marca, así que la
+franja puede estar corrida hasta sesenta minutos; sobre visitas que duran entre
+una y tres horas eso no cambia ninguna decisión, y fingir precisión de cuarto de
+hora sería peor. Y el pronóstico se pide **después** del borrador, no antes: el
+borrador existe para llegar de inmediato, y ponerle delante una llamada HTTP de
+hasta cuatro segundos sería gastar lo único que esa fase tiene de bueno.
+
+De paso apareció un fallo que no tenía que ver con el clima: `revise_day`
+recalculaba `violations` y dejaba `advice` en la lista vacía con que nace
+`Itinerary`. Revisar un día borraba **todos** los consejos del itinerario,
+incluidos los de días que nadie pidió tocar, y desde el cliente eso no se ve
+como un campo que falta — se ve como si el problema se hubiera resuelto solo.
+
 ### Lo que se pide con nombre se cumple o se explica
 
 `include_meals` es un booleano y significa "meteme comidas donde quepan". No
@@ -739,6 +825,20 @@ paradas de un mismo día están cerca entre sí.
 **El costo por itinerario en tokens no está medido.** Sí lo está el de rutas: una
 petición a OpenRouteService por itinerario en zona fría, cero con la caché
 caliente.
+
+**El clima no llega más allá de dieciséis días, y para más adelante no hay
+nada.** Se dice en vez de rellenarlo, pero un viaje planificado para diciembre
+se queda sin el dato. La salida sería la climatología: bajar los promedios
+mensuales del archivo histórico de Open-Meteo una sola vez, guardarlos en tabla,
+y responder "en esa época llueve casi todas las tardes" — sin llamada en vivo y
+sin gastar cupo. No está hecho.
+
+**El clima informa y aconseja, pero todavía no decide.** El motor sabe que
+llueve sobre el mirador de las 15:00 y lo dice; lo que no hace es preferir un
+museo para esa franja y mover el mirador a la mañana. Eso tocaría la función de
+costo, así que hay que medirlo contra los 26 casos antes de creerse que mejora
+algo — es lo que ya pasó dos veces en este proyecto con cambios que parecían
+obvios y no movieron nada.
 
 ### El trazo va por carretera, y lo dice tramo por tramo
 

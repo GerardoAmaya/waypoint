@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.ratelimit import Limit, RateLimiter, limiter_dependency
+from app.core.reloj import hoy
 from app.schemas import (
     AdviceOut,
     DayOut,
@@ -26,8 +27,11 @@ from app.schemas import (
     StopOut,
     TravelSourceOut,
     ViolationOut,
+    WeatherDayOut,
+    WeatherSourceOut,
 )
 from app.services import itinerary as motor
+from app.services.clima import ClimaDelViaje, load_forecast, provider_from_settings
 from app.services.places import altitud_m, cocina_legible, contacto, nombre_legible
 from app.services.places import by_ids as places_by_ids
 from app.services.routing import client_from_settings
@@ -48,6 +52,7 @@ limitar = limiter_dependency(_limiter, settings.trust_proxy_header)
 def _to_constraints(peticion: ItineraryRequest, db: Session) -> motor.Constraints:
     return motor.Constraints(
         days=peticion.days,
+        start_date=peticion.start_date,
         center_lat=peticion.center_lat,
         center_lon=peticion.center_lon,
         radius_m=peticion.radius_m,
@@ -136,11 +141,46 @@ def _to_travel_source(stats) -> TravelSourceOut:
     )
 
 
+def _to_weather_day(
+    dia: motor.Day,
+    constraints: motor.Constraints | None,
+    clima: ClimaDelViaje | None,
+) -> WeatherDayOut | None:
+    """El clima del dia resumido a las horas en que ese dia se viaja.
+
+    Devuelve None en cuanto falta cualquier pieza —la fecha, el pronostico, o
+    las horas del dia— porque todas son necesarias para decir algo cierto, y
+    un resumen a medias se leeria como un dato.
+    """
+    if constraints is None or clima is None or not clima.hay:
+        return None
+    if dia.start is None or dia.end is None:
+        return None
+
+    del_dia = clima.de(constraints.date_of_day(dia.number))
+    if del_dia is None:
+        return None
+
+    resumen = del_dia.resumen(dia.start, dia.end)
+    if resumen is None:
+        return None
+
+    return WeatherDayOut(
+        temp_max=resumen.temp_max,
+        temp_min=resumen.temp_min,
+        rain_mm=resumen.lluvia_mm,
+        rain_hours=list(resumen.horas_de_lluvia),
+        description=resumen.descripcion,
+        code=resumen.codigo,
+    )
+
+
 def _to_out(
     itinerario: motor.Itinerary,
     stats,
     geometry: dict | None = None,
     constraints: motor.Constraints | None = None,
+    clima: ClimaDelViaje | None = None,
 ) -> ItineraryOut:
     """Serializa el itinerario, con el trazo de cada tramo si se pidio.
 
@@ -151,9 +191,17 @@ def _to_out(
     trazos = geometry or {}
 
     return ItineraryOut(
+        weather=WeatherSourceOut(
+            source="forecast" if clima is not None and clima.hay else None,
+            reason=clima.reason if clima is not None else None,
+        ),
         days=[
             DayOut(
                 number=dia.number,
+                date=(
+                    constraints.date_of_day(dia.number) if constraints is not None else None
+                ),
+                weather=_to_weather_day(dia, constraints, clima),
                 stops=[
                     _to_stop(
                         parada,
@@ -200,7 +248,20 @@ def build(peticion: ItineraryRequest, db: Session = Depends(get_db)) -> Itinerar
     restricciones = _to_constraints(peticion, db)
 
     if not peticion.real_routes:
-        return _to_out(motor.plan(db, restricciones), None, None, restricciones)
+        # El clima se pide tambien por este camino. Sin esto la respuesta salia
+        # con `source` y `reason` en null a la vez, que es justo lo que el
+        # campo existe para no hacer: decir que no hay clima sin decir por que.
+        tiempo = load_forecast(
+            restricciones.center_lat,
+            restricciones.center_lon,
+            restricciones.start_date,
+            restricciones.days,
+            hoy(),
+            provider_from_settings(),
+        )
+        return _to_out(
+            motor.plan(db, restricciones, clima=tiempo), None, None, restricciones, tiempo
+        )
 
-    itinerario, stats = motor.plan_with_routing(db, restricciones)
-    return _to_out(itinerario, stats, None, restricciones)
+    itinerario, stats, tiempo = motor.plan_with_routing(db, restricciones)
+    return _to_out(itinerario, stats, None, restricciones, tiempo)

@@ -111,6 +111,7 @@ def _stream(mensaje: str) -> Iterator[str]:
 
         restricciones = motor.Constraints(
             days=resultado.request.days,
+            start_date=resultado.request.start_date,
             center_lat=resultado.request.center_lat,
             center_lon=resultado.request.center_lon,
             radius_m=resultado.request.radius_m,
@@ -169,9 +170,13 @@ def _phase_payload(evento, restricciones: motor.Constraints | None = None) -> di
         return _to_out(evento.itinerary, None, None, restricciones).model_dump(mode="json")
 
     # Aca el evento ya es PlanReady: la rama de arriba se llevo el borrador.
-    return _to_out(evento.itinerary, evento.stats, evento.geometry, restricciones).model_dump(
-        mode="json"
-    )
+    return _to_out(
+        evento.itinerary,
+        evento.stats,
+        evento.geometry,
+        restricciones,
+        evento.weather,
+    ).model_dump(mode="json")
 
 
 @router.post("", dependencies=[Depends(limitar)])
@@ -214,6 +219,7 @@ def _to_constraints(peticion, db: Session) -> motor.Constraints:
 
     return motor.Constraints(
         days=peticion.days,
+        start_date=peticion.start_date,
         center_lat=peticion.center_lat,
         center_lon=peticion.center_lon,
         radius_m=peticion.radius_m,
@@ -289,7 +295,9 @@ def revise(peticion: ReviseRequest) -> RevisionOut:
         )
 
         return RevisionOut(
-            itinerary=_to_out(resultado.itinerary, resultado.stats, None, base),
+            itinerary=_to_out(
+                resultado.itinerary, resultado.stats, None, base, resultado.weather
+            ),
             applied={k: str(v) for k, v in cambio.changes.items()},
             removed=cambio.remove,
             missing=resultado.missing,

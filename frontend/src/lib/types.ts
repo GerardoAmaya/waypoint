@@ -5,12 +5,7 @@
  */
 
 export type Category =
-  | "food"
-  | "nature"
-  | "culture"
-  | "viewpoint"
-  | "attraction"
-  | "lodging";
+  "food" | "nature" | "culture" | "viewpoint" | "attraction" | "lodging";
 
 export type Mode = "driving" | "walking";
 
@@ -58,8 +53,46 @@ export interface Stop {
   geometry_from_previous: [number, number][] | null;
 }
 
+/**
+ * El clima de un dia, resumido a las horas en que ese dia se viaja.
+ *
+ * Es un dato, no un consejo: que llueva a las 21:00 de un dia que termina a
+ * las 18:00 se muestra aqui y no genera aviso. El aviso esta reservado para lo
+ * accionable, que es la lluvia cayendole a una parada al aire libre.
+ */
+export interface DayWeather {
+  temp_max: number;
+  temp_min: number;
+  rain_mm: number;
+  /** Las horas del reloj que cuentan como lluviosas: [14, 15, 16]. */
+  rain_hours: number[];
+  description: string;
+  /** El codigo WMO crudo. El icono se elige con esto, no con la descripcion. */
+  code: number;
+}
+
+/** De donde salio el clima, o por que no hay. */
+export interface WeatherSource {
+  source: string | null;
+  reason: string | null;
+  /** Open-Meteo es CC-BY 4.0: el credito viene del backend para no perderlo. */
+  attribution: string;
+}
+
 export interface Day {
   number: number;
+
+  /**
+   * La fecha de este dia, "2026-09-11", o null si no se supo cuando es el
+   * viaje.
+   *
+   * Se muestra para que la persona vea que fecha se entendio: "el sabado" lo
+   * resuelve el modelo, y si se equivoco el unico modo de notarlo es leerlo.
+   */
+  date: string | null;
+
+  /** El clima de este dia, o null si no se supo. */
+  weather: DayWeather | null;
   stops: Stop[];
   travel_km: number;
   start: string | null;
@@ -114,6 +147,7 @@ export interface Itinerary {
   total_stops: number;
   unused_candidates: number;
   travel: TravelSource;
+  weather: WeatherSource;
 }
 
 export interface Constraints {
@@ -212,4 +246,7 @@ export type PlanEvent =
   | { phase: "candidates"; data: Candidates }
   | { phase: "draft"; data: Itinerary }
   | { phase: "plan"; data: Itinerary }
-  | { phase: "error"; data: { message: string; unmapped?: string[]; notes?: string[] } };
+  | {
+      phase: "error";
+      data: { message: string; unmapped?: string[]; notes?: string[] };
+    };

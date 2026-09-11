@@ -11,33 +11,17 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import Panel from "./Panel";
-import { dia, lugar, parada } from "@/pruebas/datos";
-import type { Itinerary } from "@/lib/types";
+import { dia, itinerario, lugar, parada } from "@/pruebas/datos";
 
-const ITINERARIO: Itinerary = {
+const ITINERARIO = itinerario({
   days: [dia({ stops: [parada({ place: lugar({ name: "Museo de Arte" }) })] })],
-  violations: [],
-  advice: [],
-  satisfies_all_constraints: true,
-  total_stops: 1,
-  unused_candidates: 0,
-  travel: {
-    source: "estimated",
-    cached: 0,
-    fetched: 0,
-    estimated: 1,
-    real_ratio: 0,
-    requests: 0,
-    reason: null,
-    quota_remaining: null,
-  },
-};
+});
 
-function pinta(midiendo: boolean) {
+function pinta(midiendo: boolean, itinerario = ITINERARIO) {
   return render(
     <Panel
       interpretation={null}
-      itinerary={ITINERARIO}
+      itinerary={itinerario}
       selectedDay={1}
       onSelectDay={() => {}}
       onRevise={async () => {}}
@@ -56,7 +40,9 @@ describe("Panel", () => {
   it("mientras mide lo dice, y no da las distancias por firmes", () => {
     pinta(true);
 
-    expect(screen.getByText(/Midiendo las rutas por carretera/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Midiendo las rutas por carretera/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/Distancias estimadas/i)).toBeNull();
   });
 
@@ -95,7 +81,9 @@ describe("Panel", () => {
     );
 
     expect(screen.getByText(/cupo diario para medirlas/i)).toBeInTheDocument();
-    expect(screen.getByText(/el trazo del mapa no se ve afectado/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/el trazo del mapa no se ve afectado/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/cupo diario de rutas/i)).toBeNull();
   });
 
@@ -103,5 +91,44 @@ describe("Panel", () => {
     pinta(true);
 
     expect(screen.getByRole("status")).toHaveTextContent(/Midiendo las rutas/i);
+  });
+});
+
+describe("el crédito del clima", () => {
+  const conClima = (source: string | null, reason: string | null) =>
+    itinerario({
+      days: ITINERARIO.days,
+      weather: {
+        source,
+        reason,
+        attribution: "Datos del clima de Open-Meteo (CC-BY 4.0)",
+      },
+    });
+
+  it("aparece cuando hubo pronóstico, con el aviso de licencia a un clic", () => {
+    /* No es decorativo: Open-Meteo es CC-BY 4.0 y atribuir es la condición de
+       poder usarlo. Va pegado a la línea de las distancias para no ocupar un
+       renglón propio, y el nombre lleva a la licencia, que es lo que la
+       atribución tiene que dejar alcanzable. */
+    pinta(false, conClima("forecast", null));
+
+    const credito = screen.getByRole("link", { name: "Open-Meteo" });
+
+    expect(credito).toHaveAttribute(
+      "href",
+      "https://open-meteo.com/en/license",
+    );
+    expect(
+      screen.getByText(/Distancias estimadas.*clima de/),
+    ).toBeInTheDocument();
+  });
+
+  it("dice por qué no hay clima para una fecha lejana", () => {
+    /* Quien planifica para diciembre tiene que saber que el dato no existe
+       todavía, en vez de deducir que no va a llover. */
+    pinta(false, conClima(null, "fuera_de_pronostico"));
+
+    expect(screen.getByText(/dieciséis días/)).toBeInTheDocument();
+    expect(screen.queryByText(/Open-Meteo/)).not.toBeInTheDocument();
   });
 });

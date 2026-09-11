@@ -117,7 +117,76 @@ describe("Linea", () => {
     const { container } = pinta({ mode: "walking" });
 
     // Los iconos de Font Awesome llevan su nombre en data-icon.
-    expect(container.querySelector('[data-icon="person-walking"]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-icon="person-walking"]'),
+    ).not.toBeNull();
     expect(container.querySelector('[data-icon="car-side"]')).toBeNull();
+  });
+});
+
+describe("la fecha del día", () => {
+  it("aparece en la cabecera", () => {
+    pinta({ day: dia({ date: "2026-09-11", stops: idaYVuelta.stops }) });
+
+    /* Sitúa las horas de abajo: son las horas de ESTE día. */
+    expect(screen.getByText(/viernes,? 11 de septiembre/i)).toBeInTheDocument();
+  });
+
+  it("no deja rastro cuando el viaje no tiene fecha", () => {
+    pinta({ day: dia({ date: null, stops: idaYVuelta.stops }) });
+
+    expect(screen.queryByText(/septiembre/i)).not.toBeInTheDocument();
+    /* Y el resto de la cabecera sigue ahí. */
+    expect(screen.getByText("10:00–14:00")).toBeInTheDocument();
+  });
+});
+
+describe("el clima del día", () => {
+  const soleado = {
+    temp_max: 31,
+    temp_min: 24,
+    rain_mm: 0,
+    rain_hours: [],
+    description: "cielo despejado",
+    code: 0,
+  };
+
+  it("muestra la temperatura y el estado", () => {
+    pinta({ day: dia({ weather: soleado, stops: idaYVuelta.stops }) });
+
+    expect(screen.getByText("31°")).toBeInTheDocument();
+    expect(screen.getByText("cielo despejado")).toBeInTheDocument();
+  });
+
+  it("no dice nada de lluvia cuando no llueve", () => {
+    /* "sin lluvia" ocuparía el mismo espacio para no decir nada, y es lo que
+       se leería casi siempre. */
+    pinta({ day: dia({ weather: soleado, stops: idaYVuelta.stops }) });
+
+    expect(screen.queryByText(/lluvia/i)).not.toBeInTheDocument();
+  });
+
+  it("marca la franja de lluvia cuando la hay", () => {
+    pinta({
+      day: dia({
+        weather: {
+          ...soleado,
+          rain_hours: [13, 14, 15],
+          code: 80,
+          description: "chubascos",
+        },
+        stops: idaYVuelta.stops,
+      }),
+    });
+
+    expect(screen.getByText(/lluvia de 13:00 a 15:59/i)).toBeInTheDocument();
+  });
+
+  it("la fila queda como estaba cuando no se supo el clima", () => {
+    pinta({ day: dia({ weather: null, stops: idaYVuelta.stops }) });
+
+    expect(screen.queryByText(/despejado/i)).not.toBeInTheDocument();
+    expect(screen.getByText("10:00–14:00")).toBeInTheDocument();
+    expect(screen.getByText("12.3 km")).toBeInTheDocument();
   });
 });

@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
+  faCalendarDay,
   faCarSide,
   faClock,
   faLightbulb,
@@ -15,6 +16,8 @@ import {
 
 import Detalle from "./Detalle";
 import { CATEGORIA } from "@/lib/categorias";
+import { iconoDelClima, lluviaEnPalabras } from "@/lib/clima";
+import { fechaEnPalabras } from "@/lib/fecha";
 import type { Advice, Day, Mode, Stop, Violation } from "@/lib/types";
 
 interface Props {
@@ -49,6 +52,11 @@ export default function Linea({
     paradas en vez de pedirle un campo al backend: que la ultima sea la primera
     ES lo que significa "vuelvo a donde empece".
   */
+  const fecha = fechaEnPalabras(day.date);
+  /* La franja de lluvia se arma acá y no llega hecha: lo que viaja del backend
+     son las horas, que es el dato; la frase es presentación. */
+  const lluvia = day.weather ? lluviaEnPalabras(day.weather.rain_hours) : null;
+
   const primera = day.stops[0];
   const ultima = day.stops[day.stops.length - 1];
   const vuelveAlInicio =
@@ -57,18 +65,45 @@ export default function Linea({
   return (
     <div>
       <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-borde pb-3 text-dato text-tinta-suave">
+        {/*
+          Va primera porque es la que sitúa todo lo demás: las horas de abajo
+          son horas de ESTE día. Se omite entera cuando no hay fecha en vez de
+          dejar un hueco o un guion.
+        */}
+        {fecha && (
+          <span className="inline-flex items-center gap-1.5">
+            <FontAwesomeIcon
+              icon={faCalendarDay}
+              aria-hidden
+              className="size-3 text-tinta-tenue"
+            />
+            <span className="first-letter:uppercase">{fecha}</span>
+          </span>
+        )}
         <span className="inline-flex items-center gap-1.5">
-          <FontAwesomeIcon icon={faClock} aria-hidden className="size-3 text-tinta-tenue" />
+          <FontAwesomeIcon
+            icon={faClock}
+            aria-hidden
+            className="size-3 text-tinta-tenue"
+          />
           <span className="dato">
             {hora(day.start)}–{hora(day.end)}
           </span>
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <FontAwesomeIcon icon={faRoute} aria-hidden className="size-3 text-tinta-tenue" />
+          <FontAwesomeIcon
+            icon={faRoute}
+            aria-hidden
+            className="size-3 text-tinta-tenue"
+          />
           <span className="dato">{day.travel_km.toFixed(1)} km</span>
         </span>
         <span className="inline-flex items-center gap-1.5 text-tinta-tenue">
-          <FontAwesomeIcon icon={faLocationDot} aria-hidden className="size-3" />
+          <FontAwesomeIcon
+            icon={faLocationDot}
+            aria-hidden
+            className="size-3"
+          />
           {/*
             La cuenta del backend y no day.stops.length: el punto de partida
             aparece en la lista pero no es una visita, y sumar las pestañas
@@ -76,6 +111,27 @@ export default function Linea({
           */}
           {day.visits} {day.visits === 1 ? "parada" : "paradas"}
         </span>
+
+        {/*
+          El clima va último de la fila: es lo que menos decide y lo primero
+          que se puede omitir. Cuando no se supo, la fila queda como estaba.
+
+          La lluvia solo aparece si hay: "sin lluvia" ocuparía el mismo espacio
+          para no decir nada, y con tres semanas de septiembre por delante
+          sería lo que se lee casi siempre.
+        */}
+        {day.weather && (
+          <span className="inline-flex items-center gap-1.5">
+            <FontAwesomeIcon
+              icon={iconoDelClima(day.weather.code)}
+              aria-hidden
+              className="size-3 text-tinta-tenue"
+            />
+            <span className="dato">{day.weather.temp_max}°</span>
+            <span>{day.weather.description}</span>
+            {lluvia && <span className="text-acento">· lluvia {lluvia}</span>}
+          </span>
+        )}
       </div>
 
       <ol className="relative">
@@ -135,62 +191,62 @@ export default function Linea({
                   aria-expanded={parada.place.id === selectedStop}
                   className="block w-full text-left"
                 >
-                <p className="text-cuerpo leading-snug font-medium text-tinta">
-                  {parada.place.name}
-                </p>
-                <p className="mt-0.5 text-dato text-tinta-tenue">
-                  {vuelveAlInicio && indice === day.stops.length - 1
-                    ? "Regreso al punto de partida"
-                    : vuelveAlInicio && indice === 0
-                      ? `Salida · ${CATEGORIA[parada.place.category].nombre}`
-                      : parada.meal === "lunch"
-                        ? "Almuerzo"
-                        : parada.meal === "dinner"
-                          ? "Cena"
-                          : CATEGORIA[parada.place.category].nombre}
-                  {/*
+                  <p className="text-cuerpo leading-snug font-medium text-tinta">
+                    {parada.place.name}
+                  </p>
+                  <p className="mt-0.5 text-dato text-tinta-tenue">
+                    {vuelveAlInicio && indice === day.stops.length - 1
+                      ? "Regreso al punto de partida"
+                      : vuelveAlInicio && indice === 0
+                        ? `Salida · ${CATEGORIA[parada.place.category].nombre}`
+                        : parada.meal === "lunch"
+                          ? "Almuerzo"
+                          : parada.meal === "dinner"
+                            ? "Cena"
+                            : CATEGORIA[parada.place.category].nombre}
+                    {/*
                     Sin "hasta las" cuando la parada no dura nada. El punto de
                     partida y el regreso son los dos casos: uno se sale y el
                     otro se llega, y "llega 09:00, hasta las 09:00" se lee como
                     un error de calculo.
                   */}
-                  {parada.arrival !== parada.departure && (
-                    <>
-                      {" · hasta las "}
-                      <span className="dato">{hora(parada.departure)}</span>
-                    </>
-                  )}
-                </p>
+                    {parada.arrival !== parada.departure && (
+                      <>
+                        {" · hasta las "}
+                        <span className="dato">{hora(parada.departure)}</span>
+                      </>
+                    )}
+                  </p>
 
-                {parada.travel_km_from_previous > 0 && (
-                  /*
+                  {parada.travel_km_from_previous > 0 && (
+                    /*
                     Parrafo normal con el icono en linea, no un inline-flex.
                     Como flex, cada trozo era un elemento independiente y
                     envolvia por su cuenta: en un panel angosto salia
                     "1.0 km · 2 / min" en una columna y "desde la parada /
                     anterior" en otra. El texto tiene que fluir como texto.
                   */
-                  <p className="mt-2 text-dato text-tinta-tenue">
-                    <FontAwesomeIcon
-                      icon={iconoTraslado}
-                      aria-hidden
-                      className="mr-1.5 inline size-3 align-[-0.1em]"
-                    />
-                    <span className="dato">
-                      {parada.travel_km_from_previous.toFixed(1)} km ·{" "}
-                      {parada.travel_minutes_from_previous} min
-                    </span>{" "}
-                    {/*
+                    <p className="mt-2 text-dato text-tinta-tenue">
+                      <FontAwesomeIcon
+                        icon={iconoTraslado}
+                        aria-hidden
+                        className="mr-1.5 inline size-3 align-[-0.1em]"
+                      />
+                      <span className="dato">
+                        {parada.travel_km_from_previous.toFixed(1)} km ·{" "}
+                        {parada.travel_minutes_from_previous} min
+                      </span>{" "}
+                      {/*
                       En pantalla angosta la frase se va: envolvia a una
                       segunda linea en cada parada —veinte pixeles por parada,
                       ciento veinte en un dia de seis— y la posicion en la
                       lista ya dice de donde viene el traslado.
                     */}
-                    <span className="hidden sm:inline">
-                      desde la parada anterior
-                    </span>
-                  </p>
-                )}
+                      <span className="hidden sm:inline">
+                        desde la parada anterior
+                      </span>
+                    </p>
+                  )}
                 </button>
 
                 {parada.place.id === selectedStop && (

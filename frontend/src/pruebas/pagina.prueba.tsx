@@ -17,14 +17,14 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import Home from "@/app/page";
-import { dia, lugar, parada } from "@/pruebas/datos";
-import type { Itinerary, PlanEvent } from "@/lib/types";
+import { dia, itinerario, lugar, parada } from "@/pruebas/datos";
+import type { PlanEvent } from "@/lib/types";
 
 vi.mock("@/components/Mapa", () => ({
   default: () => <div data-testid="mapa" />,
 }));
 
-const ITINERARIO: Itinerary = {
+const ITINERARIO = itinerario({
   days: [
     dia({
       stops: [
@@ -37,22 +37,8 @@ const ITINERARIO: Itinerary = {
       ],
     }),
   ],
-  violations: [],
-  advice: [],
-  satisfies_all_constraints: true,
-  total_stops: 2,
   unused_candidates: 4,
-  travel: {
-    source: "estimated",
-    cached: 0,
-    fetched: 0,
-    estimated: 2,
-    real_ratio: 0,
-    requests: 0,
-    reason: null,
-    quota_remaining: null,
-  },
-};
+});
 
 const eventos: PlanEvent[] = [
   {
@@ -92,15 +78,21 @@ describe("Home", () => {
 
     await usuario.clear(caja());
     await usuario.type(caja(), "Un día en Suchitoto caminando");
-    await usuario.click(screen.getByRole("button", { name: /armar el itinerario/i }));
+    await usuario.click(
+      screen.getByRole("button", { name: /armar el itinerario/i }),
+    );
 
     // El plan llego: el compositor se fue y el panel entro.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /empezar de nuevo/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /empezar de nuevo/i }),
+      ).toBeInTheDocument();
     });
     expect(screen.queryByRole("textbox", { name: /viaje/i })).toBeNull();
 
-    await usuario.click(screen.getByRole("button", { name: /empezar de nuevo/i }));
+    await usuario.click(
+      screen.getByRole("button", { name: /empezar de nuevo/i }),
+    );
 
     expect(caja()).toHaveValue("Un día en Suchitoto caminando");
   });
@@ -109,10 +101,14 @@ describe("Home", () => {
     const usuario = userEvent.setup();
     render(<Home />);
 
-    await usuario.click(screen.getByRole("button", { name: /armar el itinerario/i }));
+    await usuario.click(
+      screen.getByRole("button", { name: /armar el itinerario/i }),
+    );
 
     await waitFor(() => {
-      expect(screen.getByText(/Itinerario listo: 1 día, 2 paradas\./)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Itinerario listo: 1 día, 2 paradas\./),
+      ).toBeInTheDocument();
     });
   });
 
@@ -120,12 +116,16 @@ describe("Home", () => {
     const usuario = userEvent.setup();
     render(<Home />);
 
-    await usuario.click(screen.getByRole("button", { name: /armar el itinerario/i }));
+    await usuario.click(
+      screen.getByRole("button", { name: /armar el itinerario/i }),
+    );
     await waitFor(() => {
       expect(screen.getByText("Museo de Arte")).toBeInTheDocument();
     });
 
-    await usuario.click(screen.getByRole("button", { name: /empezar de nuevo/i }));
+    await usuario.click(
+      screen.getByRole("button", { name: /empezar de nuevo/i }),
+    );
 
     // El panel se va con animacion de salida, asi que sigue en el DOM el
     // instante siguiente al clic: se espera a que termine de irse.

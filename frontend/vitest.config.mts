@@ -24,6 +24,14 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    /*
+      La zona se fija a la de El Salvador, que es donde se usa el sitio.
+      Hace falta para que valgan los tests de fechas: una fecha ISO parseada
+      como UTC se corre un dia hacia atras solo al oeste de Greenwich, asi
+      que en CI —que va en UTC— el fallo no aparece y el test pasaria
+      igual con el codigo roto.
+    */
+    env: { TZ: "America/El_Salvador" },
     setupFiles: ["./src/pruebas/preparacion.ts"],
     include: ["src/**/*.prueba.tsx", "src/**/*.prueba.ts"],
     globals: true,

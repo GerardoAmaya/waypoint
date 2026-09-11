@@ -11,6 +11,7 @@
  */
 
 import { CATEGORIA } from "./categorias";
+import { fechaEnPalabras } from "./fecha";
 import type { Interpretation, Itinerary } from "./types";
 
 const FUENTE_TEXTO: Record<string, string> = {
@@ -36,8 +37,12 @@ export function itinerarioComoTexto(
   lineas.push("");
 
   for (const dia of itinerario.days) {
+    // La fecha va en la cabecera del dia cuando se sabe: el texto termina
+    // pegado en un chat dias despues de armarlo, y ahi "DÍA 1" solo no dice
+    // cuando es.
+    const fecha = fechaEnPalabras(dia.date);
     lineas.push(
-      `DÍA ${dia.number} · ${hora(dia.start)}–${hora(dia.end)} · ${dia.travel_km.toFixed(1)} km`,
+      `DÍA ${dia.number}${fecha ? ` · ${fecha}` : ""} · ${hora(dia.start)}–${hora(dia.end)} · ${dia.travel_km.toFixed(1)} km`,
     );
 
     for (const parada of dia.stops) {
@@ -75,6 +80,13 @@ export function itinerarioComoTexto(
   if (generales.length) {
     for (const v of generales) lineas.push(`! ${v.detail}`);
     lineas.push("");
+  }
+
+  // El credito completo del clima va aca y no en pantalla: en el texto que se
+  // copia no le quita sitio a nada, y es donde puede llevar la licencia
+  // escrita en vez de detras de un enlace.
+  if (itinerario.weather.source) {
+    lineas.push(itinerario.weather.attribution);
   }
 
   lineas.push("Armado con Waypoint · lugares reales, distancias medidas");

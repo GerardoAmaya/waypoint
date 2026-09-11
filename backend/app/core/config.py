@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     # El endpoint sin modelo es mas barato, pero gasta cupo de rutas igual.
     itinerary_per_minute: int = 12
     itinerary_per_day: int = 120
+    # El clima. Sin llave: Open-Meteo no la pide para uso no comercial, asi que
+    # aqui no hay nada que configurar en produccion y el interruptor existe solo
+    # para poder apagarlo.
+    #
+    # El tiempo de espera es corto a proposito. El clima es un añadido del
+    # itinerario: si el servicio tarda, el plan sale sin el. Esperar treinta
+    # segundos por un dato opcional convierte una mejora en una caida.
+    weather_enabled: bool = True
+    weather_timeout_seconds: float = 4.0
+
     # X-Forwarded-For lo pone quien quiera. Solo se lee detras de un proxy que
     # lo reescriba; en local, confiar en el es regalar el limite.
     trust_proxy_header: bool = False

@@ -18,11 +18,12 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import time, timedelta
+from datetime import date, time, timedelta
 
 from sqlalchemy.orm import Session
 
 from app.models import Category
+from app.services.clima import ClimaDelViaje, DiaDeClima
 from app.services.geo import EstimatedTravel, TravelProvider, haversine_km
 from app.services.places import PlaceHit, nombre_legible, search_in_area
 from app.services.places import by_ids as places_by_ids
@@ -399,6 +400,11 @@ class Constraints:
     center_lat: float
     center_lon: float
 
+    # El dia en que arranca el viaje, o None si no se sabe. El motor no le
+    # pregunta la fecha al reloj: se la dan, y asi armar un itinerario sigue
+    # siendo una funcion del pedido y nada mas. Ver date_of_day().
+    start_date: date | None = None
+
     radius_m: int = 20_000
     earliest_start: time = time(9, 0)
     latest_end: time = time(20, 0)
@@ -433,6 +439,17 @@ class Constraints:
     def mode_for(self, numero: int) -> str:
         """El modo del dia `numero`."""
         return self.day_modes.get(numero, self.mode)
+
+    def date_of_day(self, numero: int) -> date | None:
+        """La fecha del dia `numero`, o None si no se sabe cuando es el viaje.
+
+        Los dias del itinerario son consecutivos: el dia 1 es `start_date` y
+        cada uno siguiente es el de antes mas uno. No hay forma de decir "y el
+        jueves descansamos" porque tampoco hay forma de pedirlo.
+        """
+        if self.start_date is None:
+            return None
+        return self.start_date + timedelta(days=numero - 1)
 
     def budget_for(self, numero: int) -> float:
         """Los kilometros que puede recorrer el dia `numero`.
@@ -1903,11 +1920,121 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
     return violaciones
 
 
+def _franjas(horas: Iterable[int]) -> list[tuple[int, int]]:
+    """Agrupa horas sueltas en tramos seguidos: 14,15,16,19 a [(14,16),(19,19)].
+
+    Hace falta para no decir "llueve entre las 14:00 y las 20:00" cuando lo que
+    hay son dos chubascos con una tarde seca en medio. Decir de mas es la
+    version educada de decir algo falso.
+    """
+    tramos: list[tuple[int, int]] = []
+    for hora in sorted(set(horas)):
+        if tramos and hora == tramos[-1][1] + 1:
+            tramos[-1] = (tramos[-1][0], hora)
+        else:
+            tramos.append((hora, hora))
+    return tramos
+
+
+def _franjas_en_palabras(horas: Iterable[int]) -> str:
+    """Los tramos de lluvia como los diria una persona."""
+    tramos = _franjas(horas)
+    textos = [
+        f"de {inicio:02d}:00 a {fin:02d}:59" if inicio != fin else f"a las {inicio:02d}:00"
+        for inicio, fin in tramos
+    ]
+    if len(textos) == 1:
+        return textos[0]
+    return ", ".join(textos[:-1]) + " y " + textos[-1]
+
+
+def _paradas_mojadas(dia: Day, clima: DiaDeClima) -> list[Stop]:
+    """Las paradas al aire libre que caen en una hora de lluvia.
+
+    **Solo las de afuera, y solo las que coinciden.** Que llueva mientras se
+    esta en un museo no es un problema que la persona tenga que resolver, y un
+    aviso que se dispara igual en los dos casos deja de querer decir nada.
+
+    Una parada ocupa desde que se llega hasta que se va, asi que basta con que
+    una de las horas que abarca venga con agua.
+    """
+    mojadas: list[Stop] = []
+    vistos: set[uuid.UUID] = set()
+    for parada in dia.stops:
+        if parada.place.category not in OUTDOOR_CATEGORIES:
+            continue
+        # Un dia que vuelve al punto de partida trae el mismo lugar dos veces y
+        # no hay que nombrarlo dos veces.
+        if parada.place.id in vistos:
+            continue
+        if clima.horas_de_lluvia(parada.arrival, parada.departure):
+            mojadas.append(parada)
+            vistos.add(parada.place.id)
+    return mojadas
+
+
+def weather_advice(
+    itinerario: Itinerary, constraints: Constraints, clima: ClimaDelViaje | None
+) -> list[Advice]:
+    """Avisa de la lluvia que le cae encima a una parada al aire libre.
+
+    **Es el mismo razonamiento que la luz y que la hora de cierre.** El motor
+    ya sabe que un cerro a las 19:22 no se ve; que un cerro bajo un chubasco
+    tampoco es la misma regla con otro insumo.
+
+    **Avisa cuando hay algo que hacer, no cuando hay algo que contar.** Que
+    llueva a las 21:00 de un dia que termino a las 18:00 es informacion y va en
+    la ficha del clima; que llueva sobre el mirador de las 15:00 es accionable,
+    y eso es lo que es un consejo. Mezclar las dos cosas convierte el aviso en
+    ruido y entonces no se lee ninguno.
+    """
+    if clima is None or not clima.hay:
+        return []
+
+    consejos: list[Advice] = []
+    for dia in itinerario.days:
+        # La fecha sale de las restricciones y no del dia: el dia sabe su
+        # numero, y convertir numero en fecha es una sola cuenta que ya vive en
+        # Constraints.date_of_day. Duplicarla aqui seria tener dos calendarios.
+        del_dia = clima.de(constraints.date_of_day(dia.number))
+        if del_dia is None:
+            continue
+
+        mojadas = _paradas_mojadas(dia, del_dia)
+        if not mojadas:
+            continue
+
+        horas = [
+            h.hora
+            for parada in mojadas
+            for h in del_dia.horas_de_lluvia(parada.arrival, parada.departure)
+        ]
+        nombres = [nombre_legible(p.place.name) for p in mojadas]
+        una_sola = len(nombres) == 1
+        lista = nombres[0] if una_sola else ", ".join(nombres[:-1]) + " y " + nombres[-1]
+
+        consejos.append(
+            Advice(
+                kind="rain_outdoors",
+                day=dia.number,
+                detail=(
+                    f"Se espera lluvia {_franjas_en_palabras(horas)}, y {lista} "
+                    f"{'está' if una_sola else 'están'} al aire libre a esa hora. "
+                    "Llevá algo para el agua, o pedime que "
+                    f"{'mueva esa parada' if una_sola else 'las mueva'} a la mañana."
+                ),
+            )
+        )
+
+    return consejos
+
+
 def advise(
     itinerario: Itinerary,
     constraints: Constraints,
     comidas: list[PlaceHit],
     travel: TravelProvider | None = None,
+    clima: ClimaDelViaje | None = None,
 ) -> list[Advice]:
     """Lo que el viajero deberia saber y no es un limite incumplido.
 
@@ -1918,8 +2045,10 @@ def advise(
     "llevá almuerzo, el comedor mas cercano suma 14 km sobre tu limite de 25"
     es accionable donde "no hay donde comer" no lo es.
     """
-    consejos: list[Advice] = []
+    consejos: list[Advice] = weather_advice(itinerario, constraints, clima)
 
+    # El corte va despues de la lluvia a proposito: apagar las comidas no apaga
+    # el clima, y antes este `return` se llevaba por delante los dos.
     if not constraints.include_meals:
         return consejos
 
@@ -2315,6 +2444,7 @@ def assemble(
     constraints: Constraints,
     travel: TravelProvider | None = None,
     grupos: list[list[PlaceHit]] | None = None,
+    clima: ClimaDelViaje | None = None,
 ) -> Itinerary:
     """Arma el itinerario a partir de candidatos ya seleccionados.
 
@@ -2351,20 +2481,26 @@ def assemble(
         unused_candidates=len(destinos) - sum(len(g) for g in grupos),
     )
     itinerario.violations = validate(itinerario, constraints)
-    itinerario.advice = advise(itinerario, constraints, comidas, medidor)
+    itinerario.advice = advise(itinerario, constraints, comidas, medidor, clima)
     return itinerario
 
 
 def plan(
-    db: Session, constraints: Constraints, travel: TravelProvider | None = None
+    db: Session,
+    constraints: Constraints,
+    travel: TravelProvider | None = None,
+    clima: ClimaDelViaje | None = None,
 ) -> Itinerary:
     """Arma un itinerario que respeta las restricciones dadas.
 
     Sin proveedor de traslados usa distancias estimadas y no toca la red. Para
     rutas reales de OpenRouteService, plan_with_routing.
+
+    Sin `clima` el itinerario sale igual y sin avisos de lluvia: es un añadido,
+    no un requisito.
     """
     comidas, destinos = select_candidates(db, constraints)
-    return assemble(comidas, destinos, constraints, travel)
+    return assemble(comidas, destinos, constraints, travel, clima=clima)
 
 
 # --------------------------------------------------------------------------
@@ -2420,13 +2556,19 @@ class PlanReady:
     stats: object | None = None
     geometry: dict = field(default_factory=dict)
     geometry_stats: object | None = None
+    # El clima del viaje, siempre presente: cuando no hay, trae la razon. Viaja
+    # con la fase y no se recalcula en el endpoint para no pedir el pronostico
+    # dos veces por itinerario.
+    weather: ClimaDelViaje | None = None
     phase: str = field(default="plan", init=False)
 
 
 PlanEvent = CandidatesReady | DraftReady | PlanReady
 
 
-def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterator[PlanEvent]:
+def plan_streaming(
+    db: Session, constraints: Constraints, client=None, clima_provider=None
+) -> Iterator[PlanEvent]:
     """Arma el itinerario emitiendo cada fase en cuanto esta lista.
 
     **Las fases son las que existen de verdad, no las que quedarian bonitas.**
@@ -2464,6 +2606,23 @@ def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterat
 
     cliente = client if client is not None else client_from_settings()
 
+    # **El clima se pide despues del borrador y no antes.** El borrador existe
+    # para llegar de inmediato: es lo que el usuario se queda mirando si la red
+    # falla, y ponerle delante una llamada HTTP de hasta cuatro segundos seria
+    # gastar lo unico que esa fase tiene de bueno. Los avisos de lluvia llegan
+    # con el itinerario final, junto con las distancias reales.
+    from app.core.reloj import hoy
+    from app.services.clima import load_forecast, provider_from_settings
+
+    tiempo = load_forecast(
+        constraints.center_lat,
+        constraints.center_lon,
+        constraints.start_date,
+        constraints.days,
+        hoy(),
+        clima_provider if clima_provider is not None else provider_from_settings(),
+    )
+
     # **Una matriz por modo distinto, no una por itinerario.** A pie y en carro
     # son redes distintas —un sendero que el peaton cruza no existe para el
     # carro— asi que medir un dia a pie con la matriz del coche seria inventar.
@@ -2488,7 +2647,7 @@ def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterat
 
     # El reparto de dias se rehace con distancias reales: dos lugares que la
     # linea recta pone en el mismo dia pueden estar separados por un cerro.
-    final = assemble(comidas, destinos, constraints, matrices)
+    final = assemble(comidas, destinos, constraints, matrices, clima=tiempo)
 
     # El trazo se pide DESPUES del reparto final y no antes: con distancias
     # reales el orden del dia cambia, y una geometria pedida sobre el orden del
@@ -2510,6 +2669,7 @@ def plan_streaming(db: Session, constraints: Constraints, client=None) -> Iterat
         stats=matriz,
         geometry=geometria,
         geometry_stats=geo_stats,
+        weather=tiempo,
     )
 
 
@@ -2555,11 +2715,17 @@ def _places_to_measure(borrador: Itinerary) -> list[PlaceHit]:
 
 def plan_with_routing(
     db: Session, constraints: Constraints, client=None
-) -> tuple[Itinerary, object]:
+) -> tuple[Itinerary, object, ClimaDelViaje | None]:
     """Igual que plan(), pero con distancias reales de carretera.
 
     Consume plan_streaming y devuelve el resultado final. Existe para quien no
     necesita las fases intermedias, que es todo lo que no sea el streaming.
+
+    **Devuelve el clima que ya trajo la fase final y no lo pide otra vez.** El
+    pronostico lo consulta plan_streaming; que el endpoint lo volviera a pedir
+    para mostrarlo significaria dos consultas por itinerario y, si el cache
+    expirara entre las dos, un itinerario cuyos avisos de lluvia y cuya ficha
+    del clima vendrian de pronosticos distintos.
     """
     ultimo: PlanReady | DraftReady | None = None
     for evento in plan_streaming(db, constraints, client):
@@ -2567,10 +2733,10 @@ def plan_with_routing(
             ultimo = evento
 
     if isinstance(ultimo, PlanReady):
-        return ultimo.itinerary, ultimo.stats
+        return ultimo.itinerary, ultimo.stats, ultimo.weather
     if ultimo is not None:
-        return ultimo.itinerary, None
-    return Itinerary(days=[]), None
+        return ultimo.itinerary, None, None
+    return Itinerary(days=[]), None, None
 
 
 # --------------------------------------------------------------------------
@@ -2598,6 +2764,9 @@ class RevisionResult:
     stats: object | None = None
     # Paradas que ya no estan en el catalogo. Se informan en vez de omitirse.
     missing: list[uuid.UUID] = field(default_factory=list)
+    # El clima que se uso para los consejos, para que el endpoint lo devuelva
+    # sin volver a pedirlo. Igual que en PlanReady.
+    weather: ClimaDelViaje | None = None
 
 
 def revise_day(
@@ -2609,6 +2778,7 @@ def revise_day(
     day_constraints: Constraints | None = None,
     exclude: set[uuid.UUID] | None = None,
     travel: TravelProvider | None = None,
+    clima: ClimaDelViaje | None = None,
 ) -> RevisionResult:
     """Rehace un dia y deja los demas exactamente como estaban.
 
@@ -2686,7 +2856,13 @@ def revise_day(
 
     itinerario = Itinerary(days=dias)
     itinerario.violations = validate(itinerario, constraints)
-    return RevisionResult(itinerary=itinerario, missing=faltantes)
+    # **Los consejos se recalculan igual que las violaciones, y antes no.**
+    # Esta funcion ponia `violations` y dejaba `advice` en la lista vacia con
+    # que nace Itinerary, asi que revisar un dia borraba el "llevá almuerzo" de
+    # todos los dias —incluidos los que nadie toco— y desde el cliente eso se
+    # ve como si el problema se hubiera resuelto solo.
+    itinerario.advice = advise(itinerario, constraints, comidas, travel, clima)
+    return RevisionResult(itinerary=itinerario, missing=faltantes, weather=clima)
 
 
 def revise_with_routing(
@@ -2698,6 +2874,7 @@ def revise_with_routing(
     day_constraints: Constraints | None = None,
     exclude: set[uuid.UUID] | None = None,
     client=None,
+    clima_provider=None,
 ) -> RevisionResult:
     """Revisa un dia con distancias reales de carretera.
 
@@ -2735,6 +2912,20 @@ def revise_with_routing(
         for modo, lugares in lugares_por_modo.items()
     }
 
+    # El clima solo se pide para la pasada final: el borrador de arriba existe
+    # para saber que lugares entran en juego, y sus consejos se descartan.
+    from app.core.reloj import hoy
+    from app.services.clima import load_forecast, provider_from_settings
+
+    tiempo = load_forecast(
+        constraints.center_lat,
+        constraints.center_lon,
+        constraints.start_date,
+        constraints.days,
+        hoy(),
+        clima_provider if clima_provider is not None else provider_from_settings(),
+    )
+
     final = revise_day(
         db,
         constraints,
@@ -2743,11 +2934,13 @@ def revise_with_routing(
         day_constraints=day_constraints,
         exclude=exclude,
         travel=matrices,
+        clima=tiempo,
     )
     return RevisionResult(
         itinerary=final.itinerary,
         stats=_merge_matrix_stats(matrices, constraints.mode),
         missing=final.missing,
+        weather=tiempo,
     )
 
 
