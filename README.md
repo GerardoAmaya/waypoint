@@ -563,10 +563,8 @@ a este problema. Con días que llegan a la noche aparecieron cinco de 130
 paradas al aire libre empezando a oscuras — entre ellas un cerro a las 19:22 — y
 dos de 121 bajo techo — una iglesia a las 19:56.
 
-Son dos reglas con dos motivos distintos. Al aire libre manda la luz, y eso
-puede ser una constante: en El Salvador el sol se pone entre las 17:50 y las
-18:30 durante todo el año, porque está a trece grados de latitud. Bajo techo
-manda el horario de apertura, que **no existe en el dato**: de los 366 lugares
+Son dos reglas con dos motivos distintos. Al aire libre manda la luz; bajo
+techo manda el horario de apertura, que **no existe en el dato**: de los 366 lugares
 bajo techo del catálogo, once traen `opening_hours` en OpenStreetMap, un 3%. Con
 eso no se decide nada, así que se asume una hora de cierre para todos en vez de
 fingir que el dato está. Los comedores no entran en ninguna de las dos: un
@@ -986,6 +984,54 @@ el nomenclátor, y si el texto es una ciudad se usa como zona y el día no lleva
 punto de partida. Se consulta **después** y no antes, para que un hotel que se
 llame como un pueblo siga ganando como punto de partida.
 
+### El anochecer era una constante, y la constante estaba mal
+
+La regla de la luz usaba `DUSK = 18:15` fijas, con este argumento escrito: *"en
+El Salvador el sol se pone entre las 17:50 y las 18:30 durante todo el año,
+porque está a trece grados de latitud"*. Suena razonable y es falso. Medido
+contra el archivo histórico de 2025 para San Salvador:
+
+| mes | puesta real | la constante |
+|---|---|---|
+| junio–julio | 18:21–18:28 | **13 min corta** |
+| septiembre | 17:46–18:07 | ~14 min larga |
+| octubre | 17:29–17:46 | 29–46 min larga |
+| **noviembre** | **17:25–17:29** | **50 min larga** |
+| diciembre | 17:27–17:40 | 35–48 min larga |
+
+El rango anual es de **17:25 a 18:28** — una hora — y la constante se equivocaba
+en los dos sentidos: en noviembre mandaba gente al cerro casi una hora después
+de que oscureció, y en junio le cortaba el día teniendo luz.
+
+**Se calcula, no se consulta.** La primera idea fue pedírsela a Open-Meteo, que
+la devuelve junto al clima. Calcularla sale mejor por tres razones: no depende
+de que el clima esté encendido ni de que el servicio conteste, funciona más allá
+de los dieciséis días que llega el pronóstico, y **llega a tiempo** — el borrador
+del itinerario se arma antes de pedir el clima justamente para aparecer de
+inmediato, así que una puesta de sol que viniera por red no estaría disponible
+cuando se decide dónde cabe cada parada. La puesta de sol es astronomía: sale de
+la latitud y la fecha.
+
+**Validado contra una implementación independiente.** Sobre 365 días y cuatro
+puntos del país, la diferencia con Open-Meteo es de 2 minutos de media y 4 como
+máximo, siempre en el mismo sentido. Se documenta y **no se corrige**: ninguno de
+los dos es la verdad —los dos son cálculos— y calibrar uno contra otro sería
+fingir una exactitud que no hay. Cuatro minutos son ruido al lado de los
+cincuenta que erraba la constante.
+
+Lo que cambia, medido sobre seis zonas y cuatro fechas de invierno:
+
+| | paradas al aire libre que terminan después del anochecer real |
+|---|---|
+| con `DUSK = 18:15` | **23** |
+| con la puesta de sol | **4** |
+
+Y las cuatro que quedan se pasan por dos a cuatro minutos, que es exactamente la
+precisión del método.
+
+Sin fecha se sigue usando la constante, que es para lo que estaba: el motor no le
+pregunta la hora a nadie.
+
 ### Lo que se pide con nombre se cumple o se explica
 
 `include_meals` es un booleano y significa "meteme comidas donde quepan". No
@@ -1033,10 +1079,10 @@ consulta las haya filtrado antes deja el límite a merced de quién llame.
 | Días con recomendación de llevar comida | 15% (9 de 62) |
 | Repetición de categoría por paso | 26% |
 | Repetición de subcategoría por paso | 15% |
-| Paradas fuera de hora (luz o cierre) | 11 de 240 — ahora medido en el banco |
+| Paradas fuera de hora (luz o cierre) | 0 de 240 — ahora medido en el banco |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
-| Tests | 726 backend, 55 frontend |
+| Tests | 743 backend, 55 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -1165,14 +1211,6 @@ el propio `assemble` enuncia doce líneas más arriba y que a `advise()` se le
 había escapado; de paso, los avisos de un viaje que mezcla modos se calculaban
 todos con la red del último día, así que el día a pie recibía consejos medidos
 en carro.
-
-**Once paradas de 240 terminan fuera de hora, y la tabla decía cero.** Era
-verdad el día que se contó a mano y dejó de serlo sin que nada avisara: las
-reglas de luz y cierre miran al llenar el día, y después el orden cambia dos
-veces —el recorrido se optimiza y las comidas se intercalan—, así que una parada
-puede acabar corrida. Ahora es una comprobación blanda del banco en vez de una
-afirmación del README, así que no puede volver a moverse en silencio. Arreglarlo
-es aparte.
 
 **El clima informa y aconseja, pero todavía no decide.** El motor sabe que
 llueve sobre el mirador de las 15:00 y lo dice; lo que no hace es preferir un

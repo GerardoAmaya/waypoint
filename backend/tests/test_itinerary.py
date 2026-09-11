@@ -3059,3 +3059,68 @@ class TestLaEsperaSeVuelveRatoEnElLugar:
         dia = schedule_day(1, [(almuerzo, "lunch"), (cena, "dinner")], restricciones)
 
         assert _minutes_between(dia.stops[0].arrival, dia.stops[0].departure) == 60
+
+
+class TestElAnochecerEsUnDatoYNoUnaConstante:
+    """`DUSK = 18:15` erraba hasta cincuenta minutos.
+
+    El argumento con el que se justificaba —"en El Salvador el sol se pone
+    entre las 17:50 y las 18:30 todo el año"— también estaba mal: medido contra
+    los datos reales de 2025, el rango es de 17:25 a 18:28. En noviembre la
+    constante mandaba gente al cerro casi una hora después de que oscureció, y
+    en junio le cortaba el día teniendo luz.
+
+    Medido sobre seis zonas y cuatro fechas de invierno: 23 paradas al aire
+    libre terminaban después del anochecer real con la constante, y 4 con el
+    cálculo, todas pasadas por dos a cuatro minutos, que es la precisión del
+    método.
+    """
+
+    def _restricciones(self, fecha):
+        return Constraints(
+            days=1,
+            start_date=fecha,
+            center_lat=13.70,
+            center_lon=-89.22,
+        )
+
+    def test_en_noviembre_oscurece_mucho_antes_que_la_constante(self):
+        anochecer = self._restricciones(date(2026, 11, 15)).dusk_for(1)
+
+        assert anochecer < DUSK
+        assert _minutes_between(anochecer, DUSK) > 40
+
+    def test_en_junio_oscurece_despues(self):
+        """Se equivocaba en los dos sentidos."""
+        assert self._restricciones(date(2026, 6, 21)).dusk_for(1) > DUSK
+
+    def test_sin_fecha_se_usa_la_constante(self):
+        """El motor sigue siendo puro: sin fecha no hay con qué calcular."""
+        sin_fecha = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+
+        assert sin_fecha.dusk_for(1) == DUSK
+
+    def test_cada_dia_del_viaje_tiene_el_suyo(self):
+        """Un viaje largo cruza semanas y el sol se mueve."""
+        largo = Constraints(
+            days=7, start_date=date(2026, 11, 1), center_lat=13.70, center_lon=-89.22
+        )
+
+        assert largo.dusk_for(7) < largo.dusk_for(1)
+
+    def test_no_coloca_un_cerro_que_acabaria_a_oscuras_en_noviembre(self):
+        """Lo que la constante permitía: un mirador de 30 min llegando 17:50.
+
+        Con DUSK a las 18:15 entraba; con el anochecer real de las 17:28, no.
+        """
+        mirador = lugar("Mirador", 13.700, -89.220, Category.viewpoint)
+        restricciones = replace(
+            self._restricciones(date(2026, 11, 15)),
+            earliest_start=time(17, 50),
+            latest_end=time(21, 0),
+            include_meals=False,
+        )
+
+        itinerario = assemble([], [mirador], restricciones)
+
+        assert itinerario.days == [] or not itinerario.days[0].stops

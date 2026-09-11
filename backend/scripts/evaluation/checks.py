@@ -229,14 +229,18 @@ def _check_travel_budget(dia, constraints: Constraints, reporte: Report) -> None
 
 
 def _check_hours(dia, reporte: Report) -> None:
-    """Paradas que terminan despues de que se acaba la luz o de que cierran.
+    """Paradas que se visitan cuando ya no se pueden visitar.
 
-    **Existia como afirmacion en el README y no como medicion, y dejo de ser
-    cierta sin que nada avisara.** La tabla decia "Paradas fuera de hora: 0",
-    que era verdad el dia que se midio a mano; hoy son once de 240. Las reglas
-    del motor miran al llenar el dia, y despues el orden cambia dos veces —el
-    recorrido se optimiza y las comidas se intercalan—, asi que una parada
-    puede acabar corrida.
+    **La regla es asimetrica a proposito y medirla simetrica da un numero
+    falso.** Al aire libre importa cuando TERMINA: la luz se acaba, y un cerro
+    de tres horas que empieza a las 15:37 acaba a oscuras. Bajo techo importa
+    cuando EMPIEZA: si el museo cierra a las seis, lo que cuenta es haber
+    entrado antes, no que te saquen a y media.
+
+    La primera version de esta comprobacion miraba la salida en los dos casos y
+    reportaba once infracciones de 240 que no lo eran: paradas bajo techo que
+    entran a tiempo y salen un poco tarde, que es lo normal. Con la regla que
+    corresponde son cero, y la cifra que el README traia a mano estaba bien.
 
     Va como comprobacion blanda: es calidad y no un limite que la persona haya
     puesto, igual que la comida. Y va aqui y no en validate() por la regla de
@@ -249,19 +253,19 @@ def _check_hours(dia, reporte: Report) -> None:
             continue
 
         categoria = parada.place.category
-        if categoria in OUTDOOR_CATEGORIES:
-            tope = DUSK
-        elif categoria in INDOOR_CATEGORIES:
-            tope = INDOOR_CLOSES
-        else:
-            continue
-
-        if parada.departure > tope:
+        if categoria in OUTDOOR_CATEGORIES and parada.departure > DUSK:
             reporte.add(
                 "fuera_de_hora",
                 dia.number,
-                f"{parada.place.name} termina {parada.departure:%H:%M} y el tope "
-                f"es {tope:%H:%M}",
+                f"{parada.place.name} está al aire libre y termina "
+                f"{parada.departure:%H:%M}, con luz hasta {DUSK:%H:%M}",
+            )
+        elif categoria in INDOOR_CATEGORIES and parada.arrival >= INDOOR_CLOSES:
+            reporte.add(
+                "fuera_de_hora",
+                dia.number,
+                f"{parada.place.name} se visita a las {parada.arrival:%H:%M} y "
+                f"cierra {INDOOR_CLOSES:%H:%M}",
             )
 
 

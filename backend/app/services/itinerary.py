@@ -28,6 +28,7 @@ from app.services.clima import ClimaDelViaje, DiaDeClima
 from app.services.geo import EstimatedTravel, TravelProvider, haversine_km
 from app.services.places import PlaceHit, nombre_legible, search_in_area
 from app.services.places import by_ids as places_by_ids
+from app.services.sol import puesta_de_sol
 
 # Kilometros por dia por defecto segun el modo. Solo se usan cuando un dia va
 # en otro modo que el itinerario: es el numero que el prompt ya le sugiere al
@@ -519,6 +520,24 @@ class Constraints:
     def mode_for(self, numero: int) -> str:
         """El modo del dia `numero`."""
         return self.day_modes.get(numero, self.mode)
+
+    def dusk_for(self, numero: int) -> time:
+        """A que hora se acaba la luz el dia `numero`.
+
+        **Se calcula si se sabe la fecha, y si no se usa la constante.** DUSK
+        eran las 18:15 fijas, con el argumento de que en El Salvador el sol se
+        pone entre las 17:50 y las 18:30 todo el año. Medido contra los datos
+        reales de 2025, el rango es de 17:25 a 18:28: en noviembre la constante
+        mandaba gente al cerro cincuenta minutos despues de que oscurecio, y en
+        junio le cortaba el dia teniendo luz.
+
+        No cuesta ninguna peticion: la puesta de sol es astronomia y se calcula
+        de la latitud y la fecha. Ver app/services/sol.py.
+        """
+        fecha = self.date_of_day(numero)
+        if fecha is None:
+            return DUSK
+        return puesta_de_sol(fecha, self.center_lat, self.center_lon) or DUSK
 
     def date_of_day(self, numero: int) -> date | None:
         """La fecha del dia `numero`, o None si no se sabe cuando es el viaje.
@@ -1299,7 +1318,7 @@ def _fits_the_clock(
     for lugar, hora in zip(
         tentativa, _arrival_times(secuencia, constraints, medidor), strict=False
     ):
-        if _too_late_for(lugar, hora, constraints):
+        if _too_late_for(lugar, hora, constraints, constraints.dusk_for(numero)):
             return False
 
     minutos = _sequence_minutes(secuencia, constraints, medidor)
@@ -2015,7 +2034,9 @@ def schedule_day(
     return dia
 
 
-def _limite_de_salida(lugar: PlaceHit, constraints: Constraints) -> time:
+def _limite_de_salida(
+    lugar: PlaceHit, constraints: Constraints, anochecer: time | None = None
+) -> time:
     """Hasta que hora tiene sentido seguir en ese lugar.
 
     Son los mismos dos limites que el motor ya respeta al colocar paradas: la
@@ -2023,7 +2044,7 @@ def _limite_de_salida(lugar: PlaceHit, constraints: Constraints) -> time:
     no tiene tope, que es la misma excepcion de siempre.
     """
     if lugar.category in OUTDOOR_CATEGORIES:
-        return DUSK
+        return anochecer or DUSK
     if lugar.category in INDOOR_CATEGORIES:
         return INDOOR_CLOSES
     return constraints.latest_end
@@ -2049,6 +2070,8 @@ def _repartir_la_espera(dia: Day, constraints: Constraints) -> None:
     lo menos posible; cada paso mas atras tiene que comprobar que las
     intermedias siguen dentro de su limite, y por eso se hace en ese orden.
     """
+    anochecer = constraints.dusk_for(dia.number)
+
     for indice, parada in enumerate(dia.stops):
         if parada.meal is None or indice == 0:
             continue
@@ -2069,7 +2092,7 @@ def _repartir_la_espera(dia: Day, constraints: Constraints) -> None:
             if lugar.meal is not None:
                 continue
 
-            tope = _limite_de_salida(lugar.place, constraints)
+            tope = _limite_de_salida(lugar.place, constraints, anochecer)
             margen = _minutes_between(lugar.departure, tope)
             # Las que ya estan en su limite o pasadas no dan nada.
             toma = max(0, min(espera, margen))
@@ -2646,7 +2669,10 @@ def _fits_the_day(
 
 
 def _too_late_for(
-    lugar: PlaceHit, llegada: time, constraints: Constraints | None = None
+    lugar: PlaceHit,
+    llegada: time,
+    constraints: Constraints | None = None,
+    anochecer: time | None = None,
 ) -> bool:
     """Si a esa hora ese lugar ya no se puede visitar.
 
@@ -2664,7 +2690,7 @@ def _too_late_for(
     """
     if lugar.category in OUTDOOR_CATEGORIES:
         duracion = _stop_minutes(lugar, None, constraints) if constraints is not None else 0
-        return _as_minutes(llegada) + duracion > _as_minutes(DUSK)
+        return _as_minutes(llegada) + duracion > _as_minutes(anochecer or DUSK)
     if lugar.category in INDOOR_CATEGORIES:
         return _as_minutes(llegada) >= _as_minutes(INDOOR_CLOSES)
     return False
@@ -2674,6 +2700,7 @@ def _outdoor_after_dusk(
     secuencia: list[tuple[PlaceHit, str | None]],
     constraints: Constraints,
     travel: TravelProvider,
+    numero: int = 1,
 ) -> PlaceHit | None:
     """La primera parada al aire libre que caeria ya de noche, si hay alguna.
 
@@ -2685,7 +2712,7 @@ def _outdoor_after_dusk(
     for (lugar, _), hora in zip(
         secuencia, _arrival_times(secuencia, constraints, travel), strict=False
     ):
-        if _too_late_for(lugar, hora, constraints):
+        if _too_late_for(lugar, hora, constraints, constraints.dusk_for(numero)):
             return lugar
     return None
 
@@ -2731,7 +2758,7 @@ def _trim_to_budget(
         # recorte de kilometros elige la que mas traslado suma, que casi nunca
         # es la que cae tarde: buscando por ahi, el dia perdia otras paradas
         # antes de arreglar la unica que estaba mal.
-        nocturna = _outdoor_after_dusk(secuencia, constraints, medidor)
+        nocturna = _outdoor_after_dusk(secuencia, constraints, medidor, numero)
         if nocturna is not None and nocturna is not ancla:
             restantes.remove(nocturna)
             continue
