@@ -122,9 +122,14 @@ web-check:
 # se recalcula entera en cada carga.
 #
 # Asi que al final del volcado va un UPDATE que iguala is_active,
-# rejected_reason y duplicate_of de cada lugar. Son las tres columnas que el
-# filtro de calidad y la deduplicacion cambian, y las unicas que hace falta
-# igualar: el resto del registro no se edita, viene de OpenStreetMap.
+# rejected_reason, duplicate_of y same_place_as de cada lugar. Son las cuatro
+# columnas que el filtro de calidad, la deduplicacion y la agrupacion de
+# sitios cambian, y las unicas que hace falta igualar: el resto del registro no
+# se edita, viene de OpenStreetMap.
+#
+# same_place_as entro despues y es facil de olvidar: la migracion crea la
+# columna vacia, asi que sin esta linea el arreglo de "el mismo parque dos
+# veces en un dia" se queda en local y produccion lo sigue haciendo.
 #
 # La tabla va cualificada como public.places: pg_dump pone `search_path = ''`
 # en la cabecera del volcado, asi que un nombre sin esquema no se encuentra y
@@ -140,9 +145,9 @@ dump:
 		-t places -t place_names -t travel_edges -t route_legs \
 		> catalogo.dump
 	@docker compose exec -T db psql -U waypoint -d waypoint -t -A -c \
-		"SELECT 'UPDATE public.places p SET is_active = v.is_active, rejected_reason = v.rejected_reason, duplicate_of = v.duplicate_of FROM (VALUES ' \
-		 || string_agg(format('(%L::uuid,%L::boolean,%L::text,%L::uuid)', id, is_active, rejected_reason, duplicate_of), ',') \
-		 || ') AS v(id, is_active, rejected_reason, duplicate_of) WHERE p.id = v.id;' FROM places;" \
+		"SELECT 'UPDATE public.places p SET is_active = v.is_active, rejected_reason = v.rejected_reason, duplicate_of = v.duplicate_of, same_place_as = v.same_place_as FROM (VALUES ' \
+		 || string_agg(format('(%L::uuid,%L::boolean,%L::text,%L::uuid,%L::uuid)', id, is_active, rejected_reason, duplicate_of, same_place_as), ',') \
+		 || ') AS v(id, is_active, rejected_reason, duplicate_of, same_place_as) WHERE p.id = v.id;' FROM places;" \
 		>> catalogo.dump
 	@wc -c catalogo.dump
 	@grep -c "ON CONFLICT DO NOTHING" catalogo.dump | xargs echo "lotes de insercion:"

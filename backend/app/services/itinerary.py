@@ -1196,7 +1196,17 @@ def _name_key(lugar: PlaceHit) -> str:
 
     El caso que lo destapo: "Cascadas de Huizucar" dos veces el mismo dia, dos
     filas a 774 metros; el radio de deduplicacion para exteriores son 500.
+
+    **Cuando las dos filas son el mismo sitio con nombres distintos, la clave
+    es el grupo.** El nombre exacto no alcanzaba: "Parque Nacional El
+    Imposible" y "Parque El Imposible" son la reserva y su entrada, a 1.173
+    metros, y un dia de la Ruta de las Flores visitaba las dos con el almuerzo
+    en medio —34 de sus 47 kilometros en ir a comer y volver al mismo parque—.
+    Quien decide que son el mismo sitio es el cargador, con el catalogo entero
+    a la vista; aqui solo se lee la respuesta. Ver Place.same_place_as.
     """
+    if lugar.same_place_as is not None:
+        return f"grupo:{lugar.same_place_as}"
     return " ".join(lugar.name.casefold().split())
 
 

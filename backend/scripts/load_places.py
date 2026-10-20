@@ -9,7 +9,13 @@ en la base, asi que lo bajamos una vez y la aplicacion consulta su propia copia.
 Uso:
     python -m scripts.load_places
     python -m scripts.load_places --dry-run
-    python -m scripts.load_places --dedupe-only
+    python -m scripts.load_places --dedupe-only   # tambien reagrupa
+
+Las dos pasadas de limpieza van juntas y en orden: primero `deduplicate()`
+descarta las filas sobrantes, y despues `group_same_places()` agrupa las que
+quedan y son el mismo sitio con nombres distintos. Las dos se recalculan
+enteras en cada corrida, asi que el resultado depende del catalogo de hoy y no
+del orden historico de las cargas.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ import argparse
 import logging
 import sys
 import time
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -93,6 +100,39 @@ OUTDOOR_RADIUS_M = 500
 OUTDOOR_CATEGORIES = ("nature", "viewpoint")
 
 NAME_SIMILARITY = 0.55
+
+# --------------------------------------------------------------------------
+# Agrupar lo que es el mismo sitio
+# --------------------------------------------------------------------------
+
+# Hasta donde se consideran dos filas el mismo sitio.
+#
+# Es el triple del radio de deduplicacion de exteriores, y puede serlo porque
+# **esto no borra nada**: agrupar de mas cuesta un candidato en un itinerario,
+# y deduplicar de mas borra un lugar del catalogo. Los errores no pesan igual,
+# asi que los umbrales tampoco.
+#
+# Mil quinientos cubre el caso que lo motivo —"Parque Nacional El Imposible" y
+# "Parque El Imposible", a 1.173 m— con margen.
+SAME_PLACE_RADIUS_M = 1500
+
+# Palabras que no distinguen nada y no cuentan para comparar nombres.
+PALABRAS_VACIAS = frozenset({"el", "la", "los", "las", "de", "del", "y", "e", "a", "al"})
+
+# Que tan rara tiene que ser una palabra para considerarla distintiva.
+#
+# **Es una fraccion del catalogo y no un numero fijo, para que escale.** Con
+# 5.786 lugares da 6, y ahi la separacion es limpia: "imposible" aparece en 2
+# lugares y "caulotal" en 2, mientras "hostel" esta en 19, "comercial" en 52,
+# "pollo" en 154 y "cerro" en 766. Si el catalogo crece al doble, el umbral
+# crece con el.
+#
+# Hace falta porque la contencion de palabras sola no alcanza: "Hostel" esta
+# contenido en "Casa Frolaz Hostel" y son dos sitios distintos. Lo que delata
+# al parque del ejemplo no es que un nombre contenga al otro, sino que
+# comparten una palabra que casi no aparece en ningun otro lado.
+PROPORCION_PALABRA_RARA = 0.001
+MINIMO_PALABRA_RARA = 3
 
 
 def build_query(cuerpo: str) -> str:
@@ -312,6 +352,164 @@ def deduplicate() -> int:
         db.close()
 
 
+def _palabras_significativas(nombre: str) -> set[str]:
+    """Las palabras de un nombre que sirven para compararlo con otro.
+
+    Sin tildes ni mayusculas porque OpenStreetMap las pone a voluntad, y sin
+    articulos ni preposiciones porque no distinguen nada: "Cerro Nubes" y
+    "Cerro de Nubes" son el mismo cerro.
+    """
+    plano = "".join(
+        c
+        for c in unicodedata.normalize("NFD", nombre.casefold())
+        if unicodedata.category(c) != "Mn"
+    )
+    limpio = "".join(c if c.isalnum() else " " for c in plano)
+    return {p for p in limpio.split() if p and p not in PALABRAS_VACIAS}
+
+
+def _frecuencia_de_palabras(nombres: list[str]) -> Counter:
+    """En cuantos lugares aparece cada palabra. Ver PROPORCION_PALABRA_RARA."""
+    return Counter(
+        palabra for nombre in nombres for palabra in _palabras_significativas(nombre)
+    )
+
+
+def _es_el_mismo_sitio(nombre_a: str, nombre_b: str, frecuencia: Counter, raras: int) -> bool:
+    """Si dos nombres cercanos describen el mismo sitio.
+
+    Dos condiciones, y cada una ataja un fallo que la otra deja pasar.
+
+    **Uno tiene que contener al otro, palabra por palabra.** Es lo que separa
+    "Parque El Imposible" dentro de "Parque Nacional El Imposible" de
+    "Bahia Dorada" contra "Bahia Del Sol", que son dos playas distintas. El
+    parecido de trigramas no sirve para esto y se midio: el caso bueno saca
+    0,69 y los falsos positivos sacan 0,73 y 0,77, o sea que quedan por encima.
+
+    **Y tienen que compartir una palabra rara.** Sin esto, "Hostel" dentro de
+    "Casa Frolaz Hostel" pasaria el primer filtro, igual que "La Pizzeria"
+    dentro de "Pizzeria Da Mario". Lo que delata al parque del ejemplo es que
+    "imposible" aparece en dos lugares de todo el catalogo.
+    """
+    palabras_a = _palabras_significativas(nombre_a)
+    palabras_b = _palabras_significativas(nombre_b)
+
+    if not palabras_a or not palabras_b or palabras_a == palabras_b:
+        # Los nombres identicos los agrupa el motor por su cuenta, y ahi la
+        # regla es otra: dos "Pizza Hut" a cuarenta kilometros tambien sobran
+        # en un mismo viaje, aunque no sean el mismo sitio.
+        return False
+
+    if not (palabras_a <= palabras_b or palabras_b <= palabras_a):
+        return False
+
+    corto = palabras_a if len(palabras_a) <= len(palabras_b) else palabras_b
+    return any(frecuencia[palabra] <= raras for palabra in corto)
+
+
+def group_same_places() -> int:
+    """Agrupa las filas que son el mismo sitio. Devuelve cuantas quedaron agrupadas.
+
+    **No desactiva nada.** A diferencia de deduplicate(), las dos filas siguen
+    activas: cada una tiene su nombre, su categoria y su punto, y las dos
+    sirven para buscar o para dibujar. Lo unico que se evita es que un mismo
+    itinerario las visite a las dos.
+
+    El fallo que lo motivo: tres dias por la Ruta de las Flores metian "Parque
+    Nacional El Imposible" y "Parque El Imposible" el mismo dia, con el
+    almuerzo en medio. El dia gastaba 34 de sus 47 kilometros en ir a comer y
+    volver al mismo parque.
+
+    Se recalcula entero en cada corrida, igual que la deduplicacion: asi el
+    resultado depende del catalogo de hoy y no del orden historico de las
+    cargas.
+    """
+    db = SessionLocal()
+    try:
+        db.execute(text("UPDATE places SET same_place_as = NULL"))
+
+        filas = db.execute(
+            text("SELECT id, name, quality_score FROM places WHERE is_active")
+        ).all()
+        if not filas:
+            db.commit()
+            return 0
+
+        frecuencia = _frecuencia_de_palabras([f.name for f in filas])
+        raras = max(MINIMO_PALABRA_RARA, round(len(filas) * PROPORCION_PALABRA_RARA))
+
+        # La cercania la resuelve PostGIS, que es lo suyo; la comparacion de
+        # nombres se hace aqui porque en SQL seria ilegible.
+        cercanos = db.execute(
+            text("""
+                SELECT a.id AS id_a, a.name AS nombre_a,
+                       b.id AS id_b, b.name AS nombre_b
+                FROM places a
+                JOIN places b
+                  ON a.id < b.id
+                 AND a.is_active AND b.is_active
+                 AND ST_DWithin(a.geom, b.geom, :radio)
+            """),
+            {"radio": SAME_PLACE_RADIUS_M},
+        ).all()
+
+        # Union-find: la relacion tiene que ser transitiva. "El Cafetalon",
+        # "Parque El Cafetalon" y "Jugos El Cafetalon" salen como tres pares
+        # sueltos y son un solo sitio.
+        padre: dict = {}
+
+        def raiz(x):
+            padre.setdefault(x, x)
+            while padre[x] != x:
+                padre[x] = padre[padre[x]]
+                x = padre[x]
+            return x
+
+        def unir(x, y):
+            rx, ry = raiz(x), raiz(y)
+            if rx != ry:
+                padre[rx] = ry
+
+        for par in cercanos:
+            if _es_el_mismo_sitio(par.nombre_a, par.nombre_b, frecuencia, raras):
+                unir(par.id_a, par.id_b)
+
+        if not padre:
+            db.commit()
+            return 0
+
+        grupos: dict = {}
+        for identificador in padre:
+            grupos.setdefault(raiz(identificador), []).append(identificador)
+
+        calidad = {f.id: (f.quality_score or 0.0, str(f.id)) for f in filas}
+        agrupados = 0
+        for miembros in grupos.values():
+            if len(miembros) < 2:
+                continue
+            # El representante es el de mejor calidad, con el identificador de
+            # desempate para que dos corridas den lo mismo.
+            representante = max(miembros, key=lambda m: calidad.get(m, (0.0, "")))
+            # **El representante se apunta a si mismo, no se queda en NULL.**
+            # Dejarlo en NULL como hace duplicate_of parecia natural y rompia
+            # la regla que esta columna existe para alimentar: el motor agrupa
+            # por `same_place_as`, asi que el miembro daba "grupo:<id>" y el
+            # representante daba su nombre, y no coincidian nunca. Con el
+            # autoapuntado, NULL queda reservado para "no pertenece a ningun
+            # grupo", que es lo unico que hace falta distinguir.
+            for miembro in miembros:
+                db.execute(
+                    text("UPDATE places SET same_place_as = :rep WHERE id = :id"),
+                    {"rep": representante, "id": miembro},
+                )
+                agrupados += 1
+
+        db.commit()
+        return agrupados
+    finally:
+        db.close()
+
+
 def report() -> None:
     db = SessionLocal()
     try:
@@ -348,7 +546,11 @@ def report() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="Solo el primer grupo")
-    parser.add_argument("--dedupe-only", action="store_true", help="Sin descargar")
+    parser.add_argument(
+        "--dedupe-only",
+        action="store_true",
+        help="Sin descargar: solo deduplicar y reagrupar lo que ya esta en la base",
+    )
     parser.add_argument(
         "--group",
         choices=sorted(QUERY_GROUPS),
@@ -370,6 +572,11 @@ def main() -> None:
 
     duplicados = deduplicate()
     logger.info("%s marcados como duplicados", duplicados)
+
+    # Despues de deduplicar: los duplicados ya estan fuera, asi que los grupos
+    # se arman solo sobre lo que de verdad sigue en el catalogo.
+    agrupados = group_same_places()
+    logger.info("%s agrupados como el mismo sitio", agrupados)
 
     report()
 

@@ -36,6 +36,11 @@ class PlaceHit:
     distance_m: float | None = None
     tags: dict | None = None
 
+    # El representante del grupo cuando varias filas son el mismo sitio, o
+    # None si esta fila es el representante o no tiene grupo. Ver
+    # Place.same_place_as y _name_key en el motor.
+    same_place_as: uuid.UUID | None = None
+
 
 # Cocina en castellano. OSM la escribe en ingles y con guiones bajos, y
 # "regional;pupusa" es un valor perfectamente valido: hay que partirlo.
@@ -224,6 +229,7 @@ def _row_to_hit(row) -> PlaceHit:
         quality_score=row.quality_score,
         distance_m=round(row.distance_m, 1) if getattr(row, "distance_m", None) else None,
         tags=getattr(row, "tags", None),
+        same_place_as=getattr(row, "same_place_as", None),
     )
 
 
@@ -275,7 +281,7 @@ def search_nearby(
     filas = db.execute(
         text(f"""
             SELECT p.id, p.name, p.category::text AS category, p.subcategory,
-                   p.lat, p.lon, p.quality_score, p.tags,
+                   p.lat, p.lon, p.quality_score, p.tags, p.same_place_as,
                    ST_Distance(p.geom, ST_GeogFromText(:punto)) AS distance_m
             FROM places p
             WHERE p.is_active
@@ -315,7 +321,7 @@ def search_by_name(
     filas = db.execute(
         text("""
             SELECT p.id, p.name, p.category::text AS category, p.subcategory,
-                   p.lat, p.lon, p.quality_score, p.tags
+                   p.lat, p.lon, p.quality_score, p.tags, p.same_place_as
             FROM places p
             WHERE p.is_active
               AND similarity(p.name, :query) >= :min_similarity
@@ -457,7 +463,7 @@ def search_candidates(db: Session, query: str, *, limit: int = 8) -> list[Candid
     filas = db.execute(
         text(f"""
             SELECT p.id, p.name, p.category::text AS category, p.subcategory,
-                   p.lat, p.lon, p.quality_score, p.tags,
+                   p.lat, p.lon, p.quality_score, p.tags, p.same_place_as,
                    similarity({_NOMBRE_P}, {_CONSULTA}) AS parecido,
                    word_similarity({_CONSULTA}, {_NOMBRE_P}) AS encaje
             FROM places p
@@ -549,7 +555,7 @@ def search_in_area(
         text(f"""
             WITH candidatos AS (
                 SELECT p.id, p.name, p.category::text AS category, p.subcategory,
-                       p.lat, p.lon, p.quality_score, p.tags,
+                       p.lat, p.lon, p.quality_score, p.tags, p.same_place_as,
                        ST_Distance(p.geom, ST_GeogFromText(:punto)) AS distance_m,
                        ROW_NUMBER() OVER (
                            PARTITION BY p.category
@@ -592,7 +598,7 @@ def by_ids(db: Session, ids: list[uuid.UUID]) -> dict[uuid.UUID, PlaceHit]:
     filas = db.execute(
         text("""
             SELECT p.id, p.name, p.category::text AS category, p.subcategory,
-                   p.lat, p.lon, p.quality_score, p.tags
+                   p.lat, p.lon, p.quality_score, p.tags, p.same_place_as
             FROM places p
             WHERE p.is_active AND p.id = ANY(:ids)
         """),

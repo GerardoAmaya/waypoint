@@ -3124,3 +3124,64 @@ class TestElAnochecerEsUnDatoYNoUnaConstante:
         itinerario = assemble([], [mirador], restricciones)
 
         assert itinerario.days == [] or not itinerario.days[0].stops
+
+
+class TestDosFilasDelMismoSitioNoCompartenViaje:
+    """El fallo de la Ruta de las Flores.
+
+    "Parque Nacional El Imposible" y "Parque El Imposible" son la reserva y su
+    entrada, a 1.173 metros. El día los visitaba a los dos con el almuerzo en
+    medio: 34 de sus 47 kilómetros en ir a comer y volver al mismo parque.
+
+    La regla del nombre exacto no los veía. Quien decide que son el mismo sitio
+    es el cargador, con el catálogo entero a la vista; el motor solo lee la
+    respuesta en `same_place_as`.
+    """
+
+    def _del_grupo(self, nombre, lat, lon, representante):
+        hit = lugar(nombre, lat, lon, Category.nature)
+        return replace(hit, same_place_as=representante)
+
+    def test_dos_del_mismo_grupo_comparten_clave(self):
+        grupo = uuid.uuid4()
+        reserva = self._del_grupo("Parque Nacional El Imposible", 13.83, -89.96, grupo)
+        entrada = self._del_grupo("Parque El Imposible", 13.828, -89.948, grupo)
+
+        assert _name_key(reserva) == _name_key(entrada)
+
+    def test_un_lugar_sin_grupo_sigue_usando_su_nombre(self):
+        suelto = lugar("Cerro Verde", 13.83, -89.63, Category.nature)
+
+        assert _name_key(suelto) == "cerro verde"
+
+    def test_dos_grupos_distintos_no_se_confunden(self):
+        uno = self._del_grupo("Parque A", 13.8, -89.9, uuid.uuid4())
+        otro = self._del_grupo("Parque B", 13.8, -89.9, uuid.uuid4())
+
+        assert _name_key(uno) != _name_key(otro)
+
+    def test_el_itinerario_visita_el_grupo_una_sola_vez(self):
+        """Lo que de verdad importa: el día no mete las dos filas."""
+        grupo = uuid.uuid4()
+        destinos = [
+            self._del_grupo("Parque Nacional El Imposible", 13.830, -89.958, grupo),
+            self._del_grupo("Parque El Imposible", 13.828, -89.948, grupo),
+            lugar("Mirador El Mulo", 13.835, -89.950, Category.viewpoint),
+            lugar("Ruinas de la Iglesia Vieja", 13.840, -89.940, Category.culture),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.83,
+            center_lon=-89.95,
+            earliest_start=time(10, 0),
+            latest_end=time(20, 0),
+            include_meals=False,
+        )
+
+        itinerario = assemble([], destinos, restricciones)
+        nombres = [p.place.name for d in itinerario.days for p in d.stops]
+
+        del_parque = [n for n in nombres if "Imposible" in n]
+        assert len(del_parque) == 1, f"el día visitó {del_parque}"
+        # Y las otras paradas siguen entrando: no se recorta de más.
+        assert "Mirador El Mulo" in nombres

@@ -53,7 +53,7 @@ magnitud, en vez de esconderse.
 | Qué | Cuánto |
 |---|---|
 | Cumplimiento de límites duros | 96% (25 de 26 casos) |
-| Lugares inventados | 0 de 321 paradas generadas |
+| Lugares inventados | 0 de 319 paradas generadas |
 | Factor de desvío medido | 1.45, mediana sobre 812 pares |
 | Velocidad efectiva en carro | 35 a 62 km/h según el tramo |
 | Pares sin ruta en ORS | 7% (58 de 870) |
@@ -68,7 +68,7 @@ magnitud, en vez de esconderse.
 | Paradas fuera de hora (luz o cierre) | 0 de 240 — ahora medido en el banco |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
-| Tests | 743 backend, 55 frontend |
+| Tests | 759 backend, 55 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -98,6 +98,7 @@ Una muestra de lo que hay:
 | [La lluvia es la misma regla que la luz](DECISIONES.md#la-lluvia-es-la-misma-regla-que-la-luz-con-otro-insumo) | El umbral que puse primero tiraba el 46% de la lluvia real |
 | [El cupo de OpenRouteService es por endpoint](DECISIONES.md#el-cupo-de-openrouteservice-es-por-endpoint-no-uno-solo) | Documenté un número equivocado y la API me corrigió |
 | [Repetir categoría cuesta kilómetros](DECISIONES.md#repetir-categoria-cuesta-kilometros) | Tres cerros seguidos no son un día variado |
+| [El mismo parque dos veces en un día](DECISIONES.md#el-mismo-parque-dos-veces-en-un-dia) | 34 de 47 km en ir a comer y volver al mismo sitio |
 
 ---
 
@@ -129,7 +130,7 @@ Se apaga con `WEATHER_ENABLED=false` y la respuesta lo dice en `weather.reason`.
 ## Guiones
 
 ```bash
-make test            # los 743 del backend
+make test            # los 759 del backend
 npm test             # los 55 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante (3 de matriz)
 make ors-trace       # dice si el trazo por carretera funciona ahora (1 de direcciones)

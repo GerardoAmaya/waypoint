@@ -108,6 +108,24 @@ class Place(Base):
     # y el otro apunta a el.
     duplicate_of: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
+    # El sitio real al que pertenece esta fila, cuando varias describen el
+    # mismo desde angulos distintos.
+    #
+    # **No es `duplicate_of` y la diferencia es el proposito.** Un duplicado es
+    # una fila sobrante: se desactiva y desaparece. Esto agrupa filas que son
+    # todas legitimas —"Parque Nacional El Imposible" es la reserva y "Parque
+    # El Imposible" la entrada, a 1.173 metros— y las deja activas: cada una
+    # sirve para buscar por nombre y el mapa puede mostrarlas. Lo unico que no
+    # tiene sentido es visitarlas las dos en el mismo viaje.
+    #
+    # Apunta al representante del grupo, que es el de mejor calidad, y **el
+    # representante se apunta a si mismo**. Asi NULL significa una sola cosa:
+    # "no pertenece a ningun grupo". Dejar al representante en NULL, como hace
+    # duplicate_of, parecia natural y rompia la regla que alimenta: el motor
+    # agrupa por esta columna, y el representante quedaba fuera de su propio
+    # grupo.
+    same_place_as: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

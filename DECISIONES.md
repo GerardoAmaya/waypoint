@@ -51,6 +51,7 @@ piezas borradas por no ganarse su sitio, y el motivo de cada una.
 
 - [Si dijiste dónde empezás, todos los días empiezan ahí](#si-dijiste-donde-empezas-todos-los-dias-empiezan-ahi)
 - [El día sale de donde el usuario dijo](#el-dia-sale-de-donde-el-usuario-dijo)
+- [El mismo parque dos veces en un día](#el-mismo-parque-dos-veces-en-un-dia)
 - [El nombre con el que la gente llama a un lugar](#el-nombre-con-el-que-la-gente-llama-a-un-lugar)
 - [Una ciudad nombrada como punto de partida es una zona](#una-ciudad-nombrada-como-punto-de-partida-es-una-zona)
 - [El nomenclátor: nombres de lugar, aparte de los puntos de interés](#el-nomenclator-nombres-de-lugar-aparte-de-los-puntos-de-interes)
@@ -991,6 +992,87 @@ empieza donde el usuario no está, y eso se descubre estando ahí.
 Cuando lo único que se dice es de dónde se sale, el punto de partida también
 dice dónde buscar: doce kilómetros de radio, que es lo que se recorre saliendo
 de un punto y volviendo.
+
+### El mismo parque dos veces en un día
+
+El reporte: *"Tres días por la Ruta de las Flores"* devolvía un primer día así.
+
+```
+10:00  Parque Nacional El Imposible
+12:57  Piccolo Giardino              ← 17,7 km   almuerzo
+14:53  Parque El Imposible           ← 16,4 km
+```
+
+Se iba 18 km a comer y volvía 16 al **mismo parque**: 34 de los 47 km del día
+en un rebote. Son dos filas de OpenStreetMap del mismo sitio —la reserva y su
+entrada— a **1.173 metros**, con nombres y categorías distintas.
+
+**Tres hipótesis descartadas, cada una por medición.**
+
+*Subir el radio de deduplicación* (500 m → 1,2 km). Medido sobre el catálogo,
+la banda de 500 a 1.200 metros está llena de cadenas con nombre idéntico:
+Subway, Don Pollo, Pool House Hostel. Dos Subway a 924 metros son dos
+restaurantes de verdad, y subir el radio los borraría.
+
+*Parecido de nombre por trigramas.* No separa. El caso bueno saca **0,69** y
+los falsos positivos sacan más: `Bahía Dorada` contra `Bahía Del Sol` da 0,77 y
+`Estructura 6` contra `Estructura 2` da 0,73. Un umbral lo bastante estricto
+para excluirlos excluye también el caso que se quiere atrapar.
+
+*Contención de palabras a secas.* Mejor, pero `Hostel` está contenido en `Casa
+Frolaz Hostel` y `La Pizzeria` en `Pizzeria Da Mario`. Cuando el nombre corto
+es genérico, la contención no significa nada.
+
+**Lo que sí funciona son las dos juntas: contención más una palabra rara.** Lo
+que delata al parque no es que un nombre contenga al otro, sino que comparten
+una palabra que casi no existe en el catálogo:
+
+| palabra | lugares donde aparece |
+|---|---|
+| `imposible` | **2** |
+| `caulotal` | **2** |
+| `hostel` | 19 |
+| `comercial` | 52 |
+| `cerro` | 766 |
+
+El umbral es una **fracción del catálogo** (0,1%, con un mínimo de 3) y no un
+número fijo, para que escale si el catálogo crece. Con 5.786 lugares da 6, y
+ahí la separación es limpia.
+
+Resultado: **51 grupos, 108 filas**. Leyéndolos son casi todos ciertos —`Volcán
+de Izalco` / `Ruta Volcan Izalco`, `El Cafetalón` / `Parque El Cafetalon` a 0
+metros, `Mercado Municipal de Mejicanos` / `…No.2`— y los dudosos son baratos:
+si la regla se equivoca, se pierde un candidato entre miles, no se da una
+respuesta incorrecta.
+
+**Se resuelve al cargar el catálogo, no al armar el itinerario.** Que dos filas
+sean el mismo parque no depende del viaje: es un hecho del catálogo, y
+calcularlo en cada petición sería recalcular en caliente algo que no cambia. La
+columna `same_place_as` apunta al representante del grupo, y el motor solo lee
+la respuesta: `_name_key` devuelve el grupo en vez del nombre.
+
+**Y no borra nada**, que es la diferencia con `duplicate_of`. Las dos filas
+siguen activas: cada una sirve para buscar por nombre y el mapa puede
+mostrarlas. Lo único que se evita es visitarlas las dos en el mismo viaje. Por
+eso el radio puede ser el triple del de deduplicación: agrupar de más cuesta un
+candidato, borrar de más cuesta un lugar.
+
+**Dos errores propios que el trabajo destapó.**
+
+El representante se dejó en `NULL`, imitando a `duplicate_of`. Eso rompía la
+regla entera: el miembro daba `grupo:<id>` y el representante daba su nombre,
+así que **no coincidían nunca** y el día seguía visitando los dos. El
+representante se apunta a sí mismo, y `NULL` queda reservado para "sin grupo".
+
+Y la columna se creó con una clave foránea a su propia tabla, que volvía
+circular el volcado del catálogo: `pg_dump` avisa, y el motivo es real —los
+datos van en lotes de 500 INSERT y una fila cuyo grupo apunta a otra posterior
+viola la restricción al insertarse—. `duplicate_of` ya era un UUID sin clave
+foránea por exactamente eso, y estaba delante todo el tiempo.
+
+El efecto en el banco: dos paradas menos —eran duplicados contados dos veces— y
+mejor variedad, de 3,33 a **3,57** categorías distintas por día, con los días de
+tres paradas seguidas iguales bajando del 20% al 17%.
 
 ### El nombre con el que la gente llama a un lugar
 
