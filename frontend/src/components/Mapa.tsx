@@ -5,6 +5,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 import { FieldLayer } from "./FieldLayer";
+import { animarTramo } from "./trazo";
 import { CATEGORIA } from "@/lib/categorias";
 import { leerMateriales, type Material, type Materiales } from "@/lib/paleta";
 import type { Category, Day, TravelSourceKind } from "@/lib/types";
@@ -295,7 +296,12 @@ export default function Mapa({
           renderer: lienzo,
         }).addTo(capa);
 
-        if (activo) animarTramo(linea, indice - 1, Boolean(real && real.length > 1));
+        if (activo)
+          animarTramo(
+            linea.getElement() as SVGPathElement | null,
+            indice - 1,
+            Boolean(real && real.length > 1),
+          );
       });
 
       dia.stops.forEach((visita, indice) => {
@@ -387,33 +393,6 @@ export default function Mapa({
   );
 }
 
-/**
- * El tramo se dibuja de principio a fin, escalonado con los demas.
- *
- * La longitud del trazo se lee del propio SVG en vez de fijar un numero: con
- * geometria real un tramo puede medir cuarenta veces mas que otro, y un
- * dasharray constante dejaria los largos a medio dibujar y los cortos animados
- * de mas. `getTotalLength` da la longitud exacta en unidades de usuario.
- *
- * Los tramos punteados no se dibujan, aparecen. Ahi el guion es el dato —dice
- * que la distancia salio de la linea recta— y animar el trazado tendria que
- * sobrescribir el dasharray, que es justamente borrar la informacion.
- */
-function animarTramo(linea: L.Polyline, orden: number, solido: boolean): void {
-  const nodo = linea.getElement() as SVGPathElement | null;
-  if (!nodo) return;
-
-  const retraso = Math.min(orden * 160, 900);
-  nodo.style.setProperty("--retraso", `${retraso}ms`);
-
-  if (!solido) {
-    nodo.classList.add("waypoint-tramo-aparece");
-    return;
-  }
-
-  nodo.style.setProperty("--largo", String(nodo.getTotalLength()));
-  nodo.classList.add("waypoint-tramo-traza");
-}
 
 
 /**

@@ -2078,6 +2078,52 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### La ruta salía partida en pedazos, y el culpable era un número viejo
+
+Lo reportó el usuario: *"la ruta trazada a veces no se pinta a medias y le doy
+zoom y se logra pintar pero entrecortada"*. Sonaba a problema de carga de datos.
+No lo era.
+
+El tramo se dibuja con una animación de trazado: `stroke-dasharray` igual al
+largo del trazo y `stroke-dashoffset` de ese largo a cero. El largo se leía con
+`getTotalLength()` justo después de crear la línea y se guardaba en una
+variable CSS.
+
+**Ese número envejece, y nadie lo volvía a mirar.** Por dos caminos:
+
+- Se mide al agregar la línea, pero el mapa encuadra el itinerario *después*.
+  El trazo se reproyecta más largo y el dasharray se queda con el valor viejo.
+- Cada zoom vuelve a proyectar el trazo. El dasharray no se entera nunca.
+
+Y cuando el dasharray queda más corto que el trazo, SVG no lo estira: **repite
+el patrón**. Raya, hueco, raya. Medido en Chrome sobre un itinerario de tres
+días:
+
+| tramo | dasharray | largo real al cargar | tras acercar dos pasos |
+|---|---|---|---|
+| 1 | 443 px | 1.889 px | 3.557 px |
+| 2 | 97 px | 419 px | 2.537 px |
+
+O sea que **ya salía entrecortada al cargar**, no solo al hacer zoom: el
+reporte decía "a veces no se pinta a medias" y eso era exactamente esto, un
+trazo cubierto por dos o tres rayas con sus huecos.
+
+La respuesta no es volver a medir en cada zoom —habría que escuchar `zoomend`
+y recalcular cada tramo— sino dejar de medir. `pathLength="1"` le dice al
+navegador que trate ese trazo como si midiera 1, sea cual sea su largo real.
+Entonces `stroke-dasharray: 1` es el trazo entero a cualquier zoom. Es la
+respuesta que SVG tiene para este problema.
+
+Los tramos punteados quedan fuera a propósito: ahí el guion está en píxeles y
+**es el dato** —dice que la distancia salió de la línea recta—. Normalizar el
+trazo a 1 convertiría un guion de 2 px en uno del largo del tramo entero, o
+sea en una línea sólida.
+
+La función vivía dentro de `Mapa.tsx`, donde no se podía probar: Leaflet mide
+elementos que en jsdom no tienen tamaño. Se movió a `components/trazo.ts`, que
+recibe el nodo SVG y no sabe nada de Leaflet. Ocho tests, cinco de los cuales
+fallan contra la versión anterior.
+
 ### Compartir un itinerario lo guarda el servidor, no el cliente
 
 Hasta acá un itinerario vivía solo en la pestaña de quien lo pidió: se copiaba

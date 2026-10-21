@@ -73,7 +73,7 @@ magnitud, en vez de esconderse.
 | Paradas fuera de hora (luz o cierre) | 0 de 240 — ahora medido en el banco |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
-| Tests | 801 backend, 55 frontend |
+| Tests | 801 backend, 63 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -88,7 +88,7 @@ Un planificador de viajes es fácil de demostrar y difícil de verificar:
 cualquier lista de lugares parece un itinerario. Lo que separa uno bueno de uno
 plausible es si cumple lo que se le pidió, y eso se mide.
 
-**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 55
+**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 56
 decisiones, cada una con el fallo concreto que la provocó y el número que la
 respalda. Cuatro piezas están ahí documentadas como borradas por no ganarse su
 sitio.
@@ -148,7 +148,7 @@ Se apaga con `WEATHER_ENABLED=false` y la respuesta lo dice en `weather.reason`.
 
 ```bash
 make test            # los 801 del backend
-npm test             # los 55 del frontend, desde frontend/
+npm test             # los 63 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante (3 de matriz)
 make ors-trace       # dice si el trazo por carretera funciona ahora (1 de direcciones)
 make ors-calibrate   # mide desvío y velocidad contra el catálogo
@@ -220,7 +220,8 @@ imperativo— y quedó como dependencia muerta.
 - **El costo por itinerario en tokens no está medido.** El de rutas sí: una
   petición a OpenRouteService en zona fría, cero con la caché caliente.
 - **Los tests de frontend no cubren el mapa.** Leaflet toca `window` al
-  importarse y mide elementos que en jsdom no tienen tamaño.
+  importarse y mide elementos que en jsdom no tienen tamaño. La animación del
+  trazo sí se prueba: vive aparte, en un módulo que no necesita Leaflet.
 - **El volcado del catálogo no borra.** `make dump` es aditivo, así que un lugar
   retirado en local sobrevive en producción.
 - **El OSRM propio es solo local.** El despliegue sigue midiendo con ORS y su
