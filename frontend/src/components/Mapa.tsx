@@ -6,6 +6,7 @@ import "leaflet/dist/leaflet.css";
 
 import { FieldLayer } from "./FieldLayer";
 import { animarTramo } from "./trazo";
+import { separar } from "./abanico";
 import { CATEGORIA } from "@/lib/categorias";
 import { leerMateriales, type Material, type Materiales } from "@/lib/paleta";
 import type { Category, Day, TravelSourceKind } from "@/lib/types";
@@ -243,6 +244,7 @@ export default function Mapa({
 
     const materiales = leerMateriales();
     const lienzo = lienzoPlan.current ?? undefined;
+    const numerados: L.Marker[] = [];
 
     for (const dia of days) {
       const activo = !selectedDay || dia.number === selectedDay;
@@ -305,7 +307,7 @@ export default function Mapa({
       });
 
       dia.stops.forEach((visita, indice) => {
-        const marcador = L.marker([visita.place.lat, visita.place.lon], {
+        const marcador: L.Marker = L.marker([visita.place.lat, visita.place.lon], {
           icon: pin(
             indice + 1,
             visita.place.category,
@@ -325,9 +327,40 @@ export default function Mapa({
           onStop.current(visita.place.id);
         });
         marcador.addTo(capa);
+        if (activo) numerados.push(marcador);
       });
     }
 
+    /*
+      Las paradas que caen en el mismo punto se abren en abanico.
+
+      Solo las del dia activo: son las que llevan numero, y un numero tapado no
+      se lee ni se puede tocar. Los otros dias son puntos de 10 px sin
+      informacion propia, y separarlos solo agregaria ruido.
+
+      Se recalcula en cada zoom porque lo que decide no es la distancia real
+      sino cuanta pantalla hay entre las paradas. Ver components/abanico.ts.
+    */
+    const abanicar = () => {
+      const puntos = numerados.map((m) => map.latLngToLayerPoint(m.getLatLng()));
+      const corrimientos = separar(puntos);
+      numerados.forEach((marcador, i) => {
+        const nodo = marcador.getElement();
+        if (!nodo) return;
+        // Va en una variable y no en el style del nodo porque Leaflet usa
+        // transform para colocar el marcador y margin para anclarlo: las dos
+        // palancas estan tomadas. La variable la lee el transform del pin de
+        // adentro, que es nuestro. Ver .waypoint-pin en globals.css.
+        nodo.style.setProperty("--pin-dx", `${corrimientos[i].x}px`);
+        nodo.style.setProperty("--pin-dy", `${corrimientos[i].y}px`);
+      });
+    };
+
+    abanicar();
+    map.on("zoomend", abanicar);
+    return () => {
+      map.off("zoomend", abanicar);
+    };
   }, [days, selectedDay, travelSource, paradaId]);
 
   /*

@@ -2078,6 +2078,54 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### Tres paradas en el mismo pueblo se veían como una
+
+En Suchitoto las paradas 4, 6 y 7 son el casco urbano. En el mapa se apilaban:
+en un teléfono se veía la 4 y dos círculos asomando detrás. El número del pin
+es el orden del recorrido, y un orden tapado no se lee ni se puede tocar.
+
+Medido sobre los 60 días del banco, proyectados como los proyecta Leaflet:
+**33 días (55%) tenían al menos un par de pines superpuestos, 69 pares en
+total**. Los peores caen en el mismo píxel — «Ruinas de la Iglesia Vieja» y
+«Vieja Parroquia de Santa María».
+
+**Se separan en píxeles, no en coordenadas.** Dos paradas a 80 metros se tapan
+a zoom 12 y se ven perfectas a zoom 16: lo que decide no es la distancia real
+sino cuánta pantalla hay entre ellas. Por eso se recalcula en cada zoom, y por
+eso el abanico **desaparece solo** en cuanto hay separación de verdad —
+verificado en el navegador: al encuadrar, los pines 6 y 7 se abren 9,2 px cada
+uno; al primer paso de zoom el corrimiento vuelve a cero.
+
+El radio es el mínimo que despega a los vecinos del anillo: la cuerda entre dos
+puntos separados por 2π/n en un círculo de radio r mide 2·r·sen(π/n), así que
+r = diámetro / (2·sen(π/n)). Con dos pines da medio diámetro cada uno. El
+abanico se centra en el punto compartido, de modo que el centro visual del
+grupo sigue siendo donde están las paradas.
+
+Un pin desplazado miente un poco sobre dónde está su lugar. El precio de no
+hacerlo es que tres paradas se vean como una.
+
+**El residuo se deja a propósito.** Con el abanico quedan 7 días y 13 pares:
+cruzados, un pin que se abrió termina cerca de otro grupo que estaba justo
+fuera del umbral. La salida obvia es repetir la pasada, y medida no sirve:
+
+| pasadas | días con pines tapados | pares | corrimiento máximo |
+|---|---|---|---|
+| 1 | 7 (12%) | 13 | 35,2 px |
+| 2 | 7 (12%) | 13 | 35,2 px |
+| 3 | 7 (12%) | 13 | 42,2 px |
+| 4 | 7 (12%) | 13 | 42,2 px |
+
+Los grupos se rehacen y oscilan. Más pasadas mienten más sobre dónde están las
+paradas y no destapan ni un pin.
+
+El desplazamiento viaja dentro de los fotogramas de la animación de caída, no
+después: una animación de `transform` pisa el `transform` del elemento mientras
+corre, así que sin eso el pin caía en su sitio real y al terminar saltaba a su
+lugar del abanico. Y va en el pin interior y no en el marcador que lo contiene
+porque ahí Leaflet ya usa `transform` para colocarlo y `margin` para anclarlo:
+las dos palancas de afuera están tomadas.
+
 ### La ruta salía partida en pedazos, y el culpable era un número viejo
 
 Lo reportó el usuario: *"la ruta trazada a veces no se pinta a medias y le doy

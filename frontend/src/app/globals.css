@@ -396,6 +396,13 @@ body {
   background: var(--pin);
   border: 2px solid var(--niebla);
   box-shadow: 0 1px 6px rgb(31 36 41 / 0.35);
+  /*
+    --pin-dx/--pin-dy las escribe Mapa cuando esta parada cae encima de otra;
+    ver components/abanico.ts. Van en el transform del pin y no en el del
+    marcador que lo contiene porque ese lo usa Leaflet para colocarlo en el
+    mapa, y el margen, para anclarlo. Las dos palancas de afuera estan tomadas.
+  */
+  transform: translate(var(--pin-dx, 0px), var(--pin-dy, 0px));
   animation: caer 520ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   animation-delay: var(--retraso, 0ms);
 }
@@ -433,14 +440,21 @@ body {
   font-size: 13px;
 }
 
+/*
+  El desplazamiento del abanico viaja dentro de los fotogramas. Una animacion
+  de transform pisa el transform del elemento mientras corre, asi que sin esto
+  el pin caia en su sitio real y recien al terminar saltaba a su lugar del
+  abanico.
+*/
 @keyframes caer {
   from {
     opacity: 0;
-    transform: translateY(-18px) scale(0.6);
+    transform: translate(var(--pin-dx, 0px), calc(var(--pin-dy, 0px) - 18px))
+      scale(0.6);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translate(var(--pin-dx, 0px), var(--pin-dy, 0px)) scale(1);
   }
 }
 
