@@ -43,6 +43,8 @@ function pinta(propios = {}) {
       mode="driving"
       selectedStop={null}
       onSelectStop={() => {}}
+      zona="Suchitoto"
+      shareCode={null}
       {...propios}
     />,
   );
@@ -106,6 +108,8 @@ describe("Linea", () => {
         mode="driving"
         selectedStop={null}
         onSelectStop={() => {}}
+        zona="Suchitoto"
+        shareCode={null}
       />,
     );
 

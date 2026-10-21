@@ -11,7 +11,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import type { IconDefinition } from "@fortawesome/free-solid-svg-icons";
 
-import type { Place } from "@/lib/types";
+import type { Mode, Place } from "@/lib/types";
 
 /**
  * Lo que se sabe de una parada, cuando se la elige.
@@ -25,7 +25,7 @@ import type { Place } from "@/lib/types";
  * hay ninguno, así que lo único que siempre está es la acción de ir: eso no
  * depende de que OSM tenga el dato, solo de las coordenadas.
  */
-export default function Detalle({ place }: { place: Place }) {
+export default function Detalle({ place, mode }: { place: Place; mode: Mode }) {
   const caja = useRef<HTMLDivElement>(null);
 
   /*
@@ -65,9 +65,13 @@ export default function Detalle({ place }: { place: Place }) {
         `api=1` es la URL universal de Google Maps —abre la aplicación en el
         teléfono y el navegador en el escritorio— y va por coordenadas y no por
         nombre, porque "Mirador 3" no se encuentra buscándolo.
+
+        El modo es el del día y no el del itinerario: en un viaje que combina
+        carro y caminata, abrir indicaciones en carro para un día a pie manda
+        por una carretera que ese día nadie va a tomar.
       */}
       <a
-        href={`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lon}`}
+        href={`https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lon}&travelmode=${mode === "walking" ? "walking" : "driving"}`}
         target="_blank"
         rel="noreferrer noopener"
         className="inline-flex items-center gap-1.5 rounded-md border border-borde-fuerte px-2 py-1 text-dato text-tinta-suave transition-colors hover:border-acento hover:text-tinta"

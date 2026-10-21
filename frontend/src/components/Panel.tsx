@@ -416,6 +416,8 @@ export default function Panel({
               mode={dia.mode}
               selectedStop={selectedStop}
               onSelectStop={onSelectStop}
+              zona={interpretation?.area?.name ?? "itinerario"}
+              shareCode={itinerary.share_code ?? null}
             />
           </motion.div>
         </AnimatePresence>

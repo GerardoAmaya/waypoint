@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faCalendarDay,
+  faCalendarPlus,
   faCarSide,
   faClock,
   faLightbulb,
@@ -18,6 +19,7 @@ import Detalle from "./Detalle";
 import { CATEGORIA } from "@/lib/categorias";
 import { iconoDelClima, lluviaEnPalabras } from "@/lib/clima";
 import { fechaEnPalabras } from "@/lib/fecha";
+import { comoIcs, nombreDelArchivo } from "@/lib/calendario";
 import type { Advice, Day, Mode, Stop, Violation } from "@/lib/types";
 
 interface Props {
@@ -28,6 +30,15 @@ interface Props {
   /** El id del lugar elegido, o null. */
   selectedStop: string | null;
   onSelectStop: (id: string | null) => void;
+  /** Para nombrar el archivo de calendario que se descarga. */
+  zona: string;
+  /**
+   * El codigo del itinerario compartido, si lo tiene.
+   *
+   * Va al UID de cada evento, que es lo que hace que bajar el mismo dia dos
+   * veces actualice los eventos en vez de duplicarlos.
+   */
+  shareCode: string | null;
 }
 
 const hora = (valor: string | null) => (valor ? valor.slice(0, 5) : "");
@@ -39,6 +50,8 @@ export default function Linea({
   mode,
   selectedStop,
   onSelectStop,
+  zona,
+  shareCode,
 }: Props) {
   const delDia = advice.filter((a) => a.day === day.number);
   const rotas = violations.filter((v) => v.day === day.number);
@@ -61,6 +74,46 @@ export default function Linea({
   const ultima = day.stops[day.stops.length - 1];
   const vuelveAlInicio =
     day.stops.length > 2 && primera.place.id === ultima.place.id;
+
+  /*
+    Como se nombra una parada bajo su titulo. Es una funcion y no texto suelto
+    en el JSX porque el archivo de calendario la necesita igual: si el panel
+    dice "Almuerzo" y el evento dijera "Comida", serian dos verdades del mismo
+    dato.
+  */
+  const etiqueta = (parada: Stop, indice: number): string => {
+    if (vuelveAlInicio && indice === day.stops.length - 1) {
+      return "Regreso al punto de partida";
+    }
+    if (vuelveAlInicio && indice === 0) {
+      return `Salida · ${CATEGORIA[parada.place.category].nombre}`;
+    }
+    if (parada.meal === "lunch") return "Almuerzo";
+    if (parada.meal === "dinner") return "Cena";
+    return CATEGORIA[parada.place.category].nombre;
+  };
+
+  /*
+    El dia al calendario.
+
+    Se arma en el momento de pulsar y no al pintar la lista: un itinerario de
+    tres dias construiria tres archivos que casi nadie baja. El objeto URL se
+    revoca enseguida —el navegador ya tiene los datos— porque si no queda vivo
+    hasta que se cierre la pestaña.
+  */
+  const bajarCalendario = () => {
+    const texto = comoIcs(day, { etiqueta, codigo: shareCode });
+    if (!texto) return;
+
+    const url = URL.createObjectURL(
+      new Blob([texto], { type: "text/calendar;charset=utf-8" }),
+    );
+    const enlace = document.createElement("a");
+    enlace.href = url;
+    enlace.download = nombreDelArchivo(zona, day);
+    enlace.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div>
@@ -98,6 +151,7 @@ export default function Linea({
           />
           <span className="dato">{day.travel_km.toFixed(1)} km</span>
         </span>
+
         <span className="inline-flex items-center gap-1.5 text-tinta-tenue">
           <FontAwesomeIcon
             icon={faLocationDot}
@@ -131,6 +185,23 @@ export default function Linea({
             <span>{day.weather.description}</span>
             {lluvia && <span className="text-acento">· lluvia {lluvia}</span>}
           </span>
+        )}
+        {/*
+          Al calendario, solo con fecha. Sin fecha no hay evento posible, y es
+          la misma regla que sigue la fecha de arriba: se omite entero en vez
+          de ofrecer algo que no puede funcionar.
+
+          Va al final de la fila y empujado a la derecha porque es la unica
+          accion entre datos: alineado con ellos se leeria como uno mas.
+        */}
+        {day.date && (
+          <button
+            onClick={bajarCalendario}
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md border border-borde-fuerte px-2 py-1 text-dato text-tinta-suave transition-colors hover:border-acento hover:text-tinta"
+          >
+            <FontAwesomeIcon icon={faCalendarPlus} aria-hidden className="size-3" />
+            Al calendario
+          </button>
         )}
       </div>
 
@@ -205,15 +276,7 @@ export default function Linea({
                     {parada.place.name}
                   </p>
                   <p className="mt-0.5 text-dato text-tinta-tenue">
-                    {vuelveAlInicio && indice === day.stops.length - 1
-                      ? "Regreso al punto de partida"
-                      : vuelveAlInicio && indice === 0
-                        ? `Salida · ${CATEGORIA[parada.place.category].nombre}`
-                        : parada.meal === "lunch"
-                          ? "Almuerzo"
-                          : parada.meal === "dinner"
-                            ? "Cena"
-                            : CATEGORIA[parada.place.category].nombre}
+                    {etiqueta(parada, indice)}
                     {/*
                     Sin "hasta las" cuando la parada no dura nada. El punto de
                     partida y el regreso son los dos casos: uno se sale y el
@@ -260,7 +323,7 @@ export default function Linea({
                 </button>
 
                 {parada.place.id === selectedStop && (
-                  <Detalle place={parada.place} />
+                  <Detalle place={parada.place} mode={mode} />
                 )}
               </div>
             </motion.li>
