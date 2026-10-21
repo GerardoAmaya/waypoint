@@ -6,12 +6,15 @@ import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faRotateLeft } from "@fortawesome/free-solid-svg-icons";
 
-import Compositor, { PETICION_INICIAL, type Fase } from "@/components/Compositor";
+import Compositor, {
+  PETICION_INICIAL,
+  type Fase,
+} from "@/components/Compositor";
 import Fondo from "@/components/Fondo";
 import Leyenda from "@/components/Leyenda";
 import Panel from "@/components/Panel";
 import Tema from "@/components/Tema";
-import { fetchField, reviseDay, streamPlan } from "@/lib/api";
+import { fetchCompartido, fetchField, reviseDay, streamPlan } from "@/lib/api";
 import type { Fondo as FondoId, ParadaElegida } from "@/components/Mapa";
 import type { Constraints, Interpretation, Itinerary } from "@/lib/types";
 
@@ -33,7 +36,9 @@ export default function Home() {
     Compositor.
   */
   const [peticion, setPeticion] = useState(PETICION_INICIAL);
-  const [interpretacion, setInterpretacion] = useState<Interpretation | null>(null);
+  const [interpretacion, setInterpretacion] = useState<Interpretation | null>(
+    null,
+  );
   const [itinerario, setItinerario] = useState<Itinerary | null>(null);
   const [diaActivo, setDiaActivo] = useState<number | null>(null);
   /*
@@ -53,10 +58,69 @@ export default function Home() {
   const [errorRevision, setErrorRevision] = useState<string | null>(null);
   const aborto = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    fetchField().then(setField).catch(() => setField([]));
-    return () => aborto.current?.abort();
+  const abrirCompartido = useCallback(async (codigo: string) => {
+    setFase("leyendo");
+    setError(null);
+    try {
+      const guardado = await fetchCompartido(codigo);
+      setInterpretacion(guardado.interpretation);
+      setItinerario(guardado.itinerary);
+      setDiaActivo(guardado.itinerary.days[0]?.number ?? null);
+      setFase("listo");
+    } catch (e) {
+      setError((e as Error).message);
+      setFase("quieto");
+      // Un código que no existe no deja la URL colgada apuntando a nada.
+      window.history.replaceState({}, "", "/");
+    }
   }, []);
+
+  useEffect(() => {
+    fetchField()
+      .then(setField)
+      .catch(() => setField([]));
+
+    /*
+      La ruta /i/<codigo> abre un itinerario guardado. Se lee de la URL y no de
+      una prop porque la misma pantalla sirve para los dos casos: armar uno
+      nuevo y abrir uno compartido.
+    */
+    const codigo = window.location.pathname.match(/^\/i\/([a-z0-9]+)$/)?.[1];
+    /*
+      La regla marca el setState síncrono de dentro de abrirCompartido. Aquí es
+      lo que se quiere: montar la pantalla con un itinerario que viene de la
+      URL es una carga, no un bucle de render, y el indicador de "leyendo" solo
+      sirve si aparece antes de esperar a la red.
+    */
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (codigo) void abrirCompartido(codigo);
+
+    /*
+      El botón atrás: volver a "/" limpia la pantalla, y volver a un /i/<codigo>
+      reabre ese itinerario. Sin esto, atrás cambiaba la URL y dejaba el
+      itinerario anterior puesto.
+    */
+    const alNavegar = () => {
+      const destino = window.location.pathname.match(/^\/i\/([a-z0-9]+)$/)?.[1];
+      if (destino) {
+        abrirCompartido(destino);
+        return;
+      }
+      aborto.current?.abort();
+      setItinerario(null);
+      setInterpretacion(null);
+      setDiaActivo(null);
+      setParada(null);
+      setError(null);
+      setFase("quieto");
+    };
+    window.addEventListener("popstate", alNavegar);
+
+    return () => {
+      aborto.current?.abort();
+      window.removeEventListener("popstate", alNavegar);
+    };
+  }, [abrirCompartido]);
 
   const armar = useCallback(async (mensaje: string) => {
     aborto.current?.abort();
@@ -84,11 +148,22 @@ export default function Home() {
             // El borrador ya es un itinerario completo: si ORS falla o se acabo
             // el cupo, esto es lo que queda en pantalla, y es usable.
             setItinerario(evento.data);
-            setDiaActivo((actual) => actual ?? evento.data.days[0]?.number ?? null);
+            setDiaActivo(
+              (actual) => actual ?? evento.data.days[0]?.number ?? null,
+            );
             break;
           case "plan":
             setItinerario(evento.data);
             setFase("listo");
+            /*
+              La URL pasa a ser la del itinerario en cuanto existe. Dos cosas
+              a la vez: compartir es copiar la barra de direcciones, y el botón
+              atrás del navegador vuelve a la pantalla de inicio en vez de
+              salirse del sitio, que era una queja aparte.
+            */
+            if (evento.data.share_code) {
+              window.history.pushState({}, "", `/i/${evento.data.share_code}`);
+            }
             break;
           case "error":
             setError(evento.data.message);
@@ -170,7 +245,11 @@ export default function Home() {
             no dentro de Mapa porque no es asunto del mapa: es la jerarquia de
             la pantalla. Ver waypoint-desenfoque en globals.css.
           */}
-          <div className="waypoint-desenfoque" data-nitido={conPlan} aria-hidden />
+          <div
+            className="waypoint-desenfoque"
+            data-nitido={conPlan}
+            aria-hidden
+          />
 
           {/*
             z-[1000] no es un numero magico: los paneles de Leaflet van de 200 a
@@ -210,7 +289,11 @@ export default function Home() {
                 onClick={reiniciar}
                 className="inline-flex items-center gap-2 rounded-full border border-borde-fuerte bg-superficie/92 px-4 py-2 text-menudo text-tinta shadow-panel backdrop-blur transition-colors hover:border-acento"
               >
-                <FontAwesomeIcon icon={faRotateLeft} aria-hidden className="size-3" />
+                <FontAwesomeIcon
+                  icon={faRotateLeft}
+                  aria-hidden
+                  className="size-3"
+                />
                 Empezar de nuevo
               </button>
             )}
@@ -265,9 +348,9 @@ export default function Home() {
               Expandido deja el mapa asomando: sin esa franja, el panel a
               pantalla completa parece otra pantalla y se pierde de donde vino.
             */
-            className={`order-2 w-full shrink-0 transition-[height] duration-300 ease-out lg:order-1 lg:h-auto lg:w-[27rem] lg:transition-none ${
-              panelExpandido ? "h-[88dvh]" : "h-[55dvh]"
-            }`}
+              className={`order-2 w-full shrink-0 transition-[height] duration-300 ease-out lg:order-1 lg:h-auto lg:w-[27rem] lg:transition-none ${
+                panelExpandido ? "h-[88dvh]" : "h-[55dvh]"
+              }`}
             >
               <Panel
                 interpretation={interpretacion}

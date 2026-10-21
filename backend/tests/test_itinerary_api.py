@@ -157,12 +157,20 @@ class TestOrigenDeLasDistancias:
         assert cuerpo["travel"]["source"] == "estimated"
         assert cuerpo["travel"]["real_ratio"] == 0.0
 
-    def test_sin_llave_de_ors_degrada_en_vez_de_fallar(self, cliente, monkeypatch):
+    def test_sin_nadie_que_mida_degrada_en_vez_de_fallar(self, cliente, monkeypatch):
+        """Ni llave de ORS ni OSRM propio: el caso de quien acaba de clonar.
+
+        Las URLs de OSRM se apagan ademas porque el .env de desarrollo puede
+        traerlas apuntando a un servicio levantado, y entonces este test salia
+        a medir de verdad en vez de probar la degradacion.
+        """
         from app.core.config import settings
         from app.services import routing
 
         routing.client_from_settings.cache_clear()
         monkeypatch.setattr(settings, "ors_api_key", None)
+        monkeypatch.setattr(settings, "osrm_car_url", None)
+        monkeypatch.setattr(settings, "osrm_foot_url", None)
 
         respuesta = cliente.post("/itinerary", json={**SAN_SALVADOR, "real_routes": True})
 

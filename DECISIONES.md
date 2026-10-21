@@ -1592,6 +1592,54 @@ nadie va a hacer. Queda un residual sin observar todavía —una parada a más d
 km de cualquier calle seguiría tumbando su día— y la salida sería reintentar sin
 ese punto, que ORS identifica por índice.
 
+### El cupo era el techo del proyecto, no un detalle de configuración
+
+Con ORS, el banco de evaluación medía en línea recta a media corrida. Son 26
+casos, cada uno con sus días; a 450 matrices y 1.800 trazos diarios, el cupo se
+acababa antes que los casos. **Los presupuestos de kilómetros se afinaron, en
+parte, sobre distancias estimadas.** Eso no invalida los números —la estimación
+lleva su propio factor de desvío medido, 1.45— pero deja la duda abierta.
+
+Un OSRM propio la cierra. El extracto de El Salvador son 33 MB, el grafo se
+construye una vez, y contesta en milisegundos sin cupo, sin llave y sin
+espaciado entre llamadas.
+
+La corrida completa del banco contra OSRM, comparada con la última contra
+estimaciones:
+
+| | estimado | OSRM |
+|---|---|---|
+| Límites duros cumplidos | 25/26 | 25/26 |
+| Paradas generadas | 319 | 320 |
+| Lugares inventados | 0 | 0 |
+| Días con "llevá comida" | 15% | 15% |
+| Categorías distintas por día | 3,57 | 3,56 |
+| Paradas fuera de hora | 0 | 0 |
+| Aristas medidas | — | 2.678 |
+
+**Los números aguantan.** Era el resultado que se quería y no el que se daba por
+hecho: la alternativa —que la afinación estuviera sostenida por el error de la
+estimación— habría aparecido justo acá.
+
+Tres decisiones que vinieron con esto:
+
+- **Son dos contenedores, no uno.** `osrm-routed` sirve un solo perfil: el que
+  se preparó al construir el grafo. El perfil que va en la URL lo ignora, así
+  que a pie y en carro necesitan cada uno el suyo.
+- **La caché acepta cualquier fuente que no sea la estimación.** Filtraba por
+  `source = 'ors'`, y eso habría dejado invisibles las 39.000 aristas ya
+  medidas el día que alguien levantara su OSRM — justo cuando más duele. Lo que
+  se guarda en `source` dice quién midió, para poder mirar atrás; no decide si
+  la fila vale.
+- **ORS sigue siendo el proveedor por defecto.** OSRM entra solo si está
+  configurado. Quien clona el repo no tiene un grafo construido, y arrancar
+  apuntando a un puerto vacío daría itinerarios en línea recta sin decir por
+  qué.
+
+Lo que se pierde es el detalle del perfil peatonal: el de OSRM es más simple
+que el de ORS. En una zona urbana compacta —que es donde se camina— la
+diferencia no se notó en el banco.
+
 ## Lo que se le dice al usuario
 
 ### Decir la causa equivocada, otra vez
@@ -2029,6 +2077,60 @@ El resultado, medido igual que el problema:
 En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
+
+### Compartir un itinerario lo guarda el servidor, no el cliente
+
+Hasta acá un itinerario vivía solo en la pestaña de quien lo pidió: se copiaba
+como texto y nada más. Para un planificador de viajes eso es raro, porque el
+acto siguiente a armar un plan es enseñárselo a quien va con vos.
+
+La forma obvia es un `POST /share` que reciba el itinerario y devuelva un
+código. **Esa forma guarda JSON arbitrario de un cliente para servírselo a
+otros.** El frontend dibuja el sitio web de cada parada como un enlace, así que
+un `javascript:` inyectado en ese campo sería XSS almacenado.
+
+Como `/plan` ya tiene el itinerario armado del lado del servidor, se guarda ahí,
+al terminar de armarlo y no cuando alguien pulsa compartir. Eso quita la entrada
+del cliente de la ecuación y además hace que compartir sea copiar un enlace, sin
+otra ida y vuelta: el código viaja con la última fase del stream.
+
+El contenido se guarda entero y no se regenera al abrirlo. Un plan rearmado
+puede salir distinto —el catálogo cambia, el pronóstico se mueve— y quien
+comparte un itinerario comparte **ese**, no "lo que salga cuando lo abras".
+
+Dos detalles:
+
+- **El código no lleva `0`/`O` ni `1`/`I`/`l`.** Son 31 caracteres y diez
+  posiciones, unos 49 bits: de sobra para que nadie llegue a un itinerario ajeno
+  probando. Un enlace de viaje se dicta por teléfono más de lo que uno creería.
+- **Guardar nunca lanza.** Compartir es un añadido: si la base está llena, lenta
+  o caída, el itinerario tiene que llegar igual, solo que sin enlace. La primera
+  versión cumplía esa promesa a medias —la comprobación de que la fila entró
+  quedó fuera del `try`— y un fallo ahí se escapaba hasta el stream y tumbaba el
+  plan entero. Lo encontró un test que ya existía, con un doble de sesión que no
+  sabía hacer `rollback`.
+
+### Las fuentes dejaron de ser de Google
+
+Se pedían a `fonts.googleapis.com` con un `<link>`. Eso cuesta dos saltos antes
+de ver texto con la fuente buena —resolver `fonts.googleapis.com`, leer la hoja,
+y recién ahí ir a `fonts.gstatic.com` por el archivo— y de paso cuenta a cada
+visitante ante un tercero.
+
+La alternativa de manual es `next/font/google`, que autohospeda igual pero
+descarga al compilar: ata el build a que Google esté alcanzable. Con los
+archivos versionados en el repo y `next/font/local` no depende de la red nadie,
+ni el build ni el navegador.
+
+Se baja solo el subconjunto latino: cubre el español entero —acentos, eñe,
+diéresis, los signos de apertura— y los nombres del catálogo. Son **94 kB** en
+vez de los ~300 de todos los subconjuntos; lo que caiga fuera lo dibuja la
+fuente del sistema, igual que cualquier glifo que falte.
+
+El `display: swap` se mantiene, así que el texto se ve desde la primera pintura.
+El salto que eso provoca lo absorbe `next/font`, que mide la fuente propia y
+ajusta las métricas de la de reserva — que es precisamente lo que el `<link>` no
+podía hacer.
 
 ---
 

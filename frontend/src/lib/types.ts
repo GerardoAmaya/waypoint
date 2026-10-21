@@ -148,6 +148,16 @@ export interface Itinerary {
   unused_candidates: number;
   travel: TravelSource;
   weather: WeatherSource;
+
+  /**
+   * El codigo con el que este itinerario se puede abrir por enlace, o null si
+   * no se pudo guardar.
+   *
+   * Lo asigna el servidor al terminar de armarlo, no el navegador al pulsar
+   * compartir: lo que se guarda es lo que el servidor armo y no un JSON que
+   * mande el cliente. Ver app/services/compartir.py.
+   */
+  share_code?: string | null;
 }
 
 export interface Constraints {

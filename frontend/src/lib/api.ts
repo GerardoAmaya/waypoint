@@ -1,7 +1,13 @@
-import type { Constraints, PlanEvent, Revision, Stop } from "./types";
+import type {
+  Constraints,
+  Interpretation,
+  Itinerary,
+  PlanEvent,
+  Revision,
+  Stop,
+} from "./types";
 
-export const API =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8100";
+export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8100";
 
 /**
  * Lee la respuesta de POST /plan evento por evento.
@@ -30,7 +36,9 @@ export async function* streamPlan(
     return;
   }
 
-  const lector = respuesta.body.pipeThrough(new TextDecoderStream()).getReader();
+  const lector = respuesta.body
+    .pipeThrough(new TextDecoderStream())
+    .getReader();
   let resto = "";
 
   try {
@@ -78,7 +86,9 @@ function mensajeDeError(estado: number, detalle: string): string {
   if (estado === 422) {
     try {
       const cuerpo = JSON.parse(detalle);
-      const primero = Array.isArray(cuerpo.detail) ? cuerpo.detail[0] : cuerpo.detail;
+      const primero = Array.isArray(cuerpo.detail)
+        ? cuerpo.detail[0]
+        : cuerpo.detail;
       if (typeof primero === "string") return primero;
       if (primero?.msg) return primero.msg;
     } catch {
@@ -139,4 +149,31 @@ export async function fetchField(): Promise<[number, number][]> {
   if (!respuesta.ok) return [];
   const cuerpo = await respuesta.json();
   return cuerpo.points ?? [];
+}
+
+/** Lo que se guarda de un itinerario compartido. */
+export interface Compartido {
+  interpretation: Interpretation;
+  itinerary: Itinerary;
+}
+
+/**
+ * Abre un itinerario guardado por su codigo.
+ *
+ * No se rearma: se devuelve el que se guardo. Uno rearmado puede salir
+ * distinto —el catalogo cambia, el cupo de rutas se agota, el pronostico se
+ * mueve— y quien abre un enlace espera ver ESE itinerario.
+ */
+export async function fetchCompartido(codigo: string): Promise<Compartido> {
+  const respuesta = await fetch(
+    `${API}/plan/shared/${encodeURIComponent(codigo)}`,
+  );
+  if (!respuesta.ok) {
+    throw new Error(
+      respuesta.status === 404
+        ? "Ese itinerario no existe o ya no está disponible."
+        : "No se pudo abrir el itinerario compartido.",
+    );
+  }
+  return respuesta.json();
 }

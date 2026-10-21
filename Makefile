@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql ors-check ors-trace ors-calibrate ors-warm ors-warm-apply ors-warm-zone zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
+.PHONY: up down logs migrate test lint psql osrm osrm-datos osrm-down ors-check ors-trace ors-calibrate ors-warm ors-warm-apply ors-warm-zone zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
 
 up:
 	docker compose up -d --build
@@ -23,6 +23,43 @@ lint:
 
 psql:
 	docker compose exec db psql -U waypoint -d waypoint
+
+# --- OSRM propio ------------------------------------------------------------
+#
+# Construye el grafo de El Salvador una vez y levanta un servicio por perfil.
+# Con esto se miden distancias sin cupo ni llave; ver app/services/osrm.py.
+#
+# Las tres ordenes son las de la documentacion de OSRM y van en ese orden:
+# extract lee el .osm.pbf con un perfil de Lua, partition y customize preparan
+# el algoritmo MLD, que es el que usa osrm-routed aca. Saltarse partition deja
+# un grafo que arranca y contesta "NoRoute" a todo.
+OSRM_IMAGEN = ghcr.io/project-osrm/osrm-backend:v5.27.1
+OSRM_EXTRACTO = https://download.geofabrik.de/central-america/el-salvador-latest.osm.pbf
+
+osrm-datos:
+	@mkdir -p osrm/car osrm/foot
+	@test -f osrm/el-salvador.osm.pbf || curl -fL --progress-bar -o osrm/el-salvador.osm.pbf $(OSRM_EXTRACTO)
+	@for perfil in car foot; do \
+		echo "--- preparando el grafo de $$perfil ---"; \
+		cp osrm/el-salvador.osm.pbf osrm/$$perfil/el-salvador.osm.pbf; \
+		docker run --rm -v "$(PWD)/osrm/$$perfil:/data" $(OSRM_IMAGEN) \
+			osrm-extract -p /opt/$$perfil.lua /data/el-salvador.osm.pbf; \
+		docker run --rm -v "$(PWD)/osrm/$$perfil:/data" $(OSRM_IMAGEN) \
+			osrm-partition /data/el-salvador.osrm; \
+		docker run --rm -v "$(PWD)/osrm/$$perfil:/data" $(OSRM_IMAGEN) \
+			osrm-customize /data/el-salvador.osrm; \
+		rm -f osrm/$$perfil/el-salvador.osm.pbf; \
+	done
+	@echo "listo. Pone esto en el .env y reinicia la api:"
+	@echo "  OSRM_CAR_URL=http://osrm-car:5000"
+	@echo "  OSRM_FOOT_URL=http://osrm-foot:5000"
+
+osrm:
+	@test -f osrm/car/el-salvador.osrm.mldgr || { echo "falta el grafo: corre primero make osrm-datos"; exit 1; }
+	docker compose --profile osrm up -d osrm-car osrm-foot
+
+osrm-down:
+	docker compose --profile osrm stop osrm-car osrm-foot
 
 ors-check:
 	docker compose exec api python -m scripts.check_ors

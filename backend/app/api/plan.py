@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.api.itinerary import _to_out
 from app.core.config import settings
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, get_db
 from app.core.ratelimit import Limit, RateLimiter, limiter_dependency
 from app.schemas import (
     AreaOut,
@@ -36,6 +36,7 @@ from app.schemas import (
     ReviseRequest,
     RevisionOut,
 )
+from app.services import compartir
 from app.services import itinerary as motor
 from app.services.interpret import interpret, interpret_revision
 from app.services.places import by_ids as places_by_ids
@@ -137,8 +138,29 @@ def _stream(mensaje: str) -> Iterator[str]:
             return_to_start=resultado.return_to_start,
         )
 
+        interpretacion = _interpretation_payload(resultado)
+
         for evento in motor.plan_streaming(db, restricciones):
-            yield _event(evento.phase, _phase_payload(evento, restricciones))
+            datos = _phase_payload(evento, restricciones)
+
+            # **El itinerario se guarda al terminar de armarlo, no cuando
+            # alguien pulsa compartir.** Asi el codigo viaja con la ultima fase
+            # y compartir es copiar un enlace, sin otra ida y vuelta. Y sobre
+            # todo: lo que se guarda es lo que el servidor armo, no un JSON que
+            # mande el navegador. Ver app/services/compartir.py.
+            if isinstance(evento, motor.PlanReady):
+                # La copia guardada lleva su propio codigo dentro, para que
+                # quien abra el enlace pueda volver a compartirlo sin pedir
+                # otro plan.
+                def armar(codigo: str, datos: dict = datos) -> dict:
+                    return {
+                        "interpretation": interpretacion,
+                        "itinerary": {**datos, "share_code": codigo},
+                    }
+
+                datos["share_code"] = compartir.guardar(db, armar)
+
+            yield _event(evento.phase, datos)
 
     except Exception:
         logger.exception("fallo armando el itinerario")
@@ -177,6 +199,25 @@ def _phase_payload(evento, restricciones: motor.Constraints | None = None) -> di
         restricciones,
         evento.weather,
     ).model_dump(mode="json")
+
+
+@router.get("/shared/{codigo}")
+def shared(codigo: str, db: Session = Depends(get_db)) -> dict:
+    """Un itinerario guardado, por su codigo.
+
+    **Sin limite por IP, al contrario que armar uno.** Armar cuesta tokens del
+    modelo y cupo de rutas; abrir uno guardado es una consulta por clave
+    primaria. Ponerle el mismo techo haria que compartir un plan con un grupo
+    de ocho personas fallara para la mitad.
+
+    Devuelve lo que se guardo tal cual: el plan no se rearma. Uno rearmado
+    puede salir distinto —el catalogo cambia, el cupo se agota, el pronostico
+    se mueve— y quien abre un enlace espera ver ESE itinerario.
+    """
+    guardado = compartir.leer(db, codigo)
+    if guardado is None:
+        raise HTTPException(status_code=404, detail="ese itinerario no existe o ya no está")
+    return guardado
 
 
 @router.post("", dependencies=[Depends(limitar)])

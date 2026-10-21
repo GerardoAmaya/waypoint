@@ -81,10 +81,12 @@ def cliente(monkeypatch):
 class _SesionFalsa:
     """Base minima: sin cache de traslados guardada y sin nada que escribir.
 
-    El resultado falso trae `rowcount` ademas de `all` y `scalar` porque el
-    resultado real de execute() lo trae: persist_geometry lo lee para saber
-    cuantas aristas quedaron con su trazo, y un doble sin ese atributo hace
-    fallar el endpoint por una carencia del doble y no del codigo.
+    El resultado falso trae `rowcount` y `first` ademas de `all` y `scalar`
+    porque el resultado real de execute() los trae: persist_geometry lee el
+    primero para saber cuantas aristas quedaron con su trazo y compartir lee el
+    segundo para saber si el INSERT entro. Un doble sin esos atributos hace
+    fallar el endpoint por una carencia del doble y no del codigo. Por lo mismo
+    hay `rollback`: una sesion que no puede deshacer no es una sesion.
     """
 
     def execute(self, *args, **kwargs):
@@ -94,11 +96,15 @@ class _SesionFalsa:
             {
                 "all": lambda _self: [],
                 "scalar": lambda _self: None,
+                "first": lambda _self: (1,),
                 "rowcount": 0,
             },
         )()
 
     def commit(self):
+        pass
+
+    def rollback(self):
         pass
 
     def close(self):

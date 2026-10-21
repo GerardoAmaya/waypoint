@@ -169,8 +169,13 @@ class TravelEdge(Base):
     distance_km: Mapped[float] = mapped_column(Float, nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # "ors" o "estimated". Solo se guardan las de ORS: cachear una estimacion
-    # seria enterrar para siempre un valor que la proxima vez podria ser real.
+    # Quien midio: "ors", "osrm" o "estimated". Solo se guardan las medidas,
+    # nunca las estimaciones: cachear una estimacion seria enterrar para siempre
+    # un valor que la proxima vez podria ser real.
+    #
+    # El nombre del proveedor se guarda para poder mirar atras —si un tramo raro
+    # vino de uno o de otro se responde con una consulta—, no para decidir si la
+    # fila vale: read_cached_edges acepta todo lo que no sea estimacion.
     source: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="ors", default="ors"
     )
@@ -297,3 +302,34 @@ class RouteLeg(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class SharedItinerary(Base):
+    """Un itinerario guardado para poder abrirlo por enlace.
+
+    **Lo guarda el servidor al armarlo, no el cliente al compartirlo.** La
+    forma obvia seria un endpoint que reciba el itinerario del navegador y
+    devuelva un codigo, y esa forma guarda JSON arbitrario de un cliente para
+    servirselo a otros: el frontend dibuja el sitio web de cada parada como un
+    enlace, asi que un `javascript:` inyectado ahi seria XSS almacenado. Como
+    /plan ya tiene el itinerario armado del lado del servidor, guardarlo ahi
+    quita la entrada del cliente de la ecuacion.
+
+    Se guarda entero y no se regenera al abrirlo: un plan rearmado puede salir
+    distinto —el catalogo cambia, el cupo de rutas se agota, el pronostico se
+    mueve— y quien comparte un itinerario comparte ESE.
+    """
+
+    __tablename__ = "shared_itineraries"
+    __table_args__ = (Index("ix_shared_itineraries_created_at", "created_at"),)
+
+    # Corto y no un UUID: va en una URL que alguien puede llegar a dictar.
+    code: Mapped[str] = mapped_column(String(12), primary_key=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # Cuantas veces se abrio. No es analitica: sirve para saber que se puede
+    # borrar sin molestar a nadie el dia que la tabla crezca.
+    opened: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

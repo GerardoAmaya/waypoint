@@ -170,9 +170,13 @@
 
   --shadow-panel: var(--sombra-panel);
 
-  /* Las familias las pide layout.tsx con <link>; ver el comentario de ahi. */
-  --font-sans: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "DM Mono", ui-monospace, "SF Mono", monospace;
+  /*
+    Las familias las declara layout.tsx con next/font, que deja cada una en su
+    variable con la pila de reserva ya adentro; ver el comentario de ahi. Las
+    de aca quedan por si una pagina se renderiza sin ese layout.
+  */
+  --font-sans: var(--fuente-sans, ui-sans-serif, system-ui, sans-serif);
+  --font-mono: var(--fuente-mono, ui-monospace, "SF Mono", monospace);
 
   /*
     Escala tipografica en cuarta justa (1.333). Los tamanos de interfaz se

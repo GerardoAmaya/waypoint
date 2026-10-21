@@ -37,5 +37,33 @@ services:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
+  # OSRM propio, uno por perfil. Opcionales: solo arrancan con
+  # `docker compose --profile osrm up -d`, que es lo que hace `make osrm`.
+  #
+  # **Son dos servicios y no uno porque osrm-routed sirve un solo perfil**: el
+  # que se preparo al construir el grafo. El perfil que va en la URL lo ignora,
+  # asi que a pie y en carro necesitan cada uno su contenedor y su grafo.
+  #
+  # El grafo lo construye `make osrm-datos` antes, dentro de ./osrm. Si esa
+  # carpeta esta vacia, el contenedor arranca y se cae; el mensaje de osrm-routed
+  # lo dice con claridad y make osrm avisa antes.
+  osrm-car:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    profiles: ["osrm"]
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./osrm/car:/data
+    command: osrm-routed --algorithm mld /data/el-salvador.osrm
+
+  osrm-foot:
+    image: ghcr.io/project-osrm/osrm-backend:v5.27.1
+    profiles: ["osrm"]
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./osrm/foot:/data
+    command: osrm-routed --algorithm mld /data/el-salvador.osrm
+
 volumes:
   pgdata:

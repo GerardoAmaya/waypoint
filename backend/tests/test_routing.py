@@ -602,6 +602,20 @@ class TestClienteConPresupuesto:
 
 
 class TestClienteCompartido:
+    @pytest.fixture(autouse=True)
+    def sin_osrm(self, monkeypatch):
+        """Estos tests son sobre el cliente de ORS, que solo sale si no hay OSRM.
+
+        Hace falta declararlo porque el .env de desarrollo puede traer las URLs
+        de un OSRM levantado, y entonces client_from_settings devuelve el otro
+        cliente y estos tests fallan por el entorno y no por el codigo.
+        """
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "osrm_car_url", None)
+        monkeypatch.setattr(settings, "osrm_foot_url", None)
+        yield
+
     def test_es_el_mismo_en_todo_el_proceso(self, monkeypatch):
         """Un cliente por peticion dejaria el presupuesto de adorno.
 
@@ -641,6 +655,141 @@ class TestClienteCompartido:
         # Otra "peticion HTTP" pide el cliente de nuevo y encuentra la cuenta.
         assert routing.client_from_settings().matrix_quota.try_spend() is False
         routing.client_from_settings.cache_clear()
+
+
+class TestQuienMide:
+    """Que proveedor sale de client_from_settings, y por que.
+
+    La regla es una sola: un OSRM propio gana sobre ORS. No tiene cupo ni llave
+    y contesta en milisegundos, asi que si alguien construyo el grafo es porque
+    quiere medir con el.
+    """
+
+    @pytest.fixture(autouse=True)
+    def limpio(self):
+        routing.client_from_settings.cache_clear()
+        yield
+        routing.client_from_settings.cache_clear()
+
+    def test_osrm_gana_sobre_ors_cuando_esta_configurado(self, monkeypatch):
+        from app.core.config import settings
+        from app.services.osrm import OSRMClient
+
+        monkeypatch.setattr(settings, "ors_api_key", "llave-de-prueba")
+        monkeypatch.setattr(settings, "osrm_car_url", "http://osrm-car:5000")
+        monkeypatch.setattr(settings, "osrm_foot_url", "http://osrm-foot:5000")
+
+        assert isinstance(routing.client_from_settings(), OSRMClient)
+
+    def test_con_un_solo_perfil_de_osrm_igual_sale_osrm(self, monkeypatch):
+        """Tener el de carro y no el de a pie es una instalacion a medias valida.
+
+        El cliente falla solo en el perfil que falta, y esos tramos se estiman.
+        Caer de vuelta a ORS por esto haria que medio itinerario lo midiera uno
+        y medio el otro sin que nadie lo pidiera.
+        """
+        from app.core.config import settings
+        from app.services.osrm import OSRMClient
+
+        monkeypatch.setattr(settings, "ors_api_key", "llave-de-prueba")
+        monkeypatch.setattr(settings, "osrm_car_url", "http://osrm-car:5000")
+        monkeypatch.setattr(settings, "osrm_foot_url", None)
+
+        cliente = routing.client_from_settings()
+        assert isinstance(cliente, OSRMClient)
+        assert set(cliente.urls) == {"car"}
+
+    def test_sin_osrm_se_usa_ors(self, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "ors_api_key", "llave-de-prueba")
+        monkeypatch.setattr(settings, "osrm_car_url", None)
+        monkeypatch.setattr(settings, "osrm_foot_url", None)
+
+        assert isinstance(routing.client_from_settings(), routing.ORSClient)
+
+    def test_sin_ninguno_no_hay_cliente(self, monkeypatch):
+        """Quien acaba de clonar el repo no tiene ni llave ni grafo.
+
+        El proyecto sigue corriendo con distancias estimadas en vez de fallar.
+        """
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "ors_api_key", None)
+        monkeypatch.setattr(settings, "osrm_car_url", None)
+        monkeypatch.setattr(settings, "osrm_foot_url", None)
+
+        assert routing.client_from_settings() is None
+
+
+class TestFuenteDeLaCache:
+    """De quien acepta medidas la cache de travel_edges.
+
+    Filtrar por `source == "ors"` tiraba la cache entera al cambiar de
+    proveedor, que es justo cuando mas duele: 39.000 aristas medidas quedaban
+    invisibles el dia que alguien levantaba su OSRM.
+    """
+
+    def test_se_anota_quien_midio(self, monkeypatch):
+        from app.services.geo import SOURCE_ORS, SOURCE_OSRM
+        from app.services.osrm import OSRMClient
+
+        assert routing._quien_midio(OSRMClient({"car": "http://x:5000"})) == SOURCE_OSRM
+        assert routing._quien_midio(routing.ORSClient("llave")) == SOURCE_ORS
+
+    def test_se_leen_las_de_cualquier_proveedor_menos_la_estimacion(self, engine):
+        """Va contra Postgres porque el filtro vive en el WHERE, no en Python.
+
+        Un doble de sesion devolveria las filas que se le pidan y el test
+        pasaria con el filtro viejo puesto.
+        """
+        import uuid as _uuid
+
+        from sqlalchemy import text
+        from sqlalchemy.orm import Session
+
+        from app.services.geo import SOURCE_ESTIMATED, SOURCE_ORS, SOURCE_OSRM
+
+        ids = [_uuid.uuid4() for _ in range(4)]
+        with Session(engine) as db:
+            for i, pid in enumerate(ids):
+                db.execute(
+                    text("""
+                        INSERT INTO places
+                            (id, osm_type, osm_id, name, category, lat, lon, geom)
+                        VALUES (:id, 'node', :osm, :n, 'attraction', :lat, :lon,
+                                ST_SetSRID(ST_MakePoint(:lon, :lat), 4326))
+                    """),
+                    {
+                        "id": pid,
+                        "osm": -(i + 1),
+                        "n": f"prueba {i}",
+                        "lat": 13.9 + i / 100,
+                        "lon": -89.0,
+                    },
+                )
+            for destino, fuente in zip(
+                ids[1:], [SOURCE_ORS, SOURCE_OSRM, SOURCE_ESTIMATED], strict=True
+            ):
+                db.execute(
+                    text("""
+                        INSERT INTO travel_edges
+                            (origin_id, destination_id, profile, distance_km,
+                             duration_minutes, source)
+                        VALUES (:o, :d, 'driving-car', 1.0, 2, :s)
+                    """),
+                    {"o": ids[0], "d": destino, "s": fuente},
+                )
+            db.commit()
+
+            try:
+                leidas = routing.read_cached_edges(db, ids, "driving-car")
+                assert (ids[0], ids[1]) in leidas, "la medida vieja de ORS sigue valiendo"
+                assert (ids[0], ids[2]) in leidas, "la de OSRM tambien"
+                assert (ids[0], ids[3]) not in leidas, "la estimacion no se cachea"
+            finally:
+                db.execute(text("DELETE FROM places WHERE id = ANY(:ids)"), {"ids": ids})
+                db.commit()
 
 
 class TestPlausibilidad:

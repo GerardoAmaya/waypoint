@@ -35,6 +35,10 @@ fecha, las horas de inicio y fin, un modo de transporte distinto por día, las
 comidas y cuánto duran, cuánto tiempo pasar en cada tipo de lugar, categorías
 preferidas, exigidas o evitadas, y lugares concretos pedidos por su nombre.
 
+Cada itinerario tiene su propio enlace. Lo guarda el servidor al armarlo —no el
+navegador al compartirlo— así que compartir es copiar una URL, y lo que se abre
+es ese plan y no uno rearmado.
+
 El modelo de lenguaje traduce la frase del usuario a restricciones. El motor las
 hace cumplir. Esa división es deliberada y es la respuesta al riesgo principal
 del proyecto: si el modelo armara el itinerario directamente, «odio madrugar»
@@ -53,7 +57,7 @@ magnitud, en vez de esconderse.
 | Qué | Cuánto |
 |---|---|
 | Cumplimiento de límites duros | 96% (25 de 26 casos) |
-| Lugares inventados | 0 de 319 paradas generadas |
+| Lugares inventados | 0 de 320 paradas generadas |
 | Factor de desvío medido | 1.45, mediana sobre 812 pares |
 | Velocidad efectiva en carro | 35 a 62 km/h según el tramo |
 | Pares sin ruta en ORS | 7% (58 de 870) |
@@ -64,11 +68,12 @@ magnitud, en vez de esconderse.
 | Duplicados fusionados | 4.4% (274 registros) |
 | Días con recomendación de llevar comida | 15% (9 de 62) |
 | Repetición de categoría por paso | 26% |
+| Aristas medidas por el banco con OSRM propio | 2.678, sin cupo |
 | Repetición de subcategoría por paso | 15% |
 | Paradas fuera de hora (luz o cierre) | 0 de 240 — ahora medido en el banco |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
-| Tests | 759 backend, 55 frontend |
+| Tests | 801 backend, 55 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -83,7 +88,7 @@ Un planificador de viajes es fácil de demostrar y difícil de verificar:
 cualquier lista de lugares parece un itinerario. Lo que separa uno bueno de uno
 plausible es si cumple lo que se le pidió, y eso se mide.
 
-**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 51
+**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 55
 decisiones, cada una con el fallo concreto que la provocó y el número que la
 respalda. Cuatro piezas están ahí documentadas como borradas por no ganarse su
 sitio.
@@ -122,6 +127,18 @@ curl -s -X POST localhost:8100/itinerary \
 Sin llave de OpenRouteService funciona igual, con distancias estimadas. La
 respuesta lo dice en el campo `travel.source`.
 
+Para medir sin cupo ni llave se puede levantar un OSRM propio. El extracto de
+El Salvador son 33 MB y el grafo se construye una sola vez:
+
+```bash
+make osrm-datos   # baja el extracto y prepara los dos perfiles (~10 min)
+make osrm         # levanta un servicio por perfil
+```
+
+Después hay que descomentar `OSRM_CAR_URL` y `OSRM_FOOT_URL` en el `.env` y
+reiniciar la API. Si están puestas, mide OSRM; si no, ORS. Las dos fuentes
+comparten la misma caché, así que cambiar de una a otra no tira lo ya medido.
+
 El clima no necesita ninguna llave: Open-Meteo no la pide para uso no comercial.
 Se apaga con `WEATHER_ENABLED=false` y la respuesta lo dice en `weather.reason`.
 
@@ -130,13 +147,15 @@ Se apaga con `WEATHER_ENABLED=false` y la respuesta lo dice en `weather.reason`.
 ## Guiones
 
 ```bash
-make test            # los 759 del backend
+make test            # los 801 del backend
 npm test             # los 55 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante (3 de matriz)
 make ors-trace       # dice si el trazo por carretera funciona ahora (1 de direcciones)
 make ors-calibrate   # mide desvío y velocidad contra el catálogo
 make ors-warm        # dice cuanto costaria precalentar; no gasta nada
 make ors-warm-apply  # lo hace: 20 peticiones de matriz
+make osrm-datos      # construye el grafo de El Salvador, una sola vez
+make osrm            # levanta un OSRM propio: mide sin cupo ni llave
 ```
 
 ```bash
@@ -191,11 +210,6 @@ imperativo— y quedó como dependencia muerta.
 
 ## Lo que falta
 
-- **Compartir por enlace.** El itinerario se copia como texto y nada más: no
-  tiene URL propia, así que no se puede mandar a nadie. Arreglarlo arregla de
-  paso el botón atrás del navegador, que hoy no vuelve del itinerario.
-- **Las fuentes vienen de un tercero en el camino crítico.** Se piden con
-  `<link>` a Google Fonts. La salida es autohospedarlas con `next/font/local`.
 - **El clima informa y aconseja, pero todavía no decide.** Sabe que llueve sobre
   el mirador de las 15:00 y lo dice; lo que no hace es mover el mirador a la
   mañana.
@@ -209,6 +223,10 @@ imperativo— y quedó como dependencia muerta.
   importarse y mide elementos que en jsdom no tienen tamaño.
 - **El volcado del catálogo no borra.** `make dump` es aditivo, así que un lugar
   retirado en local sobrevive en producción.
+- **El OSRM propio es solo local.** El despliegue sigue midiendo con ORS y su
+  cupo: llevarlo a producción pide hornear el grafo en una imagen.
+- **Los itinerarios compartidos no se borran solos.** La tabla lleva la fecha y
+  la cuenta de aperturas para poder limpiarla, pero nadie la limpia todavía.
 
 Para publicarlo, ver [DEPLOY.md](DEPLOY.md). Para el alcance por fases,
 [PLAN.md](PLAN.md).

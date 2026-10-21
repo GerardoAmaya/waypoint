@@ -68,6 +68,7 @@ ORS_PROFILES = {"walking": "foot-walking", "driving": "driving-car"}
 # proporcion de aristas reales frente a estimadas es una metrica del proyecto,
 # no un detalle interno.
 SOURCE_ORS = "ors"
+SOURCE_OSRM = "osrm"
 SOURCE_ESTIMATED = "estimated"
 
 

@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     ors_daily_budget: int = 450
     ors_directions_budget: int = 1800
 
+    # OSRM propio. Si estan puestas, mide OSRM y ORS no se usa; ver el
+    # comentario de app/services/osrm.py para el porque.
+    #
+    # Vacias por defecto a proposito: quien clona el repo no tiene un grafo
+    # construido, y arrancar apuntando a un puerto donde no hay nada daria
+    # itinerarios en linea recta sin decir por que. Con `make osrm` se levantan
+    # los dos servicios y el .env de ejemplo trae las URLs comentadas.
+    osrm_car_url: str | None = None
+    osrm_foot_url: str | None = None
+
     # Limite por IP. Los itinerarios cuestan tokens de Haiku y cupo de rutas, y
     # la demo no tiene cuentas: sin techo, una persona curioseando vacia el
     # cupo diario en un minuto.

@@ -34,6 +34,7 @@ from app.services.geo import (
     ORS_PROFILES,
     SOURCE_ESTIMATED,
     SOURCE_ORS,
+    SOURCE_OSRM,
     EstimatedTravel,
     Waypoint,
     haversine_km,
@@ -47,8 +48,20 @@ logger = logging.getLogger(__name__)
 MAX_LOCATIONS_PER_REQUEST = 50
 
 
-class ORSError(Exception):
-    """Fallo hablando con OpenRouteService."""
+class RutaError(Exception):
+    """Fallo pidiendole una ruta a quien sea que la mida.
+
+    La base es neutra porque ORS dejo de ser el unico: un OSRM local mide lo
+    mismo y falla de sus propias maneras. Lo que el motor necesita saber es que
+    la medida no llego, no de quien no llego.
+    """
+
+
+# ORSError se llamaba asi cuando ORS era el unico proveedor, y es el nombre que
+# usan las casi cien capturas repartidas por el codigo y los tests. Queda como
+# alias del nuevo nombre en vez de renombrarlas todas: lo que significa —"no se
+# pudo medir"— no cambio.
+ORSError = RutaError
 
 
 class ORSAuthError(ORSError):
@@ -664,7 +677,7 @@ def load_travel_matrix(
         edges.update(nuevas)
 
         if db is not None and nuevas:
-            persist_edges(db, nuevas, profile, SOURCE_ORS)
+            persist_edges(db, nuevas, profile, _quien_midio(client))
 
     stats.estimated = len(_pairs(unicos)) - len(edges)
 
@@ -694,10 +707,31 @@ def load_travel_matrix(
     return TravelMatrix(edges=edges, fallback=fallback, stats=stats)
 
 
+def _quien_midio(client) -> str:
+    """Que proveedor dejo esta medida, para la columna `source`.
+
+    Se guarda para poder mirar atras —si un tramo raro vino de OSRM o de ORS se
+    responde con una consulta— y no para decidir si la fila vale: eso lo mira
+    read_cached_edges, que acepta todo lo que no sea estimacion.
+    """
+    # El import va aca dentro y no arriba porque osrm importa este modulo: a
+    # nivel de modulo seria un ciclo.
+    from app.services.osrm import OSRMClient
+
+    return SOURCE_OSRM if isinstance(client, OSRMClient) else SOURCE_ORS
+
+
 def read_cached_edges(
     db, place_ids: list[uuid.UUID], profile: str
 ) -> dict[tuple[uuid.UUID, uuid.UUID], tuple[float, int]]:
-    """Lee de travel_edges los pares ya medidos entre estos lugares."""
+    """Lee de travel_edges los pares ya medidos entre estos lugares.
+
+    **Sirve cualquier fuente que no sea la estimacion**, y no solo las de ORS.
+    Una arista medida es una arista medida: el dia que alguien levanta su OSRM
+    las filas viejas de ORS le siguen valiendo, y las que deje OSRM valen
+    despues aunque vuelva a ORS. Filtrar por `source == "ors"` habria tirado la
+    cache entera al cambiar de proveedor, que es justo cuando mas duele.
+    """
     from sqlalchemy import select
 
     from app.models import TravelEdge
@@ -712,7 +746,7 @@ def read_cached_edges(
             TravelEdge.profile == profile,
             TravelEdge.origin_id.in_(place_ids),
             TravelEdge.destination_id.in_(place_ids),
-            TravelEdge.source == SOURCE_ORS,
+            TravelEdge.source != SOURCE_ESTIMATED,
         )
     ).all()
 
@@ -963,8 +997,12 @@ def load_route_geometry(
 
 
 @lru_cache(maxsize=1)
-def client_from_settings() -> ORSClient | None:
-    """Cliente compartido por todo el proceso, o None si no hay llave.
+def client_from_settings():
+    """Cliente compartido por todo el proceso, o None si no hay con que medir.
+
+    **Un OSRM propio gana sobre ORS cuando esta configurado.** No tiene cupo ni
+    llave y contesta en milisegundos, asi que si alguien se tomo el trabajo de
+    construir el grafo, es porque quiere medir con el. Ver app/services/osrm.py.
 
     **Tiene que ser uno solo.** El espaciado entre llamadas y el presupuesto
     diario viven dentro del cliente, asi que un cliente nuevo por peticion
@@ -978,6 +1016,14 @@ def client_from_settings() -> ORSClient | None:
     acaba de clonar el repo y todavia no saco cuenta en ORS.
     """
     from app.core.config import settings
+
+    urls = {"car": settings.osrm_car_url, "foot": settings.osrm_foot_url}
+    disponibles = {perfil: url for perfil, url in urls.items() if url}
+    if disponibles:
+        from app.services.osrm import OSRMClient
+
+        logger.info("midiendo con OSRM propio: %s", ", ".join(sorted(disponibles)))
+        return OSRMClient(disponibles)
 
     if not settings.ors_api_key:
         return None
@@ -994,6 +1040,8 @@ def client_from_settings() -> ORSClient | None:
 __all__ = [
     "SOURCE_ESTIMATED",
     "SOURCE_ORS",
+    "SOURCE_OSRM",
+    "RutaError",
     "GeometryStats",
     "MatrixStats",
     "DailyQuota",

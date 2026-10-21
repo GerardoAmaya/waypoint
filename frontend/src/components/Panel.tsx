@@ -6,6 +6,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowRight,
   faCheck,
+  faLink,
   faChevronDown,
   faCopy,
   faPenToSquare,
@@ -114,6 +115,7 @@ export default function Panel({
 }: Props) {
   const [cambio, setCambio] = useState("");
   const [copiado, setCopiado] = useState(false);
+  const [enlaceCopiado, setEnlaceCopiado] = useState(false);
   /*
     En pantalla angosta el pie de revision empieza cerrado. Medido: se llevaba
     102 px de los 429 del panel, permanentes, por un campo que se usa de vez en
@@ -132,6 +134,22 @@ export default function Panel({
     if (!texto || revising) return;
     await onRevise(texto);
     setCambio("");
+  };
+
+  /*
+    Copia el enlace, no abre un diálogo de compartir del sistema. El diálogo
+    nativo no existe en escritorio y en el móvil tapa la pantalla para algo que
+    casi siempre termina en pegar la URL en un chat. Copiar hace eso mismo en
+    un paso y funciona en los dos sitios.
+  */
+  const copiarEnlace = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setEnlaceCopiado(true);
+      window.setTimeout(() => setEnlaceCopiado(false), 2000);
+    } catch {
+      /* Sin portapapeles no se hace nada: la URL está en la barra igual. */
+    }
   };
 
   const copiar = async () => {
@@ -188,22 +206,43 @@ export default function Panel({
             {interpretation?.area?.name ?? "Tu itinerario"}
           </h1>
 
-          {/*
-            Copiar y no descargar: el plan termina en un chat o en una nota, y
-            un .txt en la carpeta de descargas del telefono no llega a ninguno
-            de los dos lados.
-          */}
-          <button
-            onClick={() => void copiar()}
-            className="mt-1 inline-flex shrink-0 items-center gap-1.5 rounded-md border border-borde-fuerte px-2.5 py-1.5 text-dato text-tinta-suave transition-colors hover:border-acento hover:text-tinta"
-          >
-            <FontAwesomeIcon
-              icon={copiado ? faCheck : faCopy}
-              aria-hidden
-              className="size-3"
-            />
-            {copiado ? "Copiado" : "Copiar"}
-          </button>
+          <div className="mt-1 flex shrink-0 items-center gap-2">
+            {/*
+              El enlace solo aparece cuando existe: si el itinerario no se pudo
+              guardar, un botón que promete compartir y copia una URL que no
+              lleva a nada es peor que no tenerlo.
+            */}
+            {itinerary.share_code && (
+              <button
+                onClick={() => void copiarEnlace()}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-borde-fuerte px-2.5 py-1.5 text-dato text-tinta-suave transition-colors hover:border-acento hover:text-tinta"
+              >
+                <FontAwesomeIcon
+                  icon={enlaceCopiado ? faCheck : faLink}
+                  aria-hidden
+                  className="size-3"
+                />
+                {enlaceCopiado ? "Enlace copiado" : "Compartir"}
+              </button>
+            )}
+
+            {/*
+              Copiar y no descargar: el plan termina en un chat o en una nota, y
+              un .txt en la carpeta de descargas del telefono no llega a ninguno
+              de los dos lados.
+            */}
+            <button
+              onClick={() => void copiar()}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-borde-fuerte px-2.5 py-1.5 text-dato text-tinta-suave transition-colors hover:border-acento hover:text-tinta"
+            >
+              <FontAwesomeIcon
+                icon={copiado ? faCheck : faCopy}
+                aria-hidden
+                className="size-3"
+              />
+              {copiado ? "Copiado" : "Copiar"}
+            </button>
+          </div>
         </div>
 
         {/*
