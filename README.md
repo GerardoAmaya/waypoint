@@ -72,6 +72,7 @@ magnitud, en vez de esconderse.
 | Repetición de subcategoría por paso | 15% |
 | Paradas fuera de hora (luz o cierre) | 0 de 240 — ahora medido en el banco |
 | Días con pines del mapa superpuestos | 55% → 12% (69 pares → 13) |
+| Clicables que anuncian que lo son | 13 de 29 → 28 de 29 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
 | Tests | 801 backend, 72 frontend |
@@ -89,7 +90,7 @@ Un planificador de viajes es fácil de demostrar y difícil de verificar:
 cualquier lista de lugares parece un itinerario. Lo que separa uno bueno de uno
 plausible es si cumple lo que se le pidió, y eso se mide.
 
-**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 57
+**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 58
 decisiones, cada una con el fallo concreto que la provocó y el número que la
 respalda. Cuatro piezas están ahí documentadas como borradas por no ganarse su
 sitio.

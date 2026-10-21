@@ -189,7 +189,17 @@ export default function Linea({
                     )
                   }
                   aria-expanded={parada.place.id === selectedStop}
-                  className="block w-full text-left"
+                  /*
+                    El realce al pasar por encima dice donde termina lo que se
+                    puede pulsar, que no es la fila entera: la hora y la marca
+                    son celdas propias y no responden al clic.
+
+                    El relleno y el margen negativo se cancelan, asi que la
+                    caja crece hacia afuera y el texto no se mueve ni un pixel
+                    al aparecer el fondo. Sin eso, pasar el cursor por la lista
+                    la hace saltar.
+                  */
+                  className="-mx-2 -my-1 block w-full rounded-md px-2 py-1 text-left transition-colors hover:bg-superficie-alta"
                 >
                   <p className="text-cuerpo leading-snug font-medium text-tinta">
                     {parada.place.name}

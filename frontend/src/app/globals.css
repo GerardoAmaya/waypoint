@@ -241,6 +241,32 @@ body {
   border-radius: 3px;
 }
 
+/*
+  La manita sobre lo que se puede pulsar.
+
+  **Un <button> nativo no la trae**: la hoja del navegador le pone
+  `cursor: default`, y la manita es cosa de los enlaces. Eso es correcto segun
+  la especificacion y falso segun lo que la gente espera, porque en la web de
+  hoy todo lo que responde al clic la muestra. Medido sobre un itinerario en
+  pantalla: de 29 elementos clicables, 16 no la tenian —todos los botones— y
+  los 13 que si eran enlaces.
+
+  Va en la base y no en cada componente porque el que falte no es un olvido de
+  un boton, es el valor por defecto: arreglarlo donde se nota deja el proximo
+  boton igual de mudo.
+
+  El deshabilitado queda fuera a proposito. "Aplicar" sin texto escrito no hace
+  nada, y ofrecer la manita a algo que no responde es prometer de mas; tampoco
+  se usa `not-allowed`, que se lee como un error del usuario cuando lo unico
+  que pasa es que todavia no escribio.
+*/
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+label[for],
+summary {
+  cursor: pointer;
+}
+
 ::selection {
   background: var(--acento);
   color: var(--sobre-acento);

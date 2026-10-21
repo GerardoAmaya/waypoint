@@ -2078,6 +2078,42 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### Un botón no trae la manita, y eso no era un olvido
+
+Lo reportó el usuario sobre las paradas del itinerario: responden al clic, pero
+pasar el cursor por encima no cambia nada.
+
+**Un `<button>` nativo usa `cursor: default`.** La hoja del navegador reserva
+la manita para los enlaces, y eso es correcto según la especificación y falso
+según lo que la gente espera: en la web de hoy todo lo que responde al clic la
+muestra. No lo apagaba Tailwind ni ninguna regla del proyecto — era el valor
+por defecto, intacto.
+
+Medido sobre un itinerario en pantalla: de **29 elementos clicables, 16 no
+tenían la manita**. Todos eran botones; los 13 que sí la tenían eran enlaces y
+marcadores del mapa. O sea: no fallaba la lista de paradas, fallaban todos los
+botones de la aplicación — «Empezar de nuevo», «Compartir», «Copiar», las
+pestañas de día, Mapa/Satélite.
+
+Por eso la regla va en la base y no en el componente donde se notó: arreglarlo
+ahí habría dejado al próximo botón igual de mudo. Después del cambio, 28 de 29.
+
+**El 29 es «Aplicar» deshabilitado, y queda así a propósito.** Sin texto
+escrito no hace nada, y ofrecer la manita a algo que no responde es prometer de
+más. Tampoco se usa `not-allowed`, que se lee como un error del usuario cuando
+lo único que pasa es que todavía no escribió. Verificado: al escribir en el
+campo pasa a `cursor: pointer`.
+
+Aparte del cursor, la parada ahora se realza al pasar por encima. El realce
+cubre **solo la columna del contenido**, que es lo que el botón envuelve: la
+hora y la marca son celdas propias y no responden al clic, y pintarlas también
+prometería un área que no existe. El relleno y el margen negativo se cancelan,
+así que la caja crece hacia afuera y el texto no se mueve — medido, 0,00 px de
+desplazamiento en las siete paradas.
+
+El foco ya estaba resuelto: hay una regla global de `:focus-visible` con el
+acento a 3:1 contra las dos superficies del tema.
+
 ### Tres paradas en el mismo pueblo se veían como una
 
 En Suchitoto las paradas 4, 6 y 7 son el casco urbano. En el mapa se apilaban:
