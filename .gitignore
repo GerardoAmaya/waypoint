@@ -18,3 +18,8 @@ catalogo.dump
 
 # El grafo de OSRM: cientos de MB construidos por make osrm-datos.
 /osrm/
+
+# Los permisos que Claude Code va aprendiendo. Absorbe los comandos tal cual
+# se teclearon, asi que una cadena de conexion inline termina adentro: fue por
+# aqui que se filtro una credencial de Neon. No se versiona.
+.claude/settings.json
