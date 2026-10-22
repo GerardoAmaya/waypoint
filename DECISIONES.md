@@ -2078,6 +2078,110 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### Volver a un itinerario: el servidor ya los tenía todos
+
+Un plan se perdía al cerrar la pestaña, salvo que uno se acordara de copiar el
+enlace. Y era una pérdida tonta, porque **el servidor ya guarda todos los
+itinerarios**: eso es exactamente lo que hacen los códigos de compartir. Lo
+único que faltaba era que el navegador recordara cuáles fueron tuyos.
+
+Por eso esto no guarda contenido sino punteros: el código, y lo justo para
+reconocer el plan en una lista sin tener que pedirlo —zona, días, paradas—. Si
+alguien limpia el navegador pierde la lista, no los itinerarios; si todavía
+tiene el enlace, el plan sigue ahí.
+
+**Se recuerda lo que armaste, no lo que abriste de un enlace ajeno.** Un enlace
+que te mandaron ya lo tenés, está en el mensaje donde llegó; un plan que
+armaste y cerraste no está en ningún lado. La pérdida que esto arregla es la
+segunda.
+
+Va debajo de los ejemplos y no encima. En la primera visita la lista está
+vacía, y los ejemplos son los que enseñan de qué es capaz el planificador;
+quien ya tiene itinerarios sabe lo que hay y los encuentra igual.
+
+**Lo guardado es entrada externa, y se valida como tal.** En `localStorage`
+queda lo que escribió una versión anterior de este mismo código, lo que dejó
+otra pestaña a medio escribir, o lo que alguien editó a mano. Una lista que se
+pinta con `reciente.zona` y recibe un objeto sin `zona` revienta la pantalla de
+entrada entera, que es lo primero que ve cualquiera. Cada entrada se valida y
+las rotas se descartan **una por una**: que una esté mal no tiene por qué
+borrar las otras cuatro.
+
+Y los accesos van envueltos porque `localStorage` **lanza** —no devuelve
+vacío— cuando el navegador bloquea el almacenamiento, que es el caso de una
+ventana privada con las cookies de terceros apagadas. Es la misma razón por la
+que `lib/tema.ts` envuelve los suyos.
+
+Dos detalles que salieron de usarlo:
+
+- **Un código que vuelve se sube, no se duplica.** Revisar un día vuelve a
+  emitir el plan con el mismo código; sin esto la lista se llenaría de copias
+  del mismo viaje y empujaría afuera a los demás.
+- **Si el servidor ya no lo tiene, se saca solo.** Dejarlo en la lista es
+  ofrecer una puerta que no abre. Se distingue del fallo de red por el 404 que
+  ya devolvía `fetchCompartido`.
+
+En un teléfono de 390×844 con tres itinerarios recordados, la lista queda 66 px
+por debajo del pliegue del modal, que ya era desplazable por diseño. Se midió
+antes de darlo por bueno: la primera lectura de la captura parecía un
+desbordamiento y no lo era.
+
+### El itinerario se baja al calendario, y el formato tiene trampas
+
+Un itinerario con horas es, literalmente, una agenda. Hasta acá vivía en la
+pestaña: se veía, se compartía por enlace, y nada más. Bajarlo al calendario es
+lo que lo vuelve utilizable el día del viaje, con las alarmas y la ubicación
+que el teléfono ya sabe manejar.
+
+Se arma en el navegador y no en el servidor: son unas líneas de texto, el dato
+ya está en pantalla, y una ida y vuelta más para formatear lo que ya tenemos
+sería pagar latencia por nada. También significa que se despliega a Vercel sin
+tocar Railway, que importa el día que Railway tiene los despliegues pausados.
+
+**Solo aparece con fecha**, que es la misma regla que ya seguían la cabecera
+del día y el clima: sin fecha no hay evento posible.
+
+Lo que costó no fue generar el archivo sino que lo acepten. iCalendar es viejo
+y estricto, y **ninguna de sus trampas se ve en la pantalla de quien genera el
+archivo: fallan en el calendario de quien lo recibe**.
+
+- **Las comas.** En el catálogo hay «La Puntilla, Zona de Restaurantes». Sin
+  escapar, esa coma convierte el `SUMMARY` en dos valores y el evento llega con
+  el nombre cortado, o el archivo no se importa. La barra se escapa primero, o
+  se escaparían las barras que uno acaba de poner.
+- **El límite de línea es de 75 octetos, no de caracteres.** Una «ñ» ocupa dos,
+  así que contando caracteres un nombre con acentos se pasa sin que se note. El
+  plegado cuenta bytes y continúa con un espacio al principio de la siguiente.
+- **El UID tiene que ser estable.** Si llevara la hora de descarga, bajar el
+  mismo día dos veces duplicaría los eventos en vez de actualizarlos. Lleva el
+  código del itinerario compartido, que ya es estable.
+- **El huso se declara.** Una hora flotante significa «la hora local de quien
+  mire»: alguien que planifica el viaje desde Madrid vería las paradas siete
+  horas corridas. Se emite un `VTIMEZONE` con −06:00 fijo y sin horario de
+  verano, el mismo supuesto que hace `core/reloj.py`.
+
+Validado sobre el archivo descargado de verdad, no sobre la cadena generada:
+termina en CRLF, sin saltos sueltos, cero líneas de más de 75 octetos, bloques
+`BEGIN`/`END` equilibrados y los siete UID únicos. 23 tests.
+
+La etiqueta de cada parada —«Almuerzo», «Regreso al punto de partida», la
+categoría— se le pasa desde el panel en vez de recalcularla. Si la lista dijera
+«Almuerzo» y el evento «Comida», serían dos verdades del mismo dato.
+
+Aparte, el enlace «Cómo llegar» de cada parada —que ya existía— ahora lleva el
+modo del día. En un viaje que combina carro y caminata, abrir indicaciones en
+carro para un día a pie manda por una carretera que ese día nadie va a tomar.
+
+**Lo que no se hizo: un enlace de día completo a Google Maps.** La idea era
+abrir el recorrido entero con todas las paradas en orden, y la documentación de
+Maps URLs lo desarma: soporta hasta nueve puntos intermedios en escritorio pero
+**solo tres en navegador de teléfono**, y donde no se soportan, el parámetro se
+ignora. O sea, una ruta equivocada sin aviso, justo en el dispositivo donde uno
+la usaría. En el banco, un día con n paradas lleva n−2 intermedias, y los días
+de seis o más son 30 de 62: la mitad de los itinerarios romperían en silencio.
+El enlace por parada no tiene ese techo, y además es como se viaja — se maneja
+hasta la parada 1, se pasan dos horas ahí, y recién después se sale hacia la 2.
+
 ### Un botón no trae la manita, y eso no era un olvido
 
 Lo reportó el usuario sobre las paradas del itinerario: responden al clic, pero

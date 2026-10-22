@@ -28,6 +28,9 @@ function Anfitrion({
       texto={texto}
       onTextoChange={setTexto}
       onSubmit={onSubmit}
+      recientes={[]}
+      onAbrirReciente={() => {}}
+      onOlvidarReciente={() => {}}
     />
   );
 }
@@ -110,6 +113,9 @@ describe("Compositor", () => {
         texto="dos dias"
         onTextoChange={() => {}}
         onSubmit={() => {}}
+        recientes={[]}
+        onAbrirReciente={() => {}}
+        onOlvidarReciente={() => {}}
       />,
     );
 
@@ -126,6 +132,9 @@ describe("Compositor", () => {
         texto="algo"
         onTextoChange={() => {}}
         onSubmit={() => {}}
+        recientes={[]}
+        onAbrirReciente={() => {}}
+        onOlvidarReciente={() => {}}
       />,
     );
 

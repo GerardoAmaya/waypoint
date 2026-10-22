@@ -7,9 +7,11 @@ import {
   faArrowTurnUp,
   faRoute,
   faTriangleExclamation,
+  faXmark,
 } from "@fortawesome/free-solid-svg-icons";
 
 import Pais from "./Pais";
+import type { Reciente } from "@/lib/recientes";
 
 export type Fase = "quieto" | "leyendo" | "eligiendo" | "midiendo" | "listo";
 
@@ -100,6 +102,10 @@ interface Props {
   */
   texto: string;
   onTextoChange: (texto: string) => void;
+  /** Los itinerarios que esta persona armo antes. Ver lib/recientes.ts. */
+  recientes: Reciente[];
+  onAbrirReciente: (codigo: string) => void;
+  onOlvidarReciente: (codigo: string) => void;
 }
 
 export default function Compositor({
@@ -108,6 +114,9 @@ export default function Compositor({
   onSubmit,
   texto,
   onTextoChange,
+  recientes,
+  onAbrirReciente,
+  onOlvidarReciente,
 }: Props) {
   const caja = useRef<HTMLTextAreaElement>(null);
   const trabajando = fase !== "quieto" && fase !== "listo";
@@ -301,6 +310,52 @@ export default function Compositor({
                 ))}
               </ul>
 
+              {/*
+                Lo que armaste antes.
+
+                Va debajo de los ejemplos y no encima: en la primera visita
+                esta vacio, y los ejemplos son los que enseñan de que es capaz
+                esto. Quien ya tiene itinerarios sabe lo que hay y los
+                encuentra igual; quien llega por primera vez necesita el
+                ejemplo arriba.
+
+                Se omite entera cuando no hay ninguno, en vez de dejar un
+                titulo con el hueco debajo.
+              */}
+              {recientes.length > 0 && (
+                <div className="mt-7 border-t border-borde pt-5">
+                  <p className="text-menudo text-tinta-tenue">Lo que armaste antes</p>
+                  <ul className="mt-2 space-y-1">
+                    {recientes.map((reciente) => (
+                      <li key={reciente.codigo} className="flex items-center gap-1">
+                        <button
+                          onClick={() => onAbrirReciente(reciente.codigo)}
+                          className="group -mx-2 flex min-w-0 flex-1 items-baseline gap-2 rounded-md px-2 py-1 text-left text-menudo text-tinta-suave transition-colors hover:bg-superficie-alta hover:text-tinta"
+                        >
+                          <span className="truncate">{reciente.zona}</span>
+                          {/*
+                            El tamaño del viaje distingue dos planes de la
+                            misma zona, que es el caso normal cuando uno esta
+                            probando variantes.
+                          */}
+                          <span className="dato shrink-0 text-tinta-tenue">
+                            {reciente.dias} {reciente.dias === 1 ? "día" : "días"} ·{" "}
+                            {reciente.paradas}{" "}
+                            {reciente.paradas === 1 ? "parada" : "paradas"}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => onOlvidarReciente(reciente.codigo)}
+                          aria-label={`Quitar ${reciente.zona} de la lista`}
+                          className="shrink-0 rounded-md px-1.5 py-1 text-tinta-tenue transition-colors hover:text-tinta"
+                        >
+                          <FontAwesomeIcon icon={faXmark} aria-hidden className="size-3" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )
         )}

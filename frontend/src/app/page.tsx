@@ -15,6 +15,7 @@ import Leyenda from "@/components/Leyenda";
 import Panel from "@/components/Panel";
 import Tema from "@/components/Tema";
 import { fetchCompartido, fetchField, reviseDay, streamPlan } from "@/lib/api";
+import { leer, olvidar, recordar, type Reciente } from "@/lib/recientes";
 import type { Fondo as FondoId, ParadaElegida } from "@/components/Mapa";
 import type { Constraints, Interpretation, Itinerary } from "@/lib/types";
 
@@ -57,6 +58,12 @@ export default function Home() {
   const [revisando, setRevisando] = useState(false);
   const [errorRevision, setErrorRevision] = useState<string | null>(null);
   const aborto = useRef<AbortController | null>(null);
+  /*
+    La lista vive en estado ademas de en localStorage porque la pantalla de
+    entrada tiene que repintarse cuando cambia: armar un plan la suma, y
+    quitar uno la resta, sin recargar.
+  */
+  const [recientes, setRecientes] = useState<Reciente[]>([]);
 
   const abrirCompartido = useCallback(async (codigo: string) => {
     setFase("leyendo");
@@ -72,6 +79,15 @@ export default function Home() {
       setFase("quieto");
       // Un código que no existe no deja la URL colgada apuntando a nada.
       window.history.replaceState({}, "", "/");
+      /*
+        Y se saca de la lista: si el servidor ya no lo tiene, dejarlo ahi es
+        ofrecer una puerta que no abre. Solo por no encontrarlo, no por un
+        fallo de red —esa distincion la hace fetchCompartido con el 404.
+      */
+      if ((e as Error).message.includes("no existe")) {
+        olvidar(codigo);
+        setRecientes(leer());
+      }
     }
   }, []);
 
@@ -81,18 +97,28 @@ export default function Home() {
       .catch(() => setField([]));
 
     /*
+      La lista de recientes se lee al montar y no en el primer render: en el
+      servidor no hay localStorage, y leerlo durante el render daria una
+      pantalla distinta de la que el servidor acaba de mandar.
+
+      El desactivado de la regla cubre este efecto entero, incluido el
+      abrirCompartido de mas abajo: los dos son cargas de arranque, no bucles
+      de render.
+    */
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    setRecientes(leer());
+
+    /*
       La ruta /i/<codigo> abre un itinerario guardado. Se lee de la URL y no de
       una prop porque la misma pantalla sirve para los dos casos: armar uno
       nuevo y abrir uno compartido.
     */
     const codigo = window.location.pathname.match(/^\/i\/([a-z0-9]+)$/)?.[1];
     /*
-      La regla marca el setState síncrono de dentro de abrirCompartido. Aquí es
-      lo que se quiere: montar la pantalla con un itinerario que viene de la
-      URL es una carga, no un bucle de render, y el indicador de "leyendo" solo
-      sirve si aparece antes de esperar a la red.
+      Montar la pantalla con un itinerario que viene de la URL es una carga, y
+      el indicador de "leyendo" solo sirve si aparece antes de esperar a la
+      red. El desactivado de la regla esta arriba, en setRecientes.
     */
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (codigo) void abrirCompartido(codigo);
 
     /*
@@ -134,10 +160,19 @@ export default function Home() {
     setParada(null);
     setFase("leyendo");
 
+    /*
+      La interpretacion tambien en una variable y no solo en el estado: la
+      necesita la rama "plan" de mas abajo, y leerla de `interpretacion` ahi
+      daria el valor con el que se creo esta funcion, no el que acaba de
+      llegar. Es el mismo stream, asi que la variable siempre va al dia.
+    */
+    let interpretado: Interpretation | null = null;
+
     try {
       for await (const evento of streamPlan(mensaje, control.signal)) {
         switch (evento.phase) {
           case "interpretation":
+            interpretado = evento.data;
             setInterpretacion(evento.data);
             setFase("eligiendo");
             break;
@@ -163,6 +198,19 @@ export default function Home() {
             */
             if (evento.data.share_code) {
               window.history.pushState({}, "", `/i/${evento.data.share_code}`);
+              /*
+                Y se recuerda, para que el plan no se pierda al cerrar la
+                pestaña. Se guarda el codigo y nada mas: el contenido ya esta
+                en la base. Ver lib/recientes.ts.
+              */
+              recordar({
+                codigo: evento.data.share_code,
+                zona: interpretado?.area?.name ?? "Tu itinerario",
+                dias: evento.data.days.length,
+                paradas: evento.data.total_stops,
+                guardado: new Date().toISOString(),
+              });
+              setRecientes(leer());
             }
             break;
           case "error":
@@ -272,6 +320,20 @@ export default function Home() {
                   texto={peticion}
                   onTextoChange={setPeticion}
                   onSubmit={(m) => void armar(m)}
+                  recientes={recientes}
+                  onAbrirReciente={(codigo) => {
+                    /*
+                      La URL cambia tambien: abrir uno de la lista tiene que
+                      dejar la pantalla igual que si el enlace hubiera llegado
+                      de afuera, con su direccion y su botón atrás.
+                    */
+                    window.history.pushState({}, "", `/i/${codigo}`);
+                    void abrirCompartido(codigo);
+                  }}
+                  onOlvidarReciente={(codigo) => {
+                    olvidar(codigo);
+                    setRecientes(leer());
+                  }}
                 />
               </div>
             </div>
