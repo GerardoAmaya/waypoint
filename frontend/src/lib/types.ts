@@ -41,7 +41,7 @@ export interface Stop {
   departure: string;
   travel_minutes_from_previous: number;
   travel_km_from_previous: number;
-  meal: "lunch" | "dinner" | null;
+  meal: "breakfast" | "lunch" | "dinner" | null;
 
   /**
    * El trazo por carretera del tramo que llega a esta parada, en [lat, lon].

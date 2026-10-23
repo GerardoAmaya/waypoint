@@ -11,6 +11,13 @@
  */
 
 import { CATEGORIA } from "./categorias";
+
+/** Como se nombra cada comida. El mismo texto que muestra el panel. */
+const COMIDA = {
+  breakfast: "Desayuno",
+  lunch: "Almuerzo",
+  dinner: "Cena",
+} as const;
 import { fechaEnPalabras } from "./fecha";
 import type { Interpretation, Itinerary } from "./types";
 
@@ -46,12 +53,9 @@ export function itinerarioComoTexto(
     );
 
     for (const parada of dia.stops) {
-      const etiqueta =
-        parada.meal === "lunch"
-          ? "Almuerzo"
-          : parada.meal === "dinner"
-            ? "Cena"
-            : CATEGORIA[parada.place.category].nombre;
+      const etiqueta = parada.meal
+        ? COMIDA[parada.meal]
+        : CATEGORIA[parada.place.category].nombre;
 
       lineas.push(
         `  ${hora(parada.arrival)}  ${parada.place.name} (${etiqueta})`,

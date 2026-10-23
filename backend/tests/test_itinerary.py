@@ -413,6 +413,53 @@ class TestFranjasDeComida:
             f"La cena quedo a las {cena.arrival:%H:%M}, antes de que abra la franja"
         )
 
+    def test_la_cena_entra_si_el_rato_cabe_en_las_paradas_de_antes(self):
+        """El caso del reporte: cena pedida, dia que acaba a media tarde.
+
+        "Dos dias desde el Hotel Barcelo... ceno los dos dias y vuelvo antes de
+        las 11 p.m.". El dia 1 terminaba sus visitas a las 16:27 y la cena se
+        descartaba por llegar temprano: 74 minutos de espera contra una
+        tolerancia de 45. Y la ultima parada era una iglesia que cierra a las
+        18:00 y salia a las 16:27, con noventa y tres minutos de margen: el
+        rato cabia de sobra.
+
+        La escapatoria ya existia —_repartir_la_espera convierte esa espera en
+        rato en los lugares de antes— pero corre dentro de schedule_day, o sea
+        despues de que la comida ya fue descartada. El arreglo es que el suelo
+        de hora temprana ceda lo que las paradas previas puedan absorber.
+        """
+        from app.services.itinerary import _insert_meals
+
+        ruta = [
+            lugar(f"Museo {i}", 13.70 + i * 0.003, -89.22, Category.culture) for i in range(3)
+        ]
+        comidas = [
+            lugar("Almuerzo", 13.7015, -89.221, Category.food),
+            lugar("Cena", 13.709, -89.22, Category.food),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(10, 0),
+            latest_end=time(23, 0),
+            include_meals=True,
+            must_include_meals=["dinner"],
+            max_stops_per_day=8,
+        )
+
+        dia = schedule_day(1, _insert_meals(ruta, comidas, restricciones), restricciones)
+
+        cena = next((s for s in dia.stops if s.meal == "dinner"), None)
+        assert cena is not None, "la cena se pidio por su nombre y el rato cabia"
+        assert cena.arrival >= DINNER_WINDOW[0]
+        # Y el rato no se pasa esperando: la parada de antes se queda mas.
+        anterior = dia.stops[dia.stops.index(cena) - 1]
+        hueco = _minutes_between(anterior.departure, cena.arrival)
+        assert hueco == cena.travel_minutes_from_previous, (
+            f"quedaron {hueco - cena.travel_minutes_from_previous} min muertos"
+        )
+
     def test_un_dia_corto_no_lleva_cena(self):
         """Si el dia termina a media tarde, no se inventa una cena."""
         from app.services.itinerary import _insert_meals
@@ -3185,3 +3232,218 @@ class TestDosFilasDelMismoSitioNoCompartenViaje:
         assert len(del_parque) == 1, f"el día visitó {del_parque}"
         # Y las otras paradas siguen entrando: no se recorta de más.
         assert "Mirador El Mulo" in nombres
+
+
+class TestElAvisoNoPideLoQueYaDijiste:
+    """El aviso de comida inalcanzable tiene que decir la causa correcta.
+
+    Del reporte: "Pediste cena y este dia no llega... Decime hasta que hora
+    podes y lo acomodo", sobre una peticion que decia "vuelvo antes de las 11
+    p.m.". El dia terminaba a las 16:46 con el tope en las 23:00: seis horas de
+    margen. Pedirle la hora es pedirle que repita lo que dijo, y subirla no
+    habria servido de nada.
+    """
+
+    def _aviso(self, fin, tope):
+        from app.services.itinerary import DINNER_WINDOW, _meal_out_of_reach
+
+        # Day deriva start y end de sus paradas, asi que hace falta una.
+        unica = Stop(
+            place=lugar("Museo", 13.70, -89.22, Category.culture),
+            arrival=time(10, 0),
+            departure=fin,
+            travel_minutes_from_previous=0,
+            travel_km_from_previous=0.0,
+        )
+        dia = Day(number=1, stops=[unica])
+        return _meal_out_of_reach(dia, "dinner", DINNER_WINDOW, False, tope).detail
+
+    def test_con_dia_de_sobra_no_pide_la_hora(self):
+        detalle = self._aviso(time(16, 46), time(23, 0))
+
+        assert "hasta qué hora podés" not in detalle
+        assert "23:00" in detalle, "tiene que reconocer el tope que la persona puso"
+
+    def test_si_el_reloj_si_es_el_freno_sigue_pidiendo_la_hora(self):
+        """Cuando el dia topa de verdad con su limite, alargarlo si sirve."""
+        detalle = self._aviso(time(17, 30), time(17, 40))
+
+        assert "hasta qué hora podés" in detalle
+
+    def test_sin_tope_conocido_se_comporta_como_antes(self):
+        detalle = self._aviso(time(16, 46), None)
+
+        assert "hasta qué hora podés" in detalle
+
+
+class TestElDesayuno:
+    """El desayuno se pide, no se asume, y quien odia madrugar no lo recibe.
+
+    Lo segundo no es una regla nueva: el motor ya descarta una comida cuyo dia
+    no alcanza la franja, y "odio madrugar" hace que la hora de inicio suba a
+    las 10:00. La franja cierra a las 9:30, asi que el dia no llega y el
+    desayuno no se pone. Esa es toda la implementacion.
+    """
+
+    def _dia(self, inicio, comidas_pedidas):
+        from app.services.itinerary import _insert_meals
+
+        ruta = [
+            lugar(f"Mirador {i}", 13.70 + i * 0.004, -89.22, Category.viewpoint)
+            for i in range(3)
+        ]
+        comedores = [
+            lugar("Comedor A", 13.7005, -89.221, Category.food),
+            lugar("Comedor B", 13.7085, -89.221, Category.food),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=inicio,
+            latest_end=time(21, 0),
+            include_meals=True,
+            must_include_meals=comidas_pedidas,
+            max_stops_per_day=8,
+        )
+        return _insert_meals(ruta, comedores, restricciones), restricciones
+
+    def _comidas(self, secuencia):
+        return [tipo for _, tipo in secuencia if tipo]
+
+    def test_se_pone_si_lo_pide_y_el_dia_empieza_a_tiempo(self):
+        secuencia, _ = self._dia(time(8, 0), ["breakfast"])
+
+        assert "breakfast" in self._comidas(secuencia)
+
+    def test_no_se_pone_si_no_lo_pide(self):
+        """Quien viaja casi siempre desayuna donde duerme.
+
+        Meterle un comedor a las ocho de la mañana a todo el que madrugue
+        seria decidir por el: por eso no entra por include_meals.
+        """
+        secuencia, _ = self._dia(time(8, 0), [])
+
+        assert "breakfast" not in self._comidas(secuencia)
+
+    def test_quien_odia_madrugar_no_recibe_desayuno(self):
+        """ "odio madrugar" pone la hora de inicio en las 10:00, y la franja
+        cierra a las 9:30: el dia no llega y no hay nada que colocar."""
+        secuencia, _ = self._dia(time(10, 0), ["breakfast"])
+
+        assert "breakfast" not in self._comidas(secuencia)
+
+    def test_puede_ir_primero_cuando_el_dia_no_sale_de_un_sitio_fijo(self):
+        """La posicion 0 tiene que estar disponible, y antes no lo estaba.
+
+        La busqueda arrancaba en 1 —un dia no empieza almorzando— y eso dejaba
+        al desayuno sin su sitio natural: con la secuencia base, las candidatas
+        entraban por hora y por presupuesto, y ninguna se podia colocar.
+
+        Se pone el comedor justo donde arranca el dia para que la posicion 0
+        sea ademas la mas barata; si no estuviera disponible, el desayuno
+        caeria despues del primer mirador o no caeria.
+        """
+        from app.services.itinerary import _insert_meals
+
+        ruta = [
+            lugar(f"Mirador {i}", 13.70 + (i + 1) * 0.01, -89.22, Category.viewpoint)
+            for i in range(3)
+        ]
+        comedores = [
+            lugar("Comedor de la esquina", 13.70, -89.22, Category.food),
+            lugar("Comedor lejos", 13.74, -89.221, Category.food),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(8, 0),
+            latest_end=time(21, 0),
+            include_meals=True,
+            must_include_meals=["breakfast"],
+            max_stops_per_day=8,
+        )
+
+        secuencia = _insert_meals(ruta, comedores, restricciones)
+
+        assert secuencia[0][1] == "breakfast"
+
+    def test_dura_menos_que_una_cena(self):
+        """Noventa minutos a las ocho de la mañana se comen la primera visita."""
+        from app.services.itinerary import (
+            DEFAULT_BREAKFAST_MINUTES,
+            DEFAULT_MEAL_MINUTES,
+            _stop_minutes,
+        )
+
+        restricciones = Constraints(days=1, center_lat=13.70, center_lon=-89.22)
+        comedor = lugar("Comedor", 13.70, -89.22, Category.food)
+
+        assert _stop_minutes(comedor, "breakfast", restricciones) == DEFAULT_BREAKFAST_MINUTES
+        assert _stop_minutes(comedor, "dinner", restricciones) == DEFAULT_MEAL_MINUTES
+
+    def test_si_la_persona_puso_duracion_manda_la_suya(self):
+        from app.services.itinerary import _stop_minutes
+
+        restricciones = Constraints(
+            days=1, center_lat=13.70, center_lon=-89.22, meal_minutes=30
+        )
+        comedor = lugar("Comedor", 13.70, -89.22, Category.food)
+
+        assert _stop_minutes(comedor, "breakfast", restricciones) == 30
+
+    def test_no_se_aconseja_un_desayuno_que_nadie_pidio(self):
+        """Sin esto, todo itinerario que empiece temprano estrenaria un
+        "llevá desayuno" que nadie pidio."""
+        from app.services.itinerary import Itinerary, advise, schedule_day
+
+        secuencia, restricciones = self._dia(time(8, 0), [])
+        dia = schedule_day(1, secuencia, restricciones)
+        consejos = advise(Itinerary(days=[dia]), restricciones, [], None)
+
+        assert not any("desayuno" in c.detail for c in consejos)
+
+    def test_la_reserva_no_guarda_sitio_para_un_desayuno_que_nadie_pidio(self):
+        """La tabla de franjas y la cuenta tienen que salir del mismo sitio.
+
+        Al entrar el desayuno a MEAL_WINDOWS, el calculo de kilometros
+        reservados tomaba "las primeras `esperadas` franjas" y eso paso a
+        empezar por el desayuno: guardaba sitio para una comida que ese dia no
+        se iba a poner y se saltaba la cena. Dos dias mas de "llevá comida"
+        sobre el banco, de 9 a 11, sin que nadie hubiera pedido desayunar.
+        """
+        from app.services.itinerary import _meal_windows_for
+
+        sin_pedirlo = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(8, 0),
+            latest_end=time(21, 0),
+            include_meals=True,
+        )
+        assert [t for t, _ in _meal_windows_for(sin_pedirlo)] == ["lunch", "dinner"]
+
+        pidiendolo = replace(sin_pedirlo, must_include_meals=["breakfast"])
+        assert [t for t, _ in _meal_windows_for(pidiendolo)] == [
+            "breakfast",
+            "lunch",
+            "dinner",
+        ]
+
+    def test_un_desayuno_pedido_fuera_de_hora_no_cuenta_en_la_reserva(self):
+        """Quien odia madrugar tampoco gasta presupuesto en el desayuno."""
+        from app.services.itinerary import _meal_windows_for
+
+        tarde = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(10, 0),
+            latest_end=time(21, 0),
+            include_meals=True,
+            must_include_meals=["breakfast"],
+        )
+
+        assert [t for t, _ in _meal_windows_for(tarde)] == ["lunch", "dinner"]

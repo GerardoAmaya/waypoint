@@ -123,7 +123,9 @@ class ItineraryRequest(BaseModel):
     # Comidas pedidas con nombre. include_meals dice "meteme comidas donde
     # quepan"; esto dice "cuento con esta comida", y un dia que no llega a la
     # franja de una comida pedida tiene que explicarlo.
-    must_include_meals: list[Literal["lunch", "dinner"]] = Field(default_factory=list)
+    must_include_meals: list[Literal["breakfast", "lunch", "dinner"]] = Field(
+        default_factory=list
+    )
     # Minutos por comida. El tope de cuatro horas no es un caso de uso, es una
     # barrera: un modelo que devuelva 600 no deja un dia largo, deja un dia de
     # una sola parada.

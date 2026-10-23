@@ -88,6 +88,7 @@ export default function Linea({
     if (vuelveAlInicio && indice === 0) {
       return `Salida · ${CATEGORIA[parada.place.category].nombre}`;
     }
+    if (parada.meal === "breakfast") return "Desayuno";
     if (parada.meal === "lunch") return "Almuerzo";
     if (parada.meal === "dinner") return "Cena";
     return CATEGORIA[parada.place.category].nombre;

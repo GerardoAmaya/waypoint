@@ -190,6 +190,10 @@ SUBCATEGORY_DURATIONS: dict[str, int] = {
 # uno en un museo, no.
 DEFAULT_MEAL_MINUTES = 90
 
+# El desayuno es la comida corta del dia: uno se sienta, come y sale. Noventa
+# minutos a las ocho de la mañana se comen la primera visita.
+DEFAULT_BREAKFAST_MINUTES = 45
+
 # La geometria y las velocidades viven en geo.py. El motor ya no las toca
 # directamente: pide traslados al proveedor y no sabe como se midieron.
 
@@ -295,11 +299,31 @@ OUTDOOR_CATEGORIES = {Category.nature.value, Category.viewpoint.value}
 INDOOR_CLOSES = time(18, 0)
 INDOOR_CATEGORIES = {Category.culture.value, Category.attraction.value}
 
+# **El desayuno se pide, no se asume.** A diferencia del almuerzo y la cena,
+# este no entra por include_meals: hay que nombrarlo en must_include_meals.
+# Quien viaja casi siempre desayuna donde duerme, y meterle un comedor a las
+# ocho de la mañana a todo el mundo seria decidir por el.
+#
+# Medido sobre los 419 comedores del catalogo que publican horario: a las 7:00
+# abre el 21%, a las 8:00 el 34% y a las 9:00 el 45%. La franja arranca a las
+# 6:30 porque hay quien sale temprano, y cierra a las 9:30 porque a esa hora ya
+# es media mañana y lo que viene es el almuerzo.
+BREAKFAST_WINDOW = (time(6, 30), time(9, 30))
 LUNCH_WINDOW = (time(11, 30), time(14, 30))
 DINNER_WINDOW = (time(18, 0), time(21, 0))
 
+# **Y quien odia madrugar no necesita una regla.** El motor ya descarta una
+# comida cuyo dia no alcanza la franja —`dia.start <= cierre`—, y "odio
+# madrugar" hace que el modelo ponga la hora de inicio en las 10:00. Un dia que
+# empieza a las 10:00 no llega al desayuno y el desayuno no se pone. Sin caso
+# especial.
+#
 # En orden: el dia que solo da para una comida da para el almuerzo.
-MEAL_WINDOWS = (("lunch", LUNCH_WINDOW), ("dinner", DINNER_WINDOW))
+MEAL_WINDOWS = (
+    ("breakfast", BREAKFAST_WINDOW),
+    ("lunch", LUNCH_WINDOW),
+    ("dinner", DINNER_WINDOW),
+)
 
 # Para proyectar hasta que hora llega el dia antes de armarlo, que es cuando
 # hay que decidir cuantos cupos reservar para comer.
@@ -370,7 +394,7 @@ def _meal_km_reserve(
     secuencia: list[tuple[PlaceHit, str | None]] = [(lugar, None) for lugar in ruta]
     total = 0.0
 
-    for tipo, ventana in list(MEAL_WINDOWS)[:esperadas]:
+    for tipo, ventana in _meal_windows_for(constraints)[:esperadas]:
         tentativa, comida, costo = _best_meal_insertion(
             secuencia,
             cercanas,
@@ -401,6 +425,38 @@ def _meal_km_reserve(
     return total
 
 
+def _meal_windows_for(constraints: Constraints) -> list[tuple[str, tuple[time, time]]]:
+    """Las franjas que ESTE dia puede llegar a usar, en orden del reloj.
+
+    **La lista y la cuenta tienen que salir del mismo sitio.** Antes habia una
+    tabla global de dos entradas y una cuenta aparte, y funcionaban porque
+    coincidian por casualidad: con MEAL_WINDOWS = (almuerzo, cena), tomar las
+    primeras `esperadas` daba lo correcto. Al entrar el desayuno a la tabla,
+    `[:1]` paso a ser el desayuno y la reserva de kilometros se guardaba para
+    una comida que ese dia no se iba a poner, saltandose la cena. Costo dos
+    dias de "llevá comida" sobre el banco —de 9 a 11— sin que nadie hubiera
+    pedido un desayuno.
+
+    El desayuno entra solo si lo pidieron y si el dia alcanza su franja; el
+    almuerzo y la cena, cuando el horario del dia las toca.
+    """
+    if not constraints.include_meals:
+        return []
+
+    salida: list[tuple[str, tuple[time, time]]] = []
+    if "breakfast" in constraints.must_include_meals and _as_minutes(
+        constraints.earliest_start
+    ) <= _as_minutes(BREAKFAST_WINDOW[1]):
+        salida.append(("breakfast", BREAKFAST_WINDOW))
+    if _as_minutes(constraints.latest_end) >= _as_minutes(LUNCH_WINDOW[0]) and _as_minutes(
+        constraints.earliest_start
+    ) <= _as_minutes(LUNCH_WINDOW[1]):
+        salida.append(("lunch", LUNCH_WINDOW))
+    if _as_minutes(constraints.latest_end) >= _as_minutes(DINNER_WINDOW[0]):
+        salida.append(("dinner", DINNER_WINDOW))
+    return salida
+
+
 def _meals_expected(constraints: Constraints) -> int:
     """Cuantas comidas va a intentar colocar el dia.
 
@@ -408,17 +464,7 @@ def _meals_expected(constraints: Constraints) -> int:
     tiene sentido con un tope pedido. Esto dice cuantas comidas hay que tener
     en cuenta al reservar tiempo y kilometros, que hace falta siempre.
     """
-    if not constraints.include_meals:
-        return 0
-
-    esperadas = 0
-    if _as_minutes(constraints.latest_end) >= _as_minutes(LUNCH_WINDOW[0]) and _as_minutes(
-        constraints.earliest_start
-    ) <= _as_minutes(LUNCH_WINDOW[1]):
-        esperadas += 1
-    if _as_minutes(constraints.latest_end) >= _as_minutes(DINNER_WINDOW[0]):
-        esperadas += 1
-    return esperadas
+    return len(_meal_windows_for(constraints))
 
 
 def _typical_visit_minutes(candidatos: list[PlaceHit], constraints: Constraints) -> int:
@@ -1638,6 +1684,13 @@ def _stop_minutes(lugar: PlaceHit, comida: str | None, constraints: Constraints)
     quien dice "dos horas en el parque" esta hablando de todos los parques del
     dia, y afinar por debajo de eso seria discutirle.
     """
+    if comida == "breakfast":
+        # Si la persona pidio una duracion para las comidas, manda la suya.
+        return (
+            constraints.meal_minutes
+            if constraints.meal_minutes != DEFAULT_MEAL_MINUTES
+            else DEFAULT_BREAKFAST_MINUTES
+        )
     if comida is not None:
         return constraints.meal_minutes
     # **Del punto de partida se sale, no se visita.** Con un hotel no se veia
@@ -1675,7 +1728,9 @@ def _arrival_times(
         if indice:
             _, minutos = travel.between(secuencia[indice - 1][0], lugar)
             momento = _add_minutes(momento, minutos)
-        if comida == "lunch" and momento < LUNCH_WINDOW[0]:
+        if comida == "breakfast" and momento < BREAKFAST_WINDOW[0]:
+            momento = BREAKFAST_WINDOW[0]
+        elif comida == "lunch" and momento < LUNCH_WINDOW[0]:
             momento = LUNCH_WINDOW[0]
         elif comida == "dinner" and momento < DINNER_WINDOW[0]:
             momento = DINNER_WINDOW[0]
@@ -1802,6 +1857,59 @@ def _cerrado_a_esa_hora(
     )
 
 
+def _espera_absorbible(
+    secuencia: list[tuple[PlaceHit, str | None]],
+    posicion: int,
+    horas: list[time],
+    constraints: Constraints,
+    anochecer: time | None,
+) -> int:
+    """Cuantos minutos de espera pueden quedarse en las paradas anteriores.
+
+    **La misma cuenta que hace _repartir_la_espera, pero antes de decidir.** Esa
+    funcion convierte la espera previa a una comida en rato en los lugares de
+    antes, y lo hace bien; el problema era de orden. Corre dentro de
+    schedule_day, o sea despues de que _best_meal_insertion ya descarto la
+    comida por llegar temprano. La escapatoria existia y la puerta se cerraba
+    antes de llegar a ella.
+
+    El caso del reporte: un dia que terminaba sus visitas a las 16:27 con la
+    cena pedida a las 18:00. Setenta y cuatro minutos de espera, rechazados. Y
+    la ultima parada era una iglesia que cierra a las 18:00 y salia a las
+    16:27: noventa y tres minutos de margen, de sobra para los setenta y cuatro.
+    La persona leia "decime hasta que hora podes" habiendo dicho que podia
+    hasta las once de la noche.
+
+    Cada parada toma hasta su propio limite —la luz si es al aire libre, la
+    hora de cierre si es bajo techo—, y las comidas anteriores no se estiran
+    porque su duracion la puso la persona.
+
+    **Y para decidir, ninguna cuenta mas que su propia duracion.** El limite
+    duro no sirve de criterio: un mirador abierto hasta el anochecer lo
+    aceptaria todo, y con eso un dia de una sola parada se quedaba siete horas
+    y media ahi con tal de llegar a cenar. Eso no es quedarse mas, es relleno.
+    Doblar la estancia prevista es el maximo que se puede llamar "nos quedamos
+    un rato mas"; lo detecto un test que ya existia —"si el dia termina a media
+    tarde, no se inventa una cena"— y que la primera version hacia fallar.
+
+    Es una estimacion a la baja a proposito, y por eso no coincide con lo que
+    _repartir_la_espera termina repartiendo: aquella llena hasta el limite duro
+    de cada parada. Esta solo decide si vale la pena intentarlo, y conviene que
+    se quede corta: un si de mas mete una comida que deja hueco muerto, un no
+    de mas solo deja el dia como estaba.
+    """
+    total = 0
+    for indice in range(posicion - 1, -1, -1):
+        lugar, comida = secuencia[indice]
+        if comida is not None:
+            continue
+        dura = _stop_minutes(lugar, comida, constraints)
+        salida = _add_minutes(horas[indice], dura)
+        tope = _limite_de_salida(lugar, constraints, anochecer)
+        total += max(0, min(dura, _minutes_between(salida, tope)))
+    return total
+
+
 def _best_meal_insertion(
     secuencia: list[tuple[PlaceHit, str | None]],
     disponibles: list[PlaceHit],
@@ -1848,23 +1956,64 @@ def _best_meal_insertion(
 
     base_km = _sequence_km(secuencia, travel)
     limite_temprano = _add_minutes(ventana[0], -tolerancia)
+    anochecer = constraints.dusk_for(numero)
     mejor: tuple[float, list[tuple[PlaceHit, str | None]], PlaceHit, float] | None = None
 
+    # **El desayuno puede ir primero; las otras dos no.** El bucle arrancaba en
+    # 1 porque un dia no empieza almorzando, y esa misma regla dejaba al
+    # desayuno sin su unico sitio natural: con la secuencia base de una sola
+    # parada, las ocho candidatas entraban por hora y presupuesto y ninguna se
+    # podia colocar, porque la posicion 0 no se probaba nunca.
+    #
+    # Salvo que el dia salga de un sitio fijo. Ahi la primera parada es de
+    # donde se sale, y meter un comedor delante seria desayunar antes de salir
+    # del hotel: en ese caso el desayuno va detras, que es ir a desayunar.
+    primera = 0 if tipo == "breakfast" and not constraints.anchors_day(numero) else 1
+
     for comida in disponibles:
-        for posicion in range(1, len(secuencia) + 1):
+        for posicion in range(primera, len(secuencia) + 1):
             tentativa = secuencia[:posicion] + [(comida, tipo)] + secuencia[posicion:]
             horas = _arrival_times(tentativa, constraints, travel)
 
             # La hora sin la espera de franja: sirve para descartar las
             # posiciones que obligarian a esperar media manana sentado.
-            natural = _arrival_times(
+            natural_horas = _arrival_times(
                 [*tentativa[:posicion], (comida, None), *tentativa[posicion + 1 :]],
                 constraints,
                 travel,
-            )[posicion]
+            )
+            natural = natural_horas[posicion]
 
-            if natural > ventana[1] or natural < limite_temprano:
+            if natural > ventana[1]:
                 continue
+            # **El suelo cede lo que las paradas anteriores puedan absorber, y
+            # solo al final del dia.** Llegar temprano solo es malo si se
+            # espera de brazos cruzados; si ese rato cabe en el mirador de
+            # antes, no es espera, es rato de viaje (ver _espera_absorbible).
+            #
+            # Pero el credito vale unicamente cuando la comida cierra la
+            # secuencia. Concederlo en cualquier posicion costo 89 paradas y
+            # tres dias vacios sobre el banco —de 320 a 231, y la variedad de
+            # 3,56 a 2,64—: una cena metida a media mañana no se adelanta, la
+            # franja la empuja a las 18:00, y todo lo que venia detras queda
+            # fuera de hora y se cae. Al final no hay nada que empujar.
+            #
+            # Y la comida tiene que caber entera antes de que el dia cierre.
+            # El suelo viejo lo impedia de casualidad: sin esa comprobacion, el
+            # caso "dia-corto" del banco —ventana de 10:00 a 15:00— colocaba un
+            # almuerzo que terminaba a las 16:00 y el dia entero se caia.
+            if natural < limite_temprano:
+                if posicion < len(secuencia):
+                    continue
+                fin = _add_minutes(horas[posicion], _stop_minutes(comida, tipo, constraints))
+                if fin > constraints.latest_end:
+                    continue
+                falta = _minutes_between(natural, limite_temprano)
+                absorbible = _espera_absorbible(
+                    tentativa, posicion, natural_horas, constraints, anochecer
+                )
+                if falta > absorbible:
+                    continue
             if horas[posicion] > ventana[1]:
                 continue
             if _cerrado_a_esa_hora(comida, horas[posicion], tipo, constraints, numero):
@@ -1918,7 +2067,18 @@ def _insert_meals(
     # meta un restaurante a media tarde.
     ancla = constraints.start_place
     if ancla is not None and ruta[0] is ancla and ancla.category == Category.food.value:
-        etiqueta = "lunch" if constraints.earliest_start < DINNER_WINDOW[0] else "dinner"
+        # Cual de las tres es la decide la hora a la que se sale, y el
+        # desayuno solo cuenta si lo pidieron: salir de un comedor a las siete
+        # sin haberlo nombrado es salir, no desayunar.
+        if (
+            "breakfast" in constraints.must_include_meals
+            and constraints.earliest_start <= BREAKFAST_WINDOW[1]
+        ):
+            etiqueta = "breakfast"
+        elif constraints.earliest_start < DINNER_WINDOW[0]:
+            etiqueta = "lunch"
+        else:
+            etiqueta = "dinner"
         secuencia[0] = (ancla, etiqueta)
         return secuencia
 
@@ -1927,6 +2087,17 @@ def _insert_meals(
 
     medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
     disponibles = list(comidas)
+
+    # **El desayuno solo si lo pidio.** Las otras dos entran por include_meals
+    # —"donde quepan"— y esta no: quien viaja casi siempre desayuna donde
+    # duerme. Va primero porque es la primera del dia y porque asi se lleva el
+    # comedor que le queda de camino antes de que el almuerzo elija.
+    if "breakfast" in constraints.must_include_meals:
+        secuencia, desayuno, _ = _colocar_comida(
+            secuencia, disponibles, "breakfast", BREAKFAST_WINDOW, constraints, medidor, numero
+        )
+        if desayuno is not None:
+            disponibles.remove(desayuno)
 
     secuencia, almuerzo, _ = _colocar_comida(
         secuencia, disponibles, "lunch", LUNCH_WINDOW, constraints, medidor, numero
@@ -2020,7 +2191,9 @@ def schedule_day(
             momento = _add_minutes(momento, minutos)
 
         # Cada comida espera a que abra su propia franja.
-        if comida == "lunch" and momento < LUNCH_WINDOW[0]:
+        if comida == "breakfast" and momento < BREAKFAST_WINDOW[0]:
+            momento = BREAKFAST_WINDOW[0]
+        elif comida == "lunch" and momento < LUNCH_WINDOW[0]:
             momento = LUNCH_WINDOW[0]
         elif comida == "dinner" and momento < DINNER_WINDOW[0]:
             momento = DINNER_WINDOW[0]
@@ -2105,6 +2278,14 @@ def _repartir_la_espera(dia: Day, constraints: Constraints) -> None:
             tope = _limite_de_salida(lugar.place, constraints, anochecer)
             margen = _minutes_between(lugar.departure, tope)
             # Las que ya estan en su limite o pasadas no dan nada.
+            #
+            # Aqui no hay techo por parada y en _espera_absorbible si, y la
+            # diferencia es deliberada: ese techo decide si vale la pena
+            # intentar la comida, y este reparto saca el mejor dia de una
+            # decision ya tomada. Ponerlo tambien aca dejaba hueco muerto en el
+            # caso para el que se escribio esta funcion —un unico mirador antes
+            # de la cena, que debe quedarse hasta que toque salir—, y hay un
+            # test que lo fija.
             toma = max(0, min(espera, margen))
             if toma == 0:
                 continue
@@ -2408,6 +2589,13 @@ def advise(
             if any(p.meal == tipo for p in dia.stops):
                 continue
 
+            # **Del desayuno solo se habla si lo pidieron.** No entra por
+            # include_meals, asi que su ausencia no es un hueco que explicar:
+            # sin esto, todo itinerario que empiece temprano estrenaria un
+            # "llevá desayuno" que nadie pidio.
+            if tipo == "breakfast" and tipo not in pedidas:
+                continue
+
             # El dia llega a la franja si empieza antes de que cierre y
             # termina despues de que abre.
             llega = dia.start <= ventana[1] and dia.end >= ventana[0]
@@ -2423,7 +2611,13 @@ def advise(
             # hay que decirle es que ese dia no da, y por que.
             if tipo in pedidas:
                 consejos.append(
-                    _meal_out_of_reach(dia, tipo, ventana, constraints.budget_was_asked_for)
+                    _meal_out_of_reach(
+                        dia,
+                        tipo,
+                        ventana,
+                        constraints.budget_was_asked_for,
+                        constraints.latest_end,
+                    )
                 )
 
     return consejos
@@ -2434,6 +2628,7 @@ def _meal_out_of_reach(
     tipo: str,
     ventana: tuple[time, time],
     pidio_el_tope: bool = True,
+    latest_end: time | None = None,
 ) -> Advice:
     """El dia no llega a la franja de una comida que se pidio con nombre."""
     nombre, kind = MEAL_LABELS[tipo]
@@ -2441,17 +2636,35 @@ def _meal_out_of_reach(
         espera = _minutes_between(dia.end, ventana[0])
         # Igual que en _meal_advice: no se aconseja subir un limite que la
         # persona no puso.
-        # **Aqui el freno es el reloj, y por eso la salida es el horario.** Es
-        # el unico de los dos avisos de comida donde alargar el dia sirve: en
-        # el otro el limite son los kilometros, y mas horas no agregan ni un
-        # metro. No hace falta que calcule nada, solo que diga hasta cuando
-        # puede.
-        salida = (
-            "Decime hasta qué hora podés y lo acomodo, o subí el límite de "
-            "traslado si querés que llegue"
-            if pidio_el_tope
-            else "Decime hasta qué hora podés y lo acomodo"
+        #
+        # **Y no se pide una hora que la persona ya dio.** La version anterior
+        # decia siempre "decime hasta que hora podes", dando por hecho que el
+        # freno era el reloj. En el reporte no lo era: el dia terminaba a las
+        # 16:46 con el tope puesto en las 23:00, seis horas mas tarde. Pedirle
+        # que lo suba es pedirle que repita lo que dijo, y encima no serviria
+        # de nada.
+        #
+        # Si todavia queda dia por delante, lo que falta no son horas: es que
+        # a esa hora ya no habia donde seguir, o lo que habia cerraba antes de
+        # que abriera la franja.
+        sobra = (
+            latest_end is not None
+            and dia.end < latest_end
+            and _minutes_between(dia.end, latest_end) > espera
         )
+        if sobra:
+            salida = (
+                f"No es el horario: dijiste hasta las {latest_end:%H:%M} y el día "
+                "igual se queda corto, porque a esa hora ya no queda nada "
+                "abierto cerca. Pedime menos paradas y te dejo tiempo para llegar"
+            )
+        else:
+            salida = (
+                "Decime hasta qué hora podés y lo acomodo, o subí el límite de "
+                "traslado si querés que llegue"
+                if pidio_el_tope
+                else "Decime hasta qué hora podés y lo acomodo"
+            )
         detalle = (
             f"Pediste {nombre} y este día no llega: termina a las "
             f"{dia.end:%H:%M} y la {nombre} empieza a las {ventana[0]:%H:%M}, "
@@ -2466,7 +2679,11 @@ def _meal_out_of_reach(
     return Advice(kind, dia.number, detalle)
 
 
-MEAL_LABELS = {"lunch": ("almuerzo", "bring_lunch"), "dinner": ("cena", "bring_dinner")}
+MEAL_LABELS = {
+    "breakfast": ("desayuno", "bring_breakfast"),
+    "lunch": ("almuerzo", "bring_lunch"),
+    "dinner": ("cena", "bring_dinner"),
+}
 
 
 def _meal_advice(
@@ -2625,7 +2842,9 @@ def _sequence_minutes(
     for indice, (lugar, comida) in enumerate(secuencia):
         if indice:
             minutos += travel.between(secuencia[indice - 1][0], lugar)[1]
-        if comida == "lunch":
+        if comida == "breakfast":
+            minutos = max(minutos, _as_minutes(BREAKFAST_WINDOW[0]))
+        elif comida == "lunch":
             minutos = max(minutos, _as_minutes(LUNCH_WINDOW[0]))
         elif comida == "dinner":
             minutos = max(minutos, _as_minutes(DINNER_WINDOW[0]))

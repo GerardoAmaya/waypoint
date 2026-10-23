@@ -2078,6 +2078,154 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### El desayuno se pide, y quien odia madrugar no necesita una regla
+
+La pregunta vino de usar la demo: ¿se puede poner desayuno? ¿Y si alguien dice
+«odio madrugar», no ponérselo? Y de paso: los turistas cenan a las ocho o las
+nueve, ¿no?
+
+**Lo primero que hizo falta fue medir si los datos aguantan cada cosa.** De los
+419 comedores del catálogo que publican horario en OpenStreetMap —el 15% de
+2.717—, un sábado:
+
+| hora | abiertos |
+|---|---|
+| 07:00 | 21% |
+| 08:00 | 34% |
+| 09:00 | 45% |
+| 12:00 | 72% |
+| 18:00 | 62% |
+| 20:00 | **30%** |
+| 21:00 | **14%** |
+
+Y por zona, contando los que se sabe abiertos:
+
+| zona | 08:00 | 18:00 | 20:00 |
+|---|---|---|---|
+| Ruta de las Flores | 7 | 16 | **7** |
+| Suchitoto | 4 | 12 | **4** |
+| Santa Ana | 11 | 21 | 9 |
+| San Salvador | 62 | 122 | 81 |
+
+**Así que la cena tardía se descartó, con el número delante.** La intuición es
+correcta para San Salvador y se da vuelta fuera: en la Ruta de las Flores,
+mover la cena a las 20:00 deja menos de la mitad de los sitios. La franja ya
+llega hasta las 21:00 —lo que pasa es que el motor coloca la cena al abrir la
+franja, y las 18:00 resulta ser justo donde está el pico de oferta—. Moverla
+sería cambiar un valor por defecto bien calzado con la oferta real por uno que
+sirve en una sola ciudad.
+
+**Y lo de «odio madrugar» salió gratis.** Medido sobre el intérprete:
+
+```
+"...odio madrugar"  →  earliest_start 10:00
+sin eso             →  earliest_start 09:00
+```
+
+El motor ya descarta una comida cuyo día no alcanza su franja —`dia.start <=
+cierre`—. Con la franja de desayuno cerrando a las 9:30, un día que empieza a
+las 10:00 no llega, y el desayuno no se pone. **Sin caso especial, sin regla
+nueva.** El aviso lo dice con todas las letras: «Pediste desayuno y este día no
+llega: empieza a las 10:00, después de que cierra la franja de desayuno a las
+09:30».
+
+Tres decisiones propias del desayuno:
+
+- **Se pide, no se asume.** No entra por `include_meals` como el almuerzo y la
+  cena: quien viaja casi siempre desayuna donde duerme, y meterle un comedor a
+  las ocho de la mañana a todo el que madrugue sería decidir por él. Su
+  ausencia tampoco se aconseja, o todo itinerario madrugador estrenaría un
+  «llevá desayuno» que nadie pidió.
+- **Dura 45 minutos, no 90.** Uno se sienta, come y sale. Noventa minutos a las
+  ocho de la mañana se comen la primera visita. Si la persona pidió una
+  duración para las comidas, manda la suya.
+- **Puede ir primero, y antes no podía.** La búsqueda de posición arrancaba en
+  1 porque un día no empieza almorzando, y esa misma regla dejaba al desayuno
+  sin su único sitio natural: con la secuencia base, las ocho candidatas
+  entraban por hora y por presupuesto y ninguna se podía colocar. Salvo que el
+  día salga de un sitio fijo: ahí va detrás, que es ir a desayunar en vez de
+  desayunar antes de salir del hotel.
+
+**El fallo que costó encontrar fue de contabilidad.** Había una tabla global de
+franjas y una cuenta aparte de cuántas comidas esperar, y funcionaban porque
+coincidían por casualidad: con `MEAL_WINDOWS = (almuerzo, cena)`, tomar las
+primeras `esperadas` daba lo correcto. Al entrar el desayuno a la tabla, `[:1]`
+pasó a ser el desayuno: la reserva de kilómetros guardaba sitio para una comida
+que ese día no se iba a poner, y se saltaba la cena.
+
+Lo delató el banco, dos días más de «llevá comida» —de 9 a 11— en itinerarios
+donde nadie había pedido desayunar. Y lo delató porque antes se comprobó que el
+banco es determinista: dos corridas seguidas dieron cifras idénticas, así que
+la diferencia no era ruido. La lista y la cuenta ahora salen de la misma
+función.
+
+Con eso, el banco vuelve exacto a la línea base —25/26, 334 paradas, 15% de
+«llevá comida», variedad 3,64—: el desayuno no le toca un pelo a quien no lo
+pide.
+
+### La escapatoria existía y la puerta se cerraba antes de llegar a ella
+
+Reportado desde la demo. La petición decía «ceno los dos días y **vuelvo antes
+de las 11 p.m.**», y el itinerario contestaba:
+
+> Pediste cena y este día no llega: termina a las 16:46 y la cena empieza a las
+> 18:00, o sea 1 h 14 min de espera. **Decime hasta qué hora podés y lo acomodo**
+
+Le pedía un dato que la persona acababa de dar, y que además no habría servido:
+el día terminaba seis horas antes del tope que ella misma puso.
+
+**El motor sí podía.** La última parada era Iglesia El Carmen —`culture`, cierra
+a las 18:00— y salía a las 16:27: noventa y tres minutos de margen contra los
+setenta y cuatro que hacían falta. Quedándose ahí un rato más, la cena entraba a
+las 18:00 y el regreso al hotel caía sobre las 19:49, muy dentro de las 23:00.
+
+Y la escapatoria ya estaba escrita. `_repartir_la_espera` convierte la espera
+previa a una comida en rato en los lugares de antes, acotada por la luz y por
+los horarios de cierre. El problema era de **orden**: corre dentro de
+`schedule_day`, o sea después de que `_best_meal_insertion` ya descartó la
+comida por llegar temprano. La puerta se cerraba antes de llegar a la salida.
+
+El arreglo es que el suelo de hora temprana ceda lo que las paradas previas
+puedan absorber. Lo que costó fue acotarlo, y lo acotó el banco en tres pasadas:
+
+| | duros | paradas | variedad | días vacíos |
+|---|---|---|---|---|
+| antes | 25/26 | 320 | 3,56 | 0 |
+| crédito en cualquier posición | 23/26 | **231** | **2,64** | **3** |
+| solo al final de la secuencia | 24/26 | 332 | 3,59 | **2** |
+| …y que la comida quepa antes del cierre del día | **25/26** | **334** | **3,64** | 0 |
+
+- **Solo al final.** Una cena metida a media mañana no se adelanta: la franja la
+  empuja a las 18:00 y todo lo que venía detrás queda fuera de hora y se cae.
+  Ochenta y nueve paradas y tres días vacíos. Al final de la secuencia no hay
+  nada que empujar.
+- **Y que quepa antes de que cierre el día.** El suelo viejo lo impedía de
+  casualidad. Sin esa comprobación, el caso `dia-corto` del banco —ventana de
+  10:00 a 15:00— colocaba un almuerzo que terminaba a las 16:00 y el día entero
+  se caía.
+- **Para decidir, ninguna parada cuenta más que su propia duración.** El límite
+  duro no sirve de criterio: un mirador abierto hasta el anochecer lo aceptaría
+  todo, y con eso un día de una sola parada se quedaba **siete horas y media**
+  ahí con tal de llegar a cenar. Lo detectó un test que ya existía —«si el día
+  termina a media tarde, no se inventa una cena»—.
+
+Ese techo vive solo en la decisión y no en el reparto, y la asimetría es
+deliberada: el techo decide si vale la pena intentarlo, el reparto saca el mejor
+día de una decisión ya tomada. Ponerlo también en el reparto dejaba hueco muerto
+en el caso para el que esa función se escribió —un único mirador antes de la
+cena, que debe quedarse hasta que toque salir— y hay un test que lo fija. La
+estimación se queda corta a propósito: un sí de más mete una comida que deja
+tiempo muerto, un no de más solo deja el día como estaba.
+
+**Y el aviso dejó de pedir lo que ya le dijeron.** Cuando todavía queda día por
+delante, lo que falta no son horas: es que a esa hora ya no hay dónde seguir.
+Decirlo así es la diferencia entre una pregunta y un diagnóstico. El texto
+anterior daba por hecho que el freno era el reloj, y es el mismo error que esta
+bitácora ya tiene anotado en «Decir la causa equivocada, otra vez».
+
+Resultado neto: catorce paradas más sobre el banco, mejor variedad, y el mismo
+cumplimiento de límites duros.
+
 ### Volver a un itinerario: el servidor ya los tenía todos
 
 Un plan se perdía al cerrar la pestaña, salvo que uno se acordara de copiar el

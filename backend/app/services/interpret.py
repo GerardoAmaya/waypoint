@@ -101,11 +101,13 @@ los museos" o "prefiero naturaleza" son preferencias y van en \
 preferred_categories. La diferencia es que un requisito se cumple o se \
 incumple, y una preferencia solo sube las probabilidades.
 - "include_meals": booleano. Por defecto true.
-- "must_include_meals": lista con "lunch" y/o "dinner". Van SOLO las comidas \
-que nombra: "voy a cenar los dos dias" es ["dinner"], "almuerzo y cena" es \
-["lunch", "dinner"]. Si solo dice que come, o no habla de comidas, dejala \
-vacia: la diferencia es que una comida nombrada que el itinerario no pueda \
-darle se le explica, y una que no nombro, no.
+- "must_include_meals": lista con "breakfast", "lunch" y/o "dinner". Van SOLO \
+las comidas que nombra: "voy a cenar los dos dias" es ["dinner"], "almuerzo y \
+cena" es ["lunch", "dinner"], "desayuno ahi" es ["breakfast"]. Si solo dice \
+que come, o no habla de comidas, dejala vacia: la diferencia es que una comida \
+nombrada que el itinerario no pueda darle se le explica, y una que no nombro, \
+no. **El desayuno ademas solo se pone si lo nombra**, porque quien viaja suele \
+desayunar donde duerme; almuerzo y cena entran solos donde quepan.
 - "meal_minutes": entero de 20 a 240. Cuanto dura cada comida, en minutos. \
 Por defecto 90. "almuerzo tranquilo de dos horas" es 120; "comemos algo \
 rapido" o "no quiero perder tiempo comiendo" es cerca de 40. Solo si lo dice.
@@ -367,18 +369,24 @@ def _category_minutes(valores, notes: list[str]) -> dict[Category, int]:
 def _meals(valores, notes: list[str]) -> list[str]:
     """Limpia las comidas pedidas con nombre.
 
-    Solo almuerzo y cena: son las dos franjas que el motor sabe colocar. Un
-    "breakfast" se descarta con aviso en vez de aceptarse y no cumplirse
-    nunca, que es la peor de las dos respuestas.
+    Desayuno, almuerzo y cena: las tres franjas que el motor sabe colocar.
+    Cualquier otra cosa se descarta con aviso en vez de aceptarse y no
+    cumplirse nunca, que es la peor de las dos respuestas.
+
+    El desayuno llego despues que las otras dos, y es el unico que ademas de
+    aparecer aca tiene que estar nombrado para que se ponga: ver
+    BREAKFAST_WINDOW en services/itinerary.py.
     """
     salida: list[str] = []
     for valor in _strings(valores):
         clave = valor.strip().lower()
-        if clave in ("lunch", "dinner"):
+        if clave in ("breakfast", "lunch", "dinner"):
             if clave not in salida:
                 salida.append(clave)
         else:
-            notes.append(f"no reconocí {valor!r} como una comida; solo almuerzo y cena")
+            notes.append(
+                f"no reconocí {valor!r} como una comida; solo desayuno, almuerzo y cena"
+            )
     return salida
 
 
@@ -776,8 +784,8 @@ bajarlo bastante; "no me importa manejar" es subirlo.
 "attraction", "lodging", o null.
 - "avoided_categories": la misma lista, o null.
 - "include_meals": booleano o null.
-- "must_include_meals": lista con "lunch" y/o "dinner", o null. Las comidas \
-que nombra para ese dia.
+- "must_include_meals": lista con "breakfast", "lunch" y/o "dinner", o null. \
+Las comidas que nombra para ese dia. El desayuno solo si lo nombra.
 - "meal_minutes": entero de 20 a 240, o null. Minutos por comida. "dame mas \
 tiempo para almorzar" es subirlo.
 - "category_minutes": objeto de categoria a minutos, o null. "mas rato en el \
