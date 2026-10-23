@@ -66,6 +66,7 @@ def _to_constraints(peticion: ItineraryRequest, db: Session) -> motor.Constraint
         day_modes={int(numero): modo for numero, modo in peticion.day_modes.items()},
         include_meals=peticion.include_meals,
         must_include_meals=list(peticion.must_include_meals),
+        meal_cuisines=dict(peticion.meal_cuisines),
         must_include_places=[
             hit for hit in places_by_ids(db, peticion.must_include_place_ids).values()
         ],
@@ -86,6 +87,7 @@ def _to_constraints(peticion: ItineraryRequest, db: Session) -> motor.Constraint
 def _to_stop(
     parada: motor.Stop,
     trazo: list[tuple[float, float]] | None = None,
+    cocina_pedida: str | None = None,
 ) -> StopOut:
     lugar = parada.place
     return StopOut(
@@ -97,7 +99,7 @@ def _to_stop(
             lat=lugar.lat,
             lon=lugar.lon,
             quality_score=lugar.quality_score,
-            cuisine=cocina_legible(lugar.tags),
+            cuisine=cocina_legible(lugar.tags, cocina_pedida),
             elevation_m=altitud_m(lugar.tags),
             phone=contacto(lugar.tags, "phone"),
             website=contacto(lugar.tags, "website"),
@@ -207,6 +209,11 @@ def _to_out(
                         parada,
                         trazos.get((anterior.place.id, parada.place.id))
                         if anterior is not None
+                        else None,
+                        # Si se pidio una cocina para esa comida y el sitio la
+                        # sirve, es esa la que se muestra. Ver cocina_legible.
+                        constraints.cuisine_for(parada.meal)
+                        if constraints is not None and parada.meal
                         else None,
                     )
                     for anterior, parada in zip([None, *dia.stops], dia.stops, strict=False)

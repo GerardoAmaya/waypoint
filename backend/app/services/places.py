@@ -45,8 +45,28 @@ class PlaceHit:
 # Cocina en castellano. OSM la escribe en ingles y con guiones bajos, y
 # "regional;pupusa" es un valor perfectamente valido: hay que partirlo.
 _COCINAS = {
+    # **"pupusas" en plural faltaba, y es el plato nacional.** Medido sobre el
+    # catalogo: de los 1.128 comedores que traen `cuisine`, 104 no tenian
+    # ninguna etiqueta legible, y entre los valores mas frecuentes que se
+    # caian estaban "pupusas" —la forma en plural, que OSM usa tanto como la
+    # singular— y "salvadoran".
     "pupusa": "pupusas",
+    "pupusas": "pupusas",
     "pupuseria": "pupusas",
+    "salvadoran": "salvadoreña",
+    "salvadorean": "salvadoreña",
+    "salvadoreña": "salvadoreña",
+    "tex-mex": "tex-mex",
+    "tacos": "tacos",
+    "burritos": "burritos",
+    "hot_dog": "hot dogs",
+    "wings": "alitas",
+    "juice": "jugos",
+    "cake": "pasteles",
+    "crepe": "crepas",
+    "bubble_tea": "bubble tea",
+    "cuban": "cubana",
+    "german": "alemana",
     "regional": "comida típica",
     "local": "comida típica",
     "latin_american": "latinoamericana",
@@ -95,11 +115,17 @@ _COCINAS = {
 _COCINAS_GENERICAS = frozenset({"regional", "local"})
 
 
-def cocina_legible(tags: dict | None) -> str | None:
+def cocina_legible(tags: dict | None, preferida: str | None = None) -> str | None:
     """La cocina de un comedor, en castellano y en una sola etiqueta.
 
     Solo traduce lo que conoce, en vez de mostrar el valor crudo de OSM: una
     etiqueta que diga "steak_house" delata la fuente y no ayuda a nadie.
+
+    **`preferida` manda cuando el sitio la sirve.** Un comedor puede declarar
+    "coffee_shop;pizza;burger;sandwich" y esta funcion elegiria "café", que es
+    cierto y, para quien pidio hamburguesas, parece que no le hicieron caso. El
+    caso es real: en San Salvador, "quiero almorzar hamburguesas" devolvia Casa
+    Xoxoctic —que sirve hamburguesas— etiquetada como café.
     """
     if not tags:
         return None
@@ -107,9 +133,15 @@ def cocina_legible(tags: dict | None) -> str | None:
     if not crudo:
         return None
 
+    partes = [
+        parte.strip().lower().replace(" ", "_")
+        for parte in str(crudo).replace(",", ";").split(";")
+    ]
+    if preferida and preferida in partes and preferida in _COCINAS:
+        return _COCINAS[preferida]
+
     generica: str | None = None
-    for parte in str(crudo).replace(",", ";").split(";"):
-        clave = parte.strip().lower().replace(" ", "_")
+    for clave in partes:
         if clave not in _COCINAS:
             continue
         if clave in _COCINAS_GENERICAS:

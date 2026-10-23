@@ -2078,6 +2078,63 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### «Quiero almorzar hamburguesas»: dónde filtrar importaba más que filtrar
+
+La cobertura de `cuisine` en OpenStreetMap resultó ser mucho mejor que la de
+los horarios: **41,5% del catálogo** —1.128 de 2.717— contra el 15% de
+`opening_hours`. Y con una distribución usable: pizza 151, pollo 116, comida
+típica 105, mexicana 79, hamburguesas 51. Hasta las zonas chicas tienen algo:
+Suchitoto 9 hamburgueserías, Ruta de las Flores 6.
+
+Media pieza ya estaba construida: `_COCINAS` en `services/places.py` traducía
+`burger` → «hamburguesas» desde que la ficha de cada parada muestra la cocina.
+Lo que faltaba era usarla para **elegir** y no solo para mostrar.
+
+**El hallazgo fue dónde va el filtro, y se encontró probándolo en el sitio
+equivocado primero.** Lo natural parecía filtrar al colocar la comida. Medido
+sobre un día en San Salvador —una ciudad con 51 hamburgueserías— ese filtro
+imprimía:
+
+```
+(almuerzo: 0 de 8 candidatos son hamburgueserías)
+```
+
+Cero. El motor recorta a los ocho comedores más cercanos **antes** de colocar
+la comida, y entre esos ocho no había ninguna. Filtrar ahí es filtrar una lista
+que ya se decidió sin saber lo que se había pedido. El filtro va dentro de
+`_meal_candidates`, donde se hace el recorte: los más cercanos de cada cocina
+pedida entran **además** de los más cercanos a secas, porque la cocina se pide
+para una comida y las demás del día siguen necesitando dónde elegir.
+
+Tres decisiones más:
+
+- **Es por comida, no global.** El primer intento filtraba todo y la cena
+  quedaba condicionada por lo que se había pedido para el almuerzo.
+- **No inventa, pero tampoco deja sin comer.** Si en esa zona no hay ninguna
+  que declare la cocina, se cae a la lista entera y el aviso lo explica. Y lo
+  explica con cuidado: el 58,5% del catálogo no trae `cuisine`, así que de su
+  silencio no se deduce que no existan. El texto dice «no encontré ninguno
+  cerca del recorrido **que lo diga**» y añade «puede haber alguno sin la
+  etiqueta puesta».
+- **Un valor de OSM puede traer varias cocinas.** `burger;sandwich;coffee_shop`
+  es corriente, y ese sitio sirve hamburguesas aunque la ficha lo resuma como
+  café. Se busca el término entre las partes, no se compara la cadena entera.
+
+**Y la ficha mentía sin querer.** En San Salvador, «quiero almorzar
+hamburguesas» devolvía Casa Xoxoctic —`coffee_shop;pizza;burger;sandwich`—
+etiquetada como **café**. El motor había acertado y la pantalla hacía pensar lo
+contrario. Ahora, cuando se pidió una cocina y el sitio la sirve, es esa la que
+se muestra. Si no la sirve, se muestra la suya: mentir sería peor que no decir.
+
+De paso, medir esto destapó un agujero del diccionario: de los 1.128 comedores
+con `cuisine`, **104 (9%) no tenían ninguna etiqueta legible**. Entre los
+valores que se caían estaba **«pupusas» en plural** —el diccionario solo tenía
+la forma singular, y OSM usa las dos— y «salvadoran». Añadiendo los frecuentes,
+los mudos bajaron a **36 (3%)**.
+
+El banco no se mueve: 25/26, 334 paradas, 15% de «llevá comida», variedad 3,64.
+Como el desayuno, esto solo actúa cuando se pide.
+
 ### El desayuno se pide, y quien odia madrugar no necesita una regla
 
 La pregunta vino de usar la demo: ¿se puede poner desayuno? ¿Y si alguien dice

@@ -126,6 +126,11 @@ class ItineraryRequest(BaseModel):
     must_include_meals: list[Literal["breakfast", "lunch", "dinner"]] = Field(
         default_factory=list
     )
+
+    # Que cocina se pidio para cada comida: {"lunch": "burger"}. Las claves son
+    # las tres comidas y "any"; los valores, claves de `cuisine` de OSM. El
+    # motor valida el vocabulario, aqui solo se asegura la forma.
+    meal_cuisines: dict[str, str] = Field(default_factory=dict)
     # Minutos por comida. El tope de cuatro horas no es un caso de uso, es una
     # barrera: un modelo que devuelva 600 no deja un dia largo, deja un dia de
     # una sola parada.

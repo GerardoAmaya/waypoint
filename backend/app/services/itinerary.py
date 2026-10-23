@@ -386,7 +386,7 @@ def _meal_km_reserve(
     if not esperadas or not comidas or not ruta:
         return 0.0
 
-    cercanas = _meal_candidates(ruta, comidas, travel)
+    cercanas = _meal_candidates(ruta, comidas, travel, constraints=constraints)
     # Sobre la lista tal como esta y no sobre _pinned_order: probado tambien
     # ordenando, y sale peor —298 paradas y 23 dias sin comida, contra 300 y
     # 21—. El orden definitivo cambia otra vez al meter la comida, asi que
@@ -615,6 +615,10 @@ class Constraints:
             return self.max_travel_km_per_day
         return BUDGET_BY_MODE.get(modo, self.max_travel_km_per_day)
 
+    def cuisine_for(self, tipo: str) -> str | None:
+        """La cocina pedida para esa comida, o la general, o ninguna."""
+        return self.meal_cuisines.get(tipo) or self.meal_cuisines.get("any")
+
     @property
     def budget_was_asked_for(self) -> bool:
         """Si el techo de kilometros lo puso la persona.
@@ -636,6 +640,15 @@ class Constraints:
     # pidiendo cena, el segundo a pie termina a las 15:04 porque se le acaban
     # los ocho kilometros, y no se decia ni una palabra.
     must_include_meals: list[str] = field(default_factory=list)
+
+    # Que cocina se pidio para cada comida: {"lunch": "burger"}. La clave
+    # "any" vale para cuando se nombra la cocina sin decir en que comida
+    # —"quiero comer pupusas"— y la usa cualquiera que no tenga la suya.
+    #
+    # El valor es la clave de OSM y no el nombre en castellano, porque es
+    # contra OSM que hay que comparar. La traduccion a castellano ya existia
+    # para mostrarla en la ficha: _COCINAS en services/places.py.
+    meal_cuisines: dict[str, str] = field(default_factory=dict)
 
     # Lugares concretos que el itinerario TIENE que incluir: "quiero ir al
     # Jardin Botanico". Resueltos contra el catalogo por su nombre, igual que
@@ -1773,17 +1786,47 @@ MEAL_RESCUE_TOLERANCE_MINUTES = 45
 MEAL_CANDIDATES_PER_DAY = 8
 
 
+def sirve_cocina(lugar: PlaceHit, cocina: str) -> bool:
+    """Si ese comedor declara esa cocina.
+
+    OSM separa con punto y coma y mezcla: "burger;sandwich;coffee_shop" es un
+    valor corriente, y un sitio que ponga eso sirve hamburguesas aunque la
+    ficha lo resuma como cafe. Por eso se busca el termino entre las partes y
+    no se compara la cadena entera.
+
+    **Solo acepta lo que lo declara, nunca lo desconocido.** El 58,5% del
+    catalogo no trae `cuisine`, y de ahi no se puede deducir que no sirva
+    hamburguesas; lo que no se puede es prometerlas. La diferencia se cuenta al
+    avisar: "encontre N que lo dicen", no "no hay".
+    """
+    crudo = (lugar.tags or {}).get("cuisine")
+    if not crudo:
+        return False
+    partes = str(crudo).replace(",", ";").split(";")
+    return any(parte.strip().lower().replace(" ", "_") == cocina for parte in partes)
+
+
 def _meal_candidates(
     grupo: list[PlaceHit],
     comidas: list[PlaceHit],
     travel: TravelProvider,
     limit: int = MEAL_CANDIDATES_PER_DAY,
+    constraints: Constraints | None = None,
 ) -> list[PlaceHit]:
     """Los restaurantes mas convenientes para un dia.
 
     Se mide contra la parada MAS CERCANA del dia, no contra la primera. Un dia
     que empieza lejos y termina en el pueblo tiene restaurantes convenientes
     al final, y anclarse en el arranque no los ve.
+
+    **Si se pidio una cocina, sus candidatos entran aparte.** Y tienen que
+    entrar aca y no mas abajo: medido sobre un dia en San Salvador, filtrar las
+    hamburgueserias en el momento de colocar el almuerzo dejaba "0 de 8
+    candidatos", porque los ocho ya se habian elegido por cercania sin saber lo
+    que se habia pedido. Filtrar ahi es filtrar una lista que ya se decidio.
+
+    Se suman a los mas cercanos en vez de reemplazarlos: la cocina se pide para
+    una comida, y las demas del dia siguen necesitando donde elegir.
     """
     if not grupo or not comidas:
         return []
@@ -1791,7 +1834,20 @@ def _meal_candidates(
     def cercania(comida: PlaceHit) -> float:
         return min(travel.between(parada, comida)[0] for parada in grupo)
 
-    return sorted(comidas, key=cercania)[:limit]
+    ordenadas = sorted(comidas, key=cercania)
+    elegidas = ordenadas[:limit]
+
+    if constraints is not None and constraints.meal_cuisines:
+        vistos = {lugar.id for lugar in elegidas}
+        for cocina in dict.fromkeys(constraints.meal_cuisines.values()):
+            for lugar in ordenadas:
+                if len([x for x in elegidas if sirve_cocina(x, cocina)]) >= limit:
+                    break
+                if lugar.id not in vistos and sirve_cocina(lugar, cocina):
+                    elegidas.append(lugar)
+                    vistos.add(lugar.id)
+
+    return elegidas
 
 
 def _estado_del_comedor(
@@ -2128,6 +2184,17 @@ def _colocar_comida(
     umbral mas ancho, porque ensancharlo para todos empeoraba las comidas que
     ya salian bien.
     """
+    # **La cocina pedida manda sobre la cercania, pero no inventa.** Si se
+    # pidio hamburguesas y en la zona no hay ninguna que lo declare, se cae a
+    # la lista entera y el aviso lo explica: dejar el dia sin comer por un dato
+    # que el 58,5% del catalogo no trae seria castigar al usuario por un hueco
+    # de OpenStreetMap.
+    cocina = constraints.cuisine_for(tipo)
+    if cocina:
+        del_gusto = [lugar for lugar in disponibles if sirve_cocina(lugar, cocina)]
+        if del_gusto:
+            disponibles = del_gusto
+
     resultado = _best_meal_insertion(
         secuencia, disponibles, tipo, ventana, constraints, medidor, numero=numero
     )
@@ -2586,7 +2653,15 @@ def advise(
             continue
 
         for tipo, ventana in MEAL_WINDOWS:
-            if any(p.meal == tipo for p in dia.stops):
+            # **Si la comida esta, lo unico que puede faltar es el gusto.** El
+            # motor cae a la lista entera antes que dejar el dia sin comer,
+            # pero callarlo seria servirle carnes a quien pidio hamburguesas
+            # sin mencionarlo.
+            servida = next((p for p in dia.stops if p.meal == tipo), None)
+            if servida is not None:
+                cocina = constraints.cuisine_for(tipo)
+                if cocina and not sirve_cocina(servida.place, cocina):
+                    consejos.append(_cocina_no_encontrada(dia, tipo, cocina, servida))
                 continue
 
             # **Del desayuno solo se habla si lo pidieron.** No entra por
@@ -2679,6 +2754,29 @@ def _meal_out_of_reach(
     return Advice(kind, dia.number, detalle)
 
 
+def _cocina_no_encontrada(dia: Day, tipo: str, cocina: str, servida: Stop) -> Advice:
+    """Se pidio una cocina y no habia ninguna cerca que la declare.
+
+    **Se dice "que lo digan", no "que no hay".** El 58,5% del catalogo no trae
+    `cuisine`, asi que de su silencio no se deduce nada: puede haber una
+    pupuseria estupenda a la vuelta sin la etiqueta puesta. Prometer que no
+    existe seria afirmar algo que el dato no sostiene.
+    """
+    from app.services.places import _COCINAS, cocina_legible
+
+    nombre, _ = MEAL_LABELS[tipo]
+    pedida = _COCINAS.get(cocina, cocina)
+    sirve = cocina_legible(servida.place.tags)
+    de_que = f", que es de {sirve}" if sirve else ""
+    return Advice(
+        "cuisine_not_found",
+        dia.number,
+        f"Pediste {nombre} de {pedida} y no encontré ninguno cerca del recorrido "
+        f"que lo diga, así que te puse {servida.place.name}{de_que}. "
+        "Puede haber alguno sin la etiqueta puesta: pedime otro y lo cambio",
+    )
+
+
 MEAL_LABELS = {
     "breakfast": ("desayuno", "bring_breakfast"),
     "lunch": ("almuerzo", "bring_lunch"),
@@ -2726,7 +2824,9 @@ def _meal_advice(
             f"No queda parada libre para {nombre}: el día ya tiene {visitas} y {salida}",
         )
 
-    candidatos = _meal_candidates([p.place for p in dia.stops], comidas, travel)
+    candidatos = _meal_candidates(
+        [p.place for p in dia.stops], comidas, travel, constraints=constraints
+    )
 
     # Se busca la mejor insercion SIN respetar el presupuesto, justamente para
     # poder decir cuanto se habria pasado.
@@ -3100,7 +3200,7 @@ def assemble(
         medidor = _travel_or_estimate(travel, constraints.mode_for(numero))
         # Cada dia toma las comidas mas cercanas a su primera parada, para no
         # repetir restaurante entre dias.
-        cercanas = _meal_candidates(grupo, comidas_restantes, medidor)
+        cercanas = _meal_candidates(grupo, comidas_restantes, medidor, constraints=constraints)
         secuencia = _trim_to_budget(grupo, cercanas, constraints, travel, numero)
         for lugar, comida in secuencia:
             if comida and lugar in comidas_restantes:
@@ -3485,7 +3585,9 @@ def revise_day(
     dias: list[Day] = []
     for dia in sorted(state, key=lambda d: d.number):
         if dia.number == target:
-            cercanas = _meal_candidates(nuevo, comidas_libres, medidor)
+            cercanas = _meal_candidates(
+                nuevo, comidas_libres, medidor, constraints=restricciones_dia
+            )
             secuencia = _trim_to_budget(nuevo, cercanas, restricciones_dia, travel, target)
             dias.append(schedule_day(dia.number, secuencia, restricciones_dia, travel))
             continue

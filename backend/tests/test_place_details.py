@@ -34,6 +34,34 @@ def test_cocina(crudo, esperado):
     assert cocina_legible({"cuisine": crudo}) == esperado
 
 
+def test_la_cocina_pedida_manda_sobre_el_orden():
+    """Caso real: "quiero almorzar hamburguesas" en San Salvador devolvia Casa
+    Xoxoctic —"coffee_shop;pizza;burger;sandwich"— etiquetada como café.
+
+    El sitio SI sirve hamburguesas, pero la ficha hacia pensar que el motor no
+    habia hecho caso.
+    """
+    tags = {"cuisine": "coffee_shop;pizza;burger;sandwich"}
+
+    assert cocina_legible(tags) == "café"
+    assert cocina_legible(tags, "burger") == "hamburguesas"
+    assert cocina_legible(tags, "pizza") == "pizza"
+
+
+def test_una_cocina_pedida_que_el_sitio_no_sirve_no_se_inventa():
+    """Si no la sirve, se muestra la suya: mentir seria peor que no decir."""
+    tags = {"cuisine": "coffee_shop;sandwich"}
+
+    assert cocina_legible(tags, "burger") == "café"
+
+
+def test_pupusas_en_plural_tambien_se_entiende():
+    """OSM usa las dos formas y es el plato nacional: de los 1.128 comedores
+    con `cuisine`, "pupusas" estaba entre los valores que se caian."""
+    assert cocina_legible({"cuisine": "pupusas"}) == "pupusas"
+    assert cocina_legible({"cuisine": "salvadoran"}) == "salvadoreña"
+
+
 def test_cocina_sin_etiquetas():
     assert cocina_legible(None) is None
     assert cocina_legible({}) is None

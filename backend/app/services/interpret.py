@@ -39,7 +39,7 @@ from app.services.geocode import (
     resolve_must_visit,
     zone_names,
 )
-from app.services.places import PlaceHit
+from app.services.places import _COCINAS, PlaceHit
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,14 @@ HORIZONTE_DIAS = 365
 # volviendo: mas que un barrio y menos que un municipio entero. Quien quiera
 # otra cosa nombra la zona y manda el radio de la zona.
 RADIO_DESDE_LA_PARTIDA_M = 12_000
+
+# Las cocinas que el modelo puede nombrar, con su nombre en castellano para que
+# sepa a que corresponde cada clave. Sale de _COCINAS —el mismo diccionario que
+# traduce la cocina en la ficha de cada parada— para que la lista que se le
+# ofrece al modelo y la que el motor sabe comparar no puedan divergir.
+COCINAS_PARA_EL_MODELO = ", ".join(
+    f"{clave} ({nombre})" for clave, nombre in sorted(_COCINAS.items())
+)
 
 SYSTEM_PROMPT = """\
 Sos el traductor de un planificador de viajes por El Salvador. Convertis lo \
@@ -108,6 +116,13 @@ que come, o no habla de comidas, dejala vacia: la diferencia es que una comida \
 nombrada que el itinerario no pueda darle se le explica, y una que no nombro, \
 no. **El desayuno ademas solo se pone si lo nombra**, porque quien viaja suele \
 desayunar donde duerme; almuerzo y cena entran solos donde quepan.
+- "meal_cuisines": objeto que dice QUE comida quiere para cada comida del \
+dia, SOLO cuando la nombra. Las claves son "breakfast", "lunch", "dinner" o \
+"any"; "any" es para cuando nombra la comida sin decir en cual —"quiero comer \
+pupusas"—. Los valores salen de esta lista y de ninguna otra: {cocinas}. \
+Ejemplos: "quiero almorzar hamburguesas" es {"lunch": "burger"}; "ceno \
+mariscos" es {"dinner": "seafood"}; "quiero comer pupusas" es {"any": \
+"pupusa"}. Si no nombra ninguna comida concreta, dejalo vacio.
 - "meal_minutes": entero de 20 a 240. Cuanto dura cada comida, en minutos. \
 Por defecto 90. "almuerzo tranquilo de dos horas" es 120; "comemos algo \
 rapido" o "no quiero perder tiempo comiendo" es cerca de 40. Solo si lo dice.
@@ -366,6 +381,34 @@ def _category_minutes(valores, notes: list[str]) -> dict[Category, int]:
     return salida
 
 
+_COMIDAS_VALIDAS = frozenset({"breakfast", "lunch", "dinner", "any"})
+
+
+def _meal_cuisines(valores, notes: list[str]) -> dict[str, str]:
+    """Limpia las cocinas pedidas, comida por comida.
+
+    Dos listas cerradas: la comida tiene que ser una de las tres del dia —o
+    "any", que vale para todas— y la cocina tiene que estar en _COCINAS, que es
+    el unico vocabulario que el motor sabe comparar contra OSM. Lo que no
+    reconoce se descarta con aviso en vez de aceptarse y no cumplirse nunca.
+    """
+    if not isinstance(valores, dict):
+        return {}
+
+    salida: dict[str, str] = {}
+    for comida, cocina in valores.items():
+        clave = str(comida).strip().lower()
+        valor = str(cocina).strip().lower().replace(" ", "_")
+        if clave not in _COMIDAS_VALIDAS:
+            notes.append(f"no reconocí {comida!r} como una comida del día")
+            continue
+        if valor not in _COCINAS:
+            notes.append(f"no sé buscar comida {cocina!r}, así que elegí sin eso")
+            continue
+        salida[clave] = valor
+    return salida
+
+
 def _meals(valores, notes: list[str]) -> list[str]:
     """Limpia las comidas pedidas con nombre.
 
@@ -418,7 +461,10 @@ def _call_model(frase: str, client=None, fecha: date | None = None) -> dict:
     respuesta = client.messages.create(
         model=settings.planner_model,
         max_tokens=1024,
-        system=(f"{SYSTEM_PROMPT}\n\n{_fecha_de_hoy_para_el_modelo(fecha or hoy())}"),
+        system=(
+            f"{SYSTEM_PROMPT.replace('{cocinas}', COCINAS_PARA_EL_MODELO)}"
+            f"\n\n{_fecha_de_hoy_para_el_modelo(fecha or hoy())}"
+        ),
         messages=[{"role": "user", "content": frase}],
     )
 
@@ -717,6 +763,7 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             must_include_categories=exigidas,
             include_meals=bool(datos.get("include_meals", True)),
             must_include_meals=_meals(datos.get("must_include_meals"), notes),
+            meal_cuisines=_meal_cuisines(datos.get("meal_cuisines"), notes),
             meal_minutes=_clamp(datos.get("meal_minutes"), 20, 240, 90, notes, "meal_minutes"),
             # Sin numero se deja en None y manda el reloj. _clamp necesita un
             # valor por defecto, asi que la ausencia se resuelve antes.

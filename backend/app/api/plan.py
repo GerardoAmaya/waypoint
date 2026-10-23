@@ -128,6 +128,7 @@ def _stream(mensaje: str) -> Iterator[str]:
             },
             include_meals=resultado.request.include_meals,
             must_include_meals=list(resultado.request.must_include_meals),
+            meal_cuisines=dict(resultado.request.meal_cuisines),
             must_include_places=resultado.must_include_places,
             place_minutes=dict(resultado.request.place_minutes),
             meal_minutes=resultado.request.meal_minutes,
@@ -274,6 +275,7 @@ def _to_constraints(peticion, db: Session) -> motor.Constraints:
         day_modes={int(numero): modo for numero, modo in peticion.day_modes.items()},
         include_meals=peticion.include_meals,
         must_include_meals=list(peticion.must_include_meals),
+        meal_cuisines=dict(peticion.meal_cuisines),
         must_include_places=[
             hit for hit in places_by_ids(db, peticion.must_include_place_ids).values()
         ],

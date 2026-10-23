@@ -3447,3 +3447,160 @@ class TestElDesayuno:
         )
 
         assert [t for t, _ in _meal_windows_for(tarde)] == ["lunch", "dinner"]
+
+
+class TestLaCocinaPedida:
+    """Pedir hamburguesas al almuerzo y que el almuerzo sea una hamburguesería.
+
+    La pieza que costó encontrar es DONDE filtrar. El motor recorta a los ocho
+    comedores más cercanos antes de colocar la comida; filtrar después de ese
+    recorte dejaba "0 de 8 candidatos" en un día de San Salvador que tiene 51
+    hamburgueserías, porque los ocho ya se habían elegido sin saber lo pedido.
+    """
+
+    def _comedor(self, nombre, lat, cuisine):
+        hit = lugar(nombre, lat, -89.22, Category.food)
+        return replace(hit, tags={"cuisine": cuisine} if cuisine else {})
+
+    def test_la_comida_sale_de_la_cocina_pedida(self):
+        from app.services.itinerary import _insert_meals
+
+        ruta = [lugar("Mirador", 13.70, -89.22, Category.viewpoint)]
+        comidas = [
+            self._comedor("Carnes cerca", 13.7001, "steak_house"),
+            self._comedor("Hamburguesas lejos", 13.7004, "burger"),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(11, 0),
+            latest_end=time(21, 0),
+            include_meals=True,
+            meal_cuisines={"lunch": "burger"},
+        )
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+        almuerzo = next(p for p, tipo in secuencia if tipo == "lunch")
+
+        assert almuerzo.name == "Hamburguesas lejos"
+
+    def test_sin_pedir_nada_manda_la_cercania(self):
+        """El filtro no puede cambiar lo que pasa cuando nadie pide cocina."""
+        from app.services.itinerary import _insert_meals
+
+        ruta = [lugar("Mirador", 13.70, -89.22, Category.viewpoint)]
+        comidas = [
+            self._comedor("Carnes cerca", 13.7001, "steak_house"),
+            self._comedor("Hamburguesas lejos", 13.7004, "burger"),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(11, 0),
+            latest_end=time(21, 0),
+            include_meals=True,
+        )
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+        almuerzo = next(p for p, tipo in secuencia if tipo == "lunch")
+
+        assert almuerzo.name == "Carnes cerca"
+
+    def test_la_cocina_es_de_la_comida_que_se_nombro(self):
+        """ "Quiero ALMORZAR hamburguesas" no condiciona la cena.
+
+        El dia necesita varias paradas para llegar de verdad a la hora de la
+        cena: con una sola termina a media tarde y la cena no entra, que es el
+        comportamiento correcto y no lo que se quiere probar aqui.
+        """
+        from app.services.itinerary import _insert_meals
+
+        ruta = [
+            lugar(f"Mirador {i}", 13.70 + i * 0.002, -89.22, Category.viewpoint)
+            for i in range(5)
+        ]
+        comidas = [
+            self._comedor("Hamburguesas", 13.7001, "burger"),
+            self._comedor("Pizzería", 13.7002, "pizza"),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(11, 0),
+            latest_end=time(21, 0),
+            include_meals=True,
+            must_include_meals=["dinner"],
+            meal_cuisines={"lunch": "burger"},
+            max_stops_per_day=8,
+        )
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+        comidas_puestas = {tipo: p.name for p, tipo in secuencia if tipo}
+
+        assert comidas_puestas.get("lunch") == "Hamburguesas"
+        assert comidas_puestas.get("dinner") == "Pizzería"
+
+    def test_sin_ninguna_de_esa_cocina_se_come_igual(self):
+        """Dejar el día sin comer por una etiqueta que falta en OSM sería
+        castigar al usuario por un hueco del mapa."""
+        from app.services.itinerary import _insert_meals
+
+        ruta = [lugar("Mirador", 13.70, -89.22, Category.viewpoint)]
+        comidas = [self._comedor("Comedor sin etiqueta", 13.7001, None)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(11, 0),
+            latest_end=time(21, 0),
+            include_meals=True,
+            meal_cuisines={"lunch": "burger"},
+        )
+
+        secuencia = _insert_meals(ruta, comidas, restricciones)
+
+        assert any(tipo == "lunch" for _, tipo in secuencia)
+
+    def test_y_se_avisa_de_que_no_era_lo_pedido(self):
+        from app.services.itinerary import Itinerary, advise, schedule_day
+
+        ruta = [lugar("Mirador", 13.70, -89.22, Category.viewpoint)]
+        comidas = [self._comedor("Comedor sin etiqueta", 13.7001, None)]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(11, 0),
+            latest_end=time(21, 0),
+            include_meals=True,
+            meal_cuisines={"lunch": "burger"},
+        )
+        from app.services.itinerary import _insert_meals
+
+        dia = schedule_day(1, _insert_meals(ruta, comidas, restricciones), restricciones)
+        consejos = advise(Itinerary(days=[dia]), restricciones, comidas, None)
+
+        aviso = next((c for c in consejos if c.kind == "cuisine_not_found"), None)
+        assert aviso is not None
+        # No se afirma que no existan: el 58,5% del catalogo no trae cuisine.
+        assert "no encontré" in aviso.detail
+        assert "sin la etiqueta" in aviso.detail
+
+    def test_un_valor_de_osm_con_varias_cocinas_cuenta_para_todas(self):
+        """ "burger;sandwich;coffee_shop" es un valor corriente, y ese sitio
+        sirve hamburguesas aunque la ficha lo resuma como café."""
+        from app.services.itinerary import sirve_cocina
+
+        mixto = self._comedor("Mixto", 13.70, "coffee_shop;burger;sandwich")
+
+        assert sirve_cocina(mixto, "burger")
+        assert sirve_cocina(mixto, "coffee_shop")
+        assert not sirve_cocina(mixto, "sushi")
+
+    def test_lo_que_no_declara_cocina_nunca_cuenta_como_que_la_sirve(self):
+        from app.services.itinerary import sirve_cocina
+
+        assert not sirve_cocina(self._comedor("Sin dato", 13.70, None), "burger")
