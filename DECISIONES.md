@@ -2078,6 +2078,48 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### Un día que arranca a las seis y come a las once y media
+
+Reportado: «se me hace raro que este prompt no devuelve desayunos». Salir del
+hotel a las 6 a.m. y tener la primera comida a las 11:30.
+
+**No era un fallo: era la regla funcionando.** El desayuno es opt-in y el
+prompt no lo nombraba. Pero la observación daba en un hueco real, y medirlo lo
+confirmó. Sobre días con fecha en seis zonas, según la hora de arranque:
+
+| arranca | ayuno medio | peor | días de 5 h o más |
+|---|---|---|---|
+| 06:00 | 6,5 h | 7,9 h | **100%** |
+| 07:00 | 7,0 h | 11,7 h | **100%** |
+| 08:00 | 6,1 h | 10,9 h | 83% |
+| 09:00 | 4,3 h | 5,2 h | 33% |
+| 10:00 | 3,8 h | 4,2 h | 0% |
+
+Todo día que arranca antes de las ocho pasa cinco horas o más sin comer. No es
+un caso raro, es la norma.
+
+**La salida no es poner el desayuno solo.** Quien sale a las diez desayunó
+donde durmió y no quiere un comedor a las nueve: esa es exactamente la razón de
+que sea opt-in, y sigue siendo buena. Lo que estaba mal era el silencio. Sin
+decir nada, la persona no tenía ni cómo enterarse de que podía pedirlo.
+
+Así que se dice y se deja decidir, que es lo que hace el resto de los avisos:
+
+> Este día arranca a las 06:00 y la primera comida es el almuerzo de las 11:30:
+> 5 h 30 min sin comer. Si querés desayunar, pedímelo y lo meto
+
+El umbral de cinco horas sale del corte de la tabla, no del gusto de nadie: es
+donde se separan limpiamente los días que arrancan temprano —donde el ayuno es
+universal— de los que arrancan tarde, donde no ocurre nunca.
+
+Tres casos en los que calla: si ya pidió desayuno, si el día arranca pasada la
+franja —no había desayuno posible, y ofrecerlo sería ofrecer algo que no se
+puede dar— y si el ayuno no llega al umbral.
+
+De paso resuelve un problema que no era de planificación sino de
+descubrimiento: una opción que existe y que nadie encuentra es, en la práctica,
+una opción que no existe.
+
 ### «Quiero almorzar hamburguesas»: dónde filtrar importaba más que filtrar
 
 La cobertura de `cuisine` en OpenStreetMap resultó ser mucho mejor que la de

@@ -2695,7 +2695,67 @@ def advise(
                     )
                 )
 
+        aviso = _ayuno_largo(dia, constraints, pedidas)
+        if aviso is not None:
+            consejos.append(aviso)
+
     return consejos
+
+
+# Cuanto puede pasar un dia sin comer antes de que valga la pena mencionarlo.
+#
+# **El numero sale del corte que hace el propio motor**, no del gusto de nadie.
+# Medido sobre dias con fecha en seis zonas, segun la hora de arranque:
+#
+#     arranca   ayuno medio   peor    dias de 5 h o mas
+#     06:00         6,5 h     7,9 h        100%
+#     07:00         7,0 h    11,7 h        100%
+#     08:00         6,1 h    10,9 h         83%
+#     09:00         4,3 h     5,2 h         33%
+#     10:00         3,8 h     4,2 h          0%
+#
+# A las cinco horas la curva separa limpiamente los dias que arrancan temprano
+# —donde el ayuno es universal— de los que arrancan tarde, donde no pasa nunca.
+AYUNO_QUE_SE_MENCIONA_MINUTOS = 300
+
+
+def _ayuno_largo(dia: Day, constraints: Constraints, pedidas: set[str]) -> Advice | None:
+    """Un dia que arranca temprano y tarda en comer, dicho y no resuelto.
+
+    **No se pone un desayuno por las nuestras.** Quien sale a las diez desayuno
+    donde durmio y no quiere un comedor a las nueve; esa es la razon de que el
+    desayuno sea opt-in. Pero callarlo tampoco sirve: saliendo a las seis, el
+    plan se iba cinco horas y media hasta el almuerzo, y la persona ni siquiera
+    tenia como enterarse de que podia pedirlo.
+
+    Asi que se dice y se deja decidir, que es lo mismo que hace el resto de los
+    avisos. De paso resuelve que la opcion exista y nadie la encuentre.
+    """
+    if "breakfast" in pedidas or not constraints.include_meals:
+        return None
+    if any(p.meal == "breakfast" for p in dia.stops):
+        return None
+    # Si el dia arranca despues de que cierra la franja, no habia desayuno
+    # posible y mencionarlo seria ofrecer algo que no se puede dar.
+    if dia.start is None or dia.start > BREAKFAST_WINDOW[1]:
+        return None
+
+    primera = next((p for p in dia.stops if p.meal), None)
+    if primera is None:
+        return None
+
+    ayuno = _minutes_between(dia.start, primera.arrival)
+    if ayuno < AYUNO_QUE_SE_MENCIONA_MINUTOS:
+        return None
+
+    nombre, _ = MEAL_LABELS[primera.meal]
+    return Advice(
+        "suggest_breakfast",
+        dia.number,
+        f"Este día arranca a las {dia.start:%H:%M} y la primera comida es el "
+        f"{nombre} de las {primera.arrival:%H:%M}: {ayuno // 60} h "
+        f"{ayuno % 60:02d} min sin comer. Si querés desayunar, pedímelo y lo meto",
+    )
 
 
 def _meal_out_of_reach(

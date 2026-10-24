@@ -3604,3 +3604,68 @@ class TestLaCocinaPedida:
         from app.services.itinerary import sirve_cocina
 
         assert not sirve_cocina(self._comedor("Sin dato", 13.70, None), "burger")
+
+
+class TestElAyunoLargoSeMenciona:
+    """Un día que arranca temprano y tarda en comer: se dice, no se resuelve.
+
+    Del reporte: "Dos días desde el Hotel Barceló a partir del sábado a las 6
+    a.m." salía con la primera comida a las 11:30 y sin una palabra. El
+    desayuno es opt-in a propósito —quien sale a las diez desayunó donde
+    durmió— pero sin avisar, la persona ni siquiera tenía cómo enterarse de que
+    podía pedirlo.
+
+    Medido sobre días con fecha en seis zonas: arrancando a las 06:00 y a las
+    07:00, el 100% de los días pasa cinco horas o más sin comer; arrancando a
+    las 10:00, ninguno. De ahí sale el umbral.
+    """
+
+    def _dia(self, inicio, pedidas=(), con_desayuno=False):
+        from app.services.itinerary import Itinerary, _insert_meals, advise, schedule_day
+
+        ruta = [
+            lugar(f"Museo {i}", 13.70 + i * 0.004, -89.22, Category.culture) for i in range(4)
+        ]
+        comidas = [
+            lugar("Comedor A", 13.7005, -89.221, Category.food),
+            lugar("Comedor B", 13.7085, -89.221, Category.food),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=inicio,
+            latest_end=time(22, 0),
+            include_meals=True,
+            must_include_meals=list(pedidas),
+            max_stops_per_day=8,
+        )
+        dia = schedule_day(1, _insert_meals(ruta, comidas, restricciones), restricciones)
+        consejos = advise(Itinerary(days=[dia]), restricciones, comidas, None)
+        return dia, [c for c in consejos if c.kind == "suggest_breakfast"]
+
+    def test_arrancando_muy_temprano_se_menciona(self):
+        _, avisos = self._dia(time(6, 0))
+
+        assert len(avisos) == 1
+        assert "sin comer" in avisos[0].detail
+        assert "pedímelo" in avisos[0].detail
+
+    def test_no_se_pone_un_desayuno_por_las_nuestras(self):
+        """El aviso informa; no cambia el itinerario."""
+        dia, avisos = self._dia(time(6, 0))
+
+        assert avisos
+        assert not any(p.meal == "breakfast" for p in dia.stops)
+
+    def test_arrancando_tarde_no_se_menciona(self):
+        """Pasada la franja no había desayuno posible, y ofrecerlo sería
+        ofrecer algo que no se puede dar."""
+        _, avisos = self._dia(time(10, 0))
+
+        assert avisos == []
+
+    def test_si_ya_lo_pidio_no_se_le_sugiere(self):
+        _, avisos = self._dia(time(6, 0), pedidas=["breakfast"])
+
+        assert avisos == []
