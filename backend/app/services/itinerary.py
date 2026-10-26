@@ -3564,6 +3564,13 @@ class DayState:
 class RevisionResult:
     itinerary: Itinerary
     stats: object | None = None
+    # El trazo por carretera de cada tramo, igual que PlanReady.
+    #
+    # **Faltaba, y el sintoma era que revisar un dia despintaba el mapa.** El
+    # endpoint pasaba None en su lugar, asi que un itinerario revisado volvia
+    # con todas sus rutas en linea recta punteada aunque la geometria
+    # estuviera guardada en route_legs de la vez anterior.
+    geometry: dict | None = None
     # Paradas que ya no estan en el catalogo. Se informan en vez de omitirse.
     missing: list[uuid.UUID] = field(default_factory=list)
     # El clima que se uso para los consejos, para que el endpoint lo devuelva
@@ -3687,7 +3694,11 @@ def revise_with_routing(
     habria que pedir la matriz de todos los candidatos de la zona para rehacer
     un unico dia.
     """
-    from app.services.routing import client_from_settings, load_travel_matrix
+    from app.services.routing import (
+        client_from_settings,
+        load_route_geometry,
+        load_travel_matrix,
+    )
 
     # Sin proveedor, cada dia cae en la estimacion de SU modo: pasar
     # EstimatedTravel(constraints.mode) medía el dia a pie con la velocidad
@@ -3740,11 +3751,25 @@ def revise_with_routing(
         travel=matrices,
         clima=tiempo,
     )
+    # El trazo, sobre el orden definitivo y no el del borrador: con distancias
+    # reales el orden del dia cambia, y una geometria pedida sobre el borrador
+    # dibujaria un recorrido que el itinerario ya no hace. Es la misma razon y
+    # el mismo orden que en plan_with_routing.
+    geometria, _ = load_route_geometry(
+        [
+            (constraints.mode_for(dia.number), [parada.place for parada in dia.stops])
+            for dia in final.itinerary.days
+        ],
+        db=db,
+        client=cliente,
+    )
+
     return RevisionResult(
         itinerary=final.itinerary,
         stats=_merge_matrix_stats(matrices, constraints.mode),
         missing=final.missing,
         weather=tiempo,
+        geometry=geometria,
     )
 
 

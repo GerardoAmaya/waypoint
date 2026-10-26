@@ -42,10 +42,33 @@ TODOS = {p.id: p for p in DESTINOS}
 
 
 class _SesionFalsa:
+    """Base minima: sin cache de traslados ni de trazos, y nada que escribir.
+
+    El resultado falso trae `rowcount` y `first` ademas de `all` y `scalar`
+    porque el resultado real de execute() los trae: persist_geometry lee el
+    primero para saber cuantas aristas quedaron con su trazo, y un doble sin
+    ese atributo hace fallar el endpoint por una carencia del doble y no del
+    codigo. Lo descubrio revisar un dia, que desde que devuelve geometria
+    tambien la guarda. Por lo mismo hay `rollback`: una sesion que no puede
+    deshacer no es una sesion.
+    """
+
     def execute(self, *args, **kwargs):
-        return type("R", (), {"all": lambda _self: [], "scalar": lambda _self: None})()
+        return type(
+            "R",
+            (),
+            {
+                "all": lambda _self: [],
+                "scalar": lambda _self: None,
+                "first": lambda _self: None,
+                "rowcount": 0,
+            },
+        )()
 
     def commit(self):
+        pass
+
+    def rollback(self):
         pass
 
     def close(self):
@@ -219,3 +242,37 @@ class TestLasRestriccionesLleganEnteras:
         assert restricciones.budget_for(2) == motor.UNSTATED_BUDGET_BY_MODE["walking"]
         assert restricciones.budget_for(2) < motor.UNSTATED_BUDGET_BY_MODE["driving"]
         assert restricciones.anchors_day(2) is True
+
+
+class TestElTrazoSobreviveALaRevision:
+    """Revisar un día no puede despintar el mapa.
+
+    El síntoma del reporte: el día cambiaba bien y la ruta volvía dibujada en
+    líneas rectas punteadas. El endpoint pasaba None donde va la geometría, así
+    que la respuesta de revisar nunca llevaba trazo aunque estuviera guardado
+    en route_legs de la vez anterior. Medido contra el código de entonces: 0 de
+    4 tramos con trazo después de revisar, contra 4 de 4 antes.
+    """
+
+    def test_la_respuesta_lleva_el_trazo_de_cada_tramo(self, cliente, monkeypatch):
+        trazo = [(13.70, -89.22), (13.71, -89.23), (13.72, -89.24)]
+
+        def geometria_falsa(dias, db=None, client=None):
+            # Una entrada por tramo, con la misma forma que load_route_geometry.
+            salida = {}
+            for _modo, lugares in dias:
+                for antes, despues in zip(lugares, lugares[1:], strict=False):
+                    salida[(antes.id, despues.id)] = trazo
+            return salida, None
+
+        # Se parchea en routing porque revise_with_routing lo importa dentro
+        # de la funcion: en el modulo del motor no existe como atributo.
+        monkeypatch.setattr("app.services.routing.load_route_geometry", geometria_falsa)
+        con_revision(monkeypatch, Revision(changes={"max_travel_km_per_day": 15.0}))
+
+        respuesta = cliente.post("/plan/revise", json=cuerpo()).json()
+
+        paradas = respuesta["itinerary"]["days"][1]["stops"]
+        assert len(paradas) > 1, "hace falta mas de una parada para que haya tramo"
+        con_trazo = [p for p in paradas[1:] if p.get("geometry_from_previous")]
+        assert con_trazo, "la revisión devolvió el día sin ningún trazo"

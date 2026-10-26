@@ -2078,6 +2078,38 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### Revisar un día despintaba el mapa
+
+Reportado desde la demo: al pedir un cambio en el campo conversacional, el día
+se rehacía bien pero la ruta volvía dibujada en líneas rectas punteadas, como
+si ya no se pidiera la geometría.
+
+Era exactamente eso, y en un sitio tonto. `plan_with_routing` llama a
+`load_route_geometry` y la devuelve en `PlanReady`; `revise_with_routing` no la
+pedía nunca, y `RevisionResult` ni siquiera tenía campo para ella. El endpoint
+pasaba `None` donde va el trazo:
+
+```python
+itinerary=_to_out(resultado.itinerary, resultado.stats, None, base, ...)
+```
+
+Así que un itinerario revisado volvía sin trazo **aunque la geometría estuviera
+guardada en `route_legs` de la vez anterior**: no era un problema de cupo ni de
+red, era un argumento en `None`. Medido contra el código de entonces, con el
+mismo día de San Salvador: **0 de 4 tramos con trazo después de revisar, contra
+4 de 4 antes**. Con el arreglo, 4 de 4 en los dos.
+
+El trazo se pide sobre el orden definitivo y no sobre el del borrador, que es
+la misma razón y el mismo orden que en `plan_with_routing`: con distancias
+reales el orden del día cambia, y una geometría pedida sobre el borrador
+dibujaría un recorrido que el itinerario ya no hace.
+
+**Y volvió a aparecer el doble de sesión demasiado delgado.** El de
+`test_revise_api` no implementaba `rowcount` ni `rollback`, y desde que revisar
+también guarda el trazo, `persist_geometry` los necesita. Es el segundo doble
+de este proyecto que falla por lo mismo: una sesión falsa que no puede deshacer
+ni contar filas no es una sesión, y el fallo se lee como si fuera del código.
+
 ### Un día que arranca a las seis y come a las once y media
 
 Reportado: «se me hace raro que este prompt no devuelve desayunos». Salir del

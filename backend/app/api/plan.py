@@ -339,7 +339,13 @@ def revise(peticion: ReviseRequest) -> RevisionOut:
 
         return RevisionOut(
             itinerary=_to_out(
-                resultado.itinerary, resultado.stats, None, base, resultado.weather
+                resultado.itinerary,
+                resultado.stats,
+                # El trazo por carretera. Iba en None y por eso revisar un día
+                # devolvía el mapa en líneas rectas punteadas.
+                resultado.geometry,
+                base,
+                resultado.weather,
             ),
             applied={k: str(v) for k, v in cambio.changes.items()},
             removed=cambio.remove,
