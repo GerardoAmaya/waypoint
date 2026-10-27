@@ -1062,6 +1062,25 @@ def order_by_proximity(
     return _two_opt(ruta, medidor)
 
 
+def _lo_pedido_alcanza(
+    ancla: PlaceHit,
+    lugar: PlaceHit,
+    constraints: Constraints,
+    travel: TravelProvider,
+    numero: int,
+) -> bool:
+    """Si un dia anclado puede ir al lugar pedido y volver dentro del tope.
+
+    Solo se aplica cuando el dia sale de un sitio fijo. Sin ancla, un lugar
+    lejano es simplemente la semilla de su propio dia —"quiero ir a X" arma el
+    dia alrededor de X— y eso esta bien; el problema aparece cuando ademas hay
+    que volver al hotel todas las noches.
+    """
+    ida = travel.between(ancla, lugar)[0]
+    vuelta = travel.between(lugar, ancla)[0] if constraints.return_to_start else 0.0
+    return ida + vuelta <= constraints.budget_for(numero)
+
+
 def _pinned_order(
     ancla: PlaceHit | None,
     paradas: list[PlaceHit],
@@ -1502,7 +1521,20 @@ def build_days(
             disponibles = [h for h in disponibles if h.id != ancla.id]
             # Un lugar pedido con nombre entra igual el mismo dia: el ancla
             # es de donde se sale, no lo que se va a ver.
-            if pendientes:
+            #
+            # **Pero solo si el dia puede ir y volver.** Sin esta comprobacion,
+            # un lugar pedido fuera de alcance se quedaba con el dia entero y
+            # lo dejaba vacio: el caso del reporte era un hotel en San Salvador
+            # y un restaurante de la Ruta de las Flores a 66 km, con el tope en
+            # 60. El dia 1 salia con el hotel y nada mas —0 paradas, 0,0 km,
+            # 09:00 a 09:00— mientras los otros seis iban llenos.
+            #
+            # No se descarta el lugar, se deja pendiente: otro dia puede tener
+            # otro modo y otro presupuesto. Si ningun dia lo alcanza, termina
+            # sin colocar y _missing_places lo reporta, que es lo que ya hacia.
+            if pendientes and _lo_pedido_alcanza(
+                ancla, pendientes[0], constraints, medidor, numero
+            ):
                 dia.append(pendientes.pop(0))
                 semilla = dia[-1]
             else:

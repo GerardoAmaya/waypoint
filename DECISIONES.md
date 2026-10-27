@@ -2078,6 +2078,90 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### Un lugar pedido fuera de alcance se quedaba con el día entero
+
+Reportado desde la demo, con el enlace del itinerario. Siete días desde el
+Hotel Real Intercontinental, y el **día 1 salía vacío**: el hotel y nada más,
+0 paradas, 0,0 km, de 09:00 a 09:00, mientras los otros seis iban llenos.
+
+La petición incluía un lugar por su nombre —«Restaurante Ruta de las Flores»—
+que está a **66 km** del hotel, con el radio de búsqueda en 12 km y el tope de
+traslado en 60. O sea: inalcanzable, y la aplicación ya lo decía
+correctamente —*«pediste ir a Restaurante Ruta de las Flores y no entró en
+ningún día»*—. Lo que no decía es que además le había costado un día.
+
+Reproducido con A/B local sobre los mismos datos:
+
+```
+con el lugar lejano pedido:  día 1 = 1 elemento (solo el hotel), 0,0 km
+sin pedirlo:                 día 1 = 8 elementos, 28,0 km
+```
+
+La causa está en el llenado de un día anclado:
+
+```python
+if pendientes:
+    dia.append(pendientes.pop(0))   # entra pase lo que pase
+    semilla = dia[-1]
+```
+
+El lugar pedido se mete en el día **sin comprobar si cabe** y pasa a ser la
+semilla alrededor de la cual se llena el resto. A 66 km, nada más entra, y el
+día termina con el ancla sola.
+
+El arreglo es comprobar antes que el día pueda ir y volver dentro de su tope.
+Y no descarta el lugar: lo deja pendiente, porque otro día puede tener otro
+modo y otro presupuesto. Si ningún día lo alcanza, termina sin colocar y la
+violación lo reporta — que es lo que ya hacía bien.
+
+**La comprobación solo vale para días anclados.** Sin punto de partida fijo, un
+lugar lejano es simplemente la semilla de su propio día: «quiero ir a X» arma
+el día alrededor de X y eso está bien. El problema aparece cuando además hay
+que volver al hotel todas las noches.
+
+El banco no se mueve —25/26, 334 paradas, 15%, variedad 3,64— porque ninguno de
+sus casos pide un lugar fuera de alcance. Por eso llegó a producción: era un
+hueco del banco, no un descuido del motor.
+
+### El relieve, que es de lo que trata el viaje
+
+De una lista de opciones para hacer el mapa más atractivo —Mapillary,
+KartaView, CesiumJS, Mapbox GL, OSM Buildings, Three.js, los 3D Tiles de
+Google— sobrevivió una, y no por gusto sino por dos filtros.
+
+**El primero ya estaba escrito en el proyecto.** El comentario de `TESELAS`
+dice por qué el satélite es Esri y no Mapbox: *«en un mapa de cliente la llave
+viaja en el HTML y cualquiera puede gastarte el cupo»*. Eso descarta de entrada
+Mapbox GL, Cesium ion y los 3D Tiles de Google, que además es de pago.
+
+**El segundo fue medir.** KartaView responde sin credencial, así que se pudo
+comprobar: tiene foto de calle a menos de 500 m de **2 de 45** paradas reales
+—4%, y las dos en San Salvador—, con **cero** en miradores, naturaleza y
+atracciones. Peor que las etiquetas de imagen de OSM, que ya estaban
+descartadas por el mismo motivo. Mapillary pide credencial y quedó sin medir;
+es la única de la lista que merecería el trámite.
+
+De las libres sin llave quedaban OSM Buildings y Three.js, que necesitan
+alturas de edificios. Los itinerarios del banco son Juayúa, Perquín, Costa del
+Sol: ahí el 3D de edificios no dibuja nada.
+
+Lo que sí entró es un **sombreado del terreno** debajo del mapa dibujado. Esri
+`World_Hillshade` responde sin llave, igual que el satélite y por el mismo
+motivo, y es una entrada más en la estructura que ya existía: no cambia el
+motor del mapa.
+
+**Y dice algo verdadero que el mapa plano no podía.** Este país es volcanes;
+los itinerarios suben a miradores y cruzan crestas, y hasta ahora el mapa los
+pintaba como manchas verdes planas.
+
+Va **debajo** y no encima, con el mapa en `multiply` sobre él: el blanco de las
+teselas de OSM deja pasar la sombra —el terreno aparece— y los nombres y las
+carreteras, que son oscuros, se multiplican contra cualquier cosa y quedan
+igual de legibles. Encima habría oscurecido las etiquetas.
+
+No acompaña al satélite: ahí el terreno ya se ve, y multiplicar una foto aérea
+contra un sombreado solo la ensucia.
+
 ### El mapa no mostraba el itinerario, y las fotos no eran la respuesta
 
 La pregunta era de aspecto: ¿se pueden sacar imágenes, pintar algo más atractivo

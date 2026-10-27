@@ -3669,3 +3669,74 @@ class TestElAyunoLargoSeMenciona:
         _, avisos = self._dia(time(6, 0), pedidas=["breakfast"])
 
         assert avisos == []
+
+
+class TestUnLugarPedidoFueraDeAlcance:
+    """Un lugar pedido que no se puede alcanzar no se queda con el día.
+
+    Del reporte, en producción: hotel en San Salvador, tope de 60 km, y un
+    restaurante de la Ruta de las Flores a 66 km pedido por su nombre. El día 1
+    salía con el hotel y nada más —0 paradas, 0,0 km, de 09:00 a 09:00— y los
+    otros seis iban llenos. El lugar pedido reservaba el día para sí y, al no
+    caber, lo dejaba vacío.
+    """
+
+    def _plan(self, pedido_lejos: bool):
+        hotel = lugar("Hotel", 13.70, -89.22, Category.lodging)
+        cerca = [
+            lugar(f"Museo {i}", 13.70 + i * 0.004, -89.22, Category.culture) for i in range(6)
+        ]
+        # A medio grado largo: ida y vuelta no cabe en el tope de un día.
+        lejos = lugar("Restaurante lejano", 14.30, -89.80, Category.food)
+        restricciones = Constraints(
+            days=2,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(9, 0),
+            latest_end=time(20, 0),
+            max_travel_km_per_day=60,
+            start_place=hotel,
+            return_to_start=True,
+            must_include_places=[lejos] if pedido_lejos else [],
+        )
+        destinos = [*cerca, lejos] if pedido_lejos else cerca
+        return assemble([], destinos, restricciones), restricciones
+
+    def test_el_dia_no_se_queda_vacio(self):
+        itinerario, _ = self._plan(pedido_lejos=True)
+
+        primero = itinerario.days[0]
+        visitas = [p for p in primero.stops if p.place.category != Category.lodging.value]
+        assert visitas, "el día quedó con el punto de partida y nada más"
+
+    def test_y_se_sigue_diciendo_que_no_entro(self):
+        """El arreglo no puede silenciar la petición incumplida."""
+        itinerario, _ = self._plan(pedido_lejos=True)
+
+        rotas = [v for v in itinerario.violations if v.constraint == "must_include_places"]
+        assert rotas, "pidió un lugar que no entró y nadie se lo dijo"
+        assert "Restaurante lejano" in rotas[0].detail
+
+    def test_un_lugar_pedido_que_si_alcanza_sigue_entrando(self):
+        """La comprobación no puede dejar fuera lo que sí cabía."""
+        hotel = lugar("Hotel", 13.70, -89.22, Category.lodging)
+        cerca = [
+            lugar(f"Museo {i}", 13.70 + i * 0.004, -89.22, Category.culture) for i in range(4)
+        ]
+        pedido = lugar("Museo pedido", 13.712, -89.22, Category.culture)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.70,
+            center_lon=-89.22,
+            earliest_start=time(9, 0),
+            latest_end=time(20, 0),
+            max_travel_km_per_day=60,
+            start_place=hotel,
+            return_to_start=True,
+            must_include_places=[pedido],
+        )
+
+        itinerario = assemble([], [*cerca, pedido], restricciones)
+
+        nombres = [p.place.name for d in itinerario.days for p in d.stops]
+        assert "Museo pedido" in nombres

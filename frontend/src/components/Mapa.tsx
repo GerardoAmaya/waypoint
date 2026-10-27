@@ -68,6 +68,30 @@ const TESELAS: Record<Fondo, { url: string; credito: string; maxZoom: number }> 
   },
 };
 
+/*
+  El sombreado del terreno, debajo del mapa dibujado.
+
+  **Este país es volcanes, y el mapa plano los pintaba como manchas verdes.**
+  Los itinerarios suben a miradores y cruzan crestas; el relieve es
+  literalmente de lo que trata el viaje, y era lo único que el mapa no decía.
+
+  Va DEBAJO y no encima, con el mapa en `multiply` sobre él: así el blanco de
+  las teselas de OSM deja pasar la sombra —el terreno aparece— y los nombres y
+  las carreteras, que son oscuros, se multiplican contra cualquier cosa y
+  quedan igual de legibles. Encima habría oscurecido las etiquetas.
+
+  Sin llave, como el satélite y por el mismo motivo: en un mapa de cliente la
+  llave viaja en el HTML. La atribución la exige su licencia.
+
+  No se aplica bajo el satélite: ahí el terreno ya se ve, y multiplicar una
+  foto aérea contra un sombreado solo la ensucia.
+*/
+const RELIEVE = {
+  url: "https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}",
+  credito: 'Relieve &copy; <a href="https://www.esri.com/">Esri</a>',
+  maxZoom: 16,
+};
+
 /** El Salvador entero, que es el encuadre de arranque. */
 const PAIS = L.latLngBounds([13.1, -90.15], [14.45, -87.65]);
 
@@ -135,6 +159,7 @@ export default function Mapa({
   const campo = useRef<FieldLayer | null>(null);
   const capaPlan = useRef<L.LayerGroup | null>(null);
   const capaFondo = useRef<L.TileLayer | null>(null);
+  const capaRelieve = useRef<L.TileLayer | null>(null);
   const lienzoPlan = useRef<L.SVG | null>(null);
   const onSelect = useRef(onSelectDay);
   const onStop = useRef(onSelectStop);
@@ -179,6 +204,7 @@ export default function Mapa({
       mapa.current = null;
       capaPlan.current = null;
       capaFondo.current = null;
+      capaRelieve.current = null;
       lienzoPlan.current = null;
       campo.current = null;
     };
@@ -198,10 +224,37 @@ export default function Mapa({
     const { url, credito, maxZoom } = TESELAS[fondo];
     const capa = L.tileLayer(url, { attribution: credito, maxZoom });
 
+    /*
+      El relieve solo acompaña al mapa dibujado. Se crea una vez y se queda:
+      alternar a satélite y volver no tiene por qué volver a bajar las teselas
+      del terreno, que son las mismas.
+    */
+    if (fondo === "mapa") {
+      if (!capaRelieve.current) {
+        capaRelieve.current = L.tileLayer(RELIEVE.url, {
+          attribution: RELIEVE.credito,
+          maxZoom: RELIEVE.maxZoom,
+          // Por encima de ese zoom el servicio no tiene tesela; sin esto el
+          // mapa se quedaría con huecos grises al acercarse del todo.
+          maxNativeZoom: RELIEVE.maxZoom,
+        }).addTo(map);
+        capaRelieve.current.getContainer()?.style.setProperty("z-index", "-1");
+      }
+    } else if (capaRelieve.current) {
+      map.removeLayer(capaRelieve.current);
+      capaRelieve.current = null;
+    }
+
     // La nueva entra por debajo de todo y la vieja sale despues: al revés se
     // ve un parpadeo del fondo del contenedor mientras cargan las teselas.
     capa.addTo(map);
-    capa.getContainer()?.style.setProperty("z-index", "0");
+    const contenedor = capa.getContainer();
+    contenedor?.style.setProperty("z-index", "0");
+    // Ver RELIEVE: el mapa se multiplica contra el sombreado de debajo.
+    contenedor?.style.setProperty(
+      "mix-blend-mode",
+      fondo === "mapa" ? "multiply" : "normal",
+    );
     if (anterior) {
       capa.once("load", () => map.removeLayer(anterior));
       // Si la red no responde, "load" no llega nunca y quedarian las dos.
