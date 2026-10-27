@@ -83,7 +83,7 @@ magnitud, en vez de esconderse.
 | Clicables que anuncian que lo son | 13 de 29 → 28 de 29 |
 | Tramos con trazo por carretera | 94% (34 de 36, en los días más duros) |
 | Cupo del endpoint de direcciones | 2.000 / día (plan Standard de ORS) |
-| Tests | 829 backend, 110 frontend |
+| Tests | 834 backend, 110 frontend |
 
 El 7% sin ruta son puntos lejos de toda carretera —cumbres de volcanes,
 cascadas— que caen a estimación siempre, haya cupo o no. Ese número es también lo
@@ -98,7 +98,7 @@ Un planificador de viajes es fácil de demostrar y difícil de verificar:
 cualquier lista de lugares parece un itinerario. Lo que separa uno bueno de uno
 plausible es si cumple lo que se le pidió, y eso se mide.
 
-**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 65
+**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 66
 decisiones, cada una con el fallo concreto que la provocó y el número que la
 respalda. Cuatro piezas están ahí documentadas como borradas por no ganarse su
 sitio.
@@ -157,7 +157,7 @@ Se apaga con `WEATHER_ENABLED=false` y la respuesta lo dice en `weather.reason`.
 ## Guiones
 
 ```bash
-make test            # los 829 del backend
+make test            # los 834 del backend
 npm test             # los 110 del frontend, desde frontend/
 make ors-check       # verifica la llave y lee el cupo restante (3 de matriz)
 make ors-trace       # dice si el trazo por carretera funciona ahora (1 de direcciones)

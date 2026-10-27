@@ -108,6 +108,17 @@ _COCINAS = {
 }
 
 
+# Valores de `cuisine` que nombran una comida del dia y no una cocina.
+#
+# **Sirven para mostrar y no para pedir.** Un sitio etiquetado
+# `cuisine=breakfast` es util en la ficha —dice "desayunos"— pero pedirlo como
+# cocina duplica lo que ya dice la comida: el modelo leia "desayuno a las 7" y
+# devolvia a la vez must_include_meals=["breakfast"] y
+# meal_cuisines={"breakfast": "breakfast"}, y de ahi salia el aviso "Pediste
+# desayuno de desayunos y no encontre ninguno".
+COCINAS_QUE_SON_COMIDAS = frozenset({"breakfast"})
+
+
 # "regional" y "local" son ciertos y no dicen nada. Cuando vienen junto a algo
 # concreto —y "regional;pupusa" es de los valores mas frecuentes del catalogo—
 # manda lo concreto: "pupusas" ayuda a elegir donde almorzar y "comida tipica"

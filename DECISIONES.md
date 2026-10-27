@@ -2078,6 +2078,52 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### Una cocina inventada cuesta una comida
+
+Visto en producción al probar lo recién desplegado. «Un día en San Salvador,
+desayuno a las 7 y almuerzo hamburguesas» devolvía:
+
+```
+cocinas: {'breakfast': 'breakfast', 'lunch': 'burger'}
+```
+
+`breakfast` es una clave válida de `cuisine` en OSM —significa «sirve
+desayunos»— así que el modelo la tomó por cocina. De ahí salía un aviso
+ridículo: **«Pediste desayuno de desayunos y no encontré ninguno cerca»**.
+
+El arreglo obvio era sacar esa clave del vocabulario que se le ofrece al
+modelo, y se hizo: sirve para **mostrar** —la ficha sigue diciendo
+«desayunos»— pero no para **pedir**, porque duplica lo que ya dice la comida.
+Se descarta sin aviso: no es un error de la persona, es el modelo repitiendo
+en la cocina lo que acaba de decir en la comida, y avisarlo sería un reproche
+por algo que nadie pidió.
+
+**Pero al volver a probar, el modelo había cambiado de invento**: ahora decía
+`{'breakfast': 'cafe'}`. Y esa segunda versión era peor, porque no generaba un
+aviso tonto sino que **se llevaba el desayuno por delante**:
+
+```
+sin cocina para el desayuno   →  breakfast: Viva Espresso ✓
+con 'cafe' inventada          →  (sin desayuno)
+                                 "El lugar más conveniente es Viva Espresso,
+                                  que agrega 10.3 km y dejaría el día en 51.0"
+```
+
+El mismo comedor, a diez kilómetros de diferencia: pedir una cocina estrecha la
+búsqueda a los sitios que la declaran, y el más cercano de esa cocina estaba
+mucho más lejos que el más cercano a secas. La persona pidió desayunar a las
+siete y se quedó sin desayuno porque el modelo decidió que quería café.
+
+Así que la regla al modelo pasó de «solo cuando la nombra» a **«no lo deduzcas
+nunca»**, con el contraejemplo explícito —«desayuno a las 7» dice CUÁNDO come,
+no QUÉ come— y con la consecuencia medida escrita en el propio prompt. Las tres
+frases de prueba salen limpias: la cocina solo aparece cuando se nombra un tipo
+de comida.
+
+La lección general: en este diseño, una restricción inventada por el modelo no
+se queda en ruido. El motor la hace cumplir, y hacer cumplir algo que nadie
+pidió cuesta exactamente lo mismo que hacer cumplir algo que sí.
+
 ### Revisar un día despintaba el mapa
 
 Reportado desde la demo: al pedir un cambio en el campo conversacional, el día

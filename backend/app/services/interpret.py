@@ -39,7 +39,7 @@ from app.services.geocode import (
     resolve_must_visit,
     zone_names,
 )
-from app.services.places import _COCINAS, PlaceHit
+from app.services.places import _COCINAS, COCINAS_QUE_SON_COMIDAS, PlaceHit
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,9 @@ RADIO_DESDE_LA_PARTIDA_M = 12_000
 # traduce la cocina en la ficha de cada parada— para que la lista que se le
 # ofrece al modelo y la que el motor sabe comparar no puedan divergir.
 COCINAS_PARA_EL_MODELO = ", ".join(
-    f"{clave} ({nombre})" for clave, nombre in sorted(_COCINAS.items())
+    f"{clave} ({nombre})"
+    for clave, nombre in sorted(_COCINAS.items())
+    if clave not in COCINAS_QUE_SON_COMIDAS
 )
 
 SYSTEM_PROMPT = """\
@@ -123,6 +125,14 @@ pupusas"—. Los valores salen de esta lista y de ninguna otra: {cocinas}. \
 Ejemplos: "quiero almorzar hamburguesas" es {"lunch": "burger"}; "ceno \
 mariscos" es {"dinner": "seafood"}; "quiero comer pupusas" es {"any": \
 "pupusa"}. Si no nombra ninguna comida concreta, dejalo vacio.
+  **No lo deduzcas nunca.** Solo va lo que la persona nombra como comida o \
+tipo de comida. "desayuno a las 7" dice CUANDO come, no QUE come: va en \
+must_include_meals y meal_cuisines se queda vacio. Lo mismo "ceno los dos \
+dias" o "almuerzo tranquilo". Inventar una cocina no es un detalle: estrecha \
+la busqueda a los sitios que la declaran y puede dejar a la persona sin esa \
+comida. Medido: poner {"breakfast": "cafe"} donde la persona solo dijo \
+"desayuno a las 7" movio el comedor elegido 10 km y el desayuno se cayo del \
+dia.
 - "meal_minutes": entero de 20 a 240. Cuanto dura cada comida, en minutos. \
 Por defecto 90. "almuerzo tranquilo de dos horas" es 120; "comemos algo \
 rapido" o "no quiero perder tiempo comiendo" es cerca de 40. Solo si lo dice.
@@ -401,6 +411,11 @@ def _meal_cuisines(valores, notes: list[str]) -> dict[str, str]:
         valor = str(cocina).strip().lower().replace(" ", "_")
         if clave not in _COMIDAS_VALIDAS:
             notes.append(f"no reconocí {comida!r} como una comida del día")
+            continue
+        if valor in COCINAS_QUE_SON_COMIDAS:
+            # Se descarta sin aviso: no es un error de la persona, es el modelo
+            # repitiendo en la cocina lo que ya dijo en la comida. Avisarlo
+            # pondria en pantalla un reproche por algo que nadie pidio.
             continue
         if valor not in _COCINAS:
             notes.append(f"no sé buscar comida {cocina!r}, así que elegí sin eso")

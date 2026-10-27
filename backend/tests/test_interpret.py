@@ -464,3 +464,54 @@ class TestFechaDeInicio:
 
         assert restricciones.date_of_day(1) is None
         assert restricciones.date_of_day(2) is None
+
+
+class TestLaCocinaPedida:
+    """Lo que el modelo puede nombrar como cocina, y lo que no.
+
+    Visto en producción: "desayuno a las 7" devolvía a la vez
+    must_include_meals=["breakfast"] y meal_cuisines={"breakfast": "breakfast"},
+    porque `breakfast` es una clave válida de `cuisine` en OSM. De ahí salía el
+    aviso "Pediste desayuno de desayunos y no encontré ninguno cerca".
+    """
+
+    def test_una_cocina_que_es_una_comida_se_descarta_sin_reproche(self):
+        from app.services.interpret import _meal_cuisines
+
+        notas: list[str] = []
+        salida = _meal_cuisines({"breakfast": "breakfast", "lunch": "burger"}, notas)
+
+        assert salida == {"lunch": "burger"}
+        # Sin aviso: no es un error de la persona, es el modelo repitiendo en
+        # la cocina lo que ya dijo en la comida.
+        assert notas == []
+
+    def test_al_modelo_no_se_le_ofrece_esa_clave(self):
+        from app.services.interpret import COCINAS_PARA_EL_MODELO
+
+        assert "breakfast (" not in COCINAS_PARA_EL_MODELO
+        assert "burger (hamburguesas)" in COCINAS_PARA_EL_MODELO
+
+    def test_pero_la_ficha_la_sigue_mostrando(self):
+        """Sirve para mostrar aunque no sirva para pedir."""
+        from app.services.places import cocina_legible
+
+        assert cocina_legible({"cuisine": "breakfast"}) == "desayunos"
+
+    def test_lo_que_no_es_una_cocina_conocida_si_se_avisa(self):
+        from app.services.interpret import _meal_cuisines
+
+        notas: list[str] = []
+        salida = _meal_cuisines({"lunch": "klingon"}, notas)
+
+        assert salida == {}
+        assert notas and "klingon" in notas[0]
+
+    def test_una_comida_que_no_existe_tambien_se_avisa(self):
+        from app.services.interpret import _meal_cuisines
+
+        notas: list[str] = []
+        salida = _meal_cuisines({"merienda": "pizza"}, notas)
+
+        assert salida == {}
+        assert notas and "merienda" in notas[0]
