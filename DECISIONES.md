@@ -2078,6 +2078,50 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### El mapa no mostraba el itinerario, y las fotos no eran la respuesta
+
+La pregunta era de aspecto: ¿se pueden sacar imágenes, pintar algo más atractivo
+en el mapa y en la lista? Lo primero fue medir si los datos daban para ello, y
+tres ideas se cayeron antes de escribir una línea:
+
+- **Una foto por parada.** De 190 lugares que salen en itinerarios reales, **uno**
+  trae imagen directa; 30 tienen `wikidata` y 13 `wikipedia`. Esto ya estaba
+  decidido y documentado en `FotoZona.tsx` —1,3% del catálogo, 2 de 2.718 en
+  comida— y la medición nueva lo reprodujo. Un hueco de imagen vacío diecinueve
+  de cada veinte veces parece una aplicación rota.
+- **Una barra con la forma del día** (cuánto se viaja, se come, se visita). Los
+  datos están, pero no dicen nada: sobre 60 días, la media es 12% traslado, 25%
+  comer, 62% visitar y **0% de espera muerta**, y ningún día pasa del 22% de
+  traslado. Un gráfico idéntico en los sesenta días no informa.
+- **Un perfil de altitud**, que para un país de volcanes sonaba bien. El 7% de
+  los lugares la trae, y **cero de los 25 miradores** — justo donde importaría.
+
+Descartadas las tres, quedaba mirar la pantalla en vez de inventarle cosas. Y
+ahí estaba el problema de verdad: **en la demo, el mapa no mostraba el
+itinerario**. Tres de las siete paradas quedaban fuera de la ventana, la ruta se
+salía por una esquina y media pantalla era territorio vacío.
+
+**Leaflet encuadra contra el tamaño que tiene medido, no contra el que el
+contenedor tiene.** Lo mide al crearse; si el plan llega antes de que la maqueta
+se asiente, encuadra contra una caja que ya no existe. El diagnóstico fue un
+evento de `resize` —que es exactamente lo que hace que Leaflet vuelva a
+medirse—:
+
+```
+al cargar        4 de 7 paradas dentro de la ventana
+tras un resize   7 de 7
+```
+
+El mapa siempre supo encuadrar. Lo que no sabía era su propio tamaño.
+
+Se veía en los enlaces compartidos y no al armar un itinerario, y eso también
+encaja: compartido, el plan llega de un solo `fetch`; armado, el stream tarda
+segundos y para entonces la maqueta lleva rato quieta. Un `invalidateSize()`
+antes de encuadrar lo arregla. Verificado con A/B sobre datos locales: un
+itinerario pasaba de **5 de 7** a **7 de 7**, y otro de diez paradas no estaba
+afectado en ninguna de las dos versiones — que es lo que hace que un fallo así
+sobreviva tanto tiempo.
+
 ### Lo que cuesta entender una frase, y por qué la caché no sirve aquí
 
 La tabla de métricas medía el coste de rutas —una petición a OpenRouteService

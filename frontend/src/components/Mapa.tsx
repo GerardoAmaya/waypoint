@@ -388,6 +388,20 @@ export default function Mapa({
       );
 
     if (puntos.length) {
+      /*
+        **Leaflet encuadra contra el tamaño que tiene medido, no contra el que
+        el contenedor tiene.** Y lo mide al crearse: si el itinerario llega
+        antes de que la maqueta se asiente, encuadra contra una caja que ya no
+        existe y el recorrido se sale de la pantalla.
+
+        Se veía al abrir un enlace compartido, donde el plan llega de un solo
+        fetch en vez de por un stream de varios segundos. Medido sobre la demo:
+        4 de 7 paradas dentro de la ventana al cargar, y 7 de 7 después de un
+        simple evento de resize —que es justo lo que hace que Leaflet vuelva a
+        medirse—. Armando el itinerario no se veía nunca, porque para cuando
+        termina el stream la maqueta lleva rato quieta.
+      */
+      map.invalidateSize({ animate: false });
       map.flyToBounds(L.latLngBounds(puntos), {
         padding: [70, 70],
         maxZoom: 14,
