@@ -69,6 +69,9 @@ magnitud, en vez de esconderse.
 | Pares sin ruta en ORS | 7% (58 de 870) |
 | Cupo del endpoint de matriz | 500 / día (plan Standard de ORS) |
 | Peticiones por itinerario en zona fría | 1 |
+| Tokens por itinerario | 3.246 (3.023 de entrada, 223 de salida) |
+| Coste por itinerario | 0,0041 USD — 242 por dólar |
+| Coste por revisión de un día | 0,0013 USD — 781 por dólar |
 | Lugares en el catálogo | 5.786 activos de 6.449 bajados |
 | Descarte del filtro de calidad | 5.9% (370 registros) |
 | Duplicados fusionados | 4.4% (274 registros) |
@@ -98,7 +101,7 @@ Un planificador de viajes es fácil de demostrar y difícil de verificar:
 cualquier lista de lugares parece un itinerario. Lo que separa uno bueno de uno
 plausible es si cumple lo que se le pidió, y eso se mide.
 
-**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 66
+**Todo el registro de ingeniería está en [DECISIONES.md](DECISIONES.md)** — 67
 decisiones, cada una con el fallo concreto que la provocó y el número que la
 respalda. Cuatro piezas están ahí documentadas como borradas por no ganarse su
 sitio.
@@ -170,6 +173,7 @@ make osrm            # levanta un OSRM propio: mide sin cupo ni llave
 
 ```bash
 docker compose exec api python -m scripts.evaluate        # los 26 casos del banco
+docker compose exec api python -m scripts.medir_tokens    # cuánto cuesta una petición
 docker compose exec api python -m scripts.medir_horarios  # comidas en comedores cerrados
 ```
 
@@ -227,8 +231,6 @@ imperativo— y quedó como dependencia muerta.
   falta la climatología del archivo histórico.
 - **Los horarios de apertura solo sirven para las comidas.** De los destinos
   bajo techo, apenas el 3% trae el dato en OpenStreetMap.
-- **El costo por itinerario en tokens no está medido.** El de rutas sí: una
-  petición a OpenRouteService en zona fría, cero con la caché caliente.
 - **Los tests de frontend no cubren el mapa.** Leaflet toca `window` al
   importarse y mide elementos que en jsdom no tienen tamaño. La animación del
   trazo sí se prueba: vive aparte, en un módulo que no necesita Leaflet.

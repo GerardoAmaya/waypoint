@@ -2078,6 +2078,46 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### Lo que cuesta entender una frase, y por qué la caché no sirve aquí
+
+La tabla de métricas medía el coste de rutas —una petición a OpenRouteService
+en zona fría, cero con la caché caliente— y del modelo, nada. El hueco estaba
+anotado en «lo que falta» desde el principio.
+
+`scripts/medir_tokens.py` lo llena. Envuelve el cliente real y deja que
+`interpret` lo use como siempre, así que mide el camino de producción: si el
+prompt crece, el número crece con él.
+
+| | tokens | coste |
+|---|---|---|
+| Armar un itinerario | 3.246 (3.023 entrada + 223 salida) | 0,0041 USD |
+| Revisar un día | 761 (631 + 130) | 0,0013 USD |
+
+Unos **242 itinerarios por dólar**. Y uno cuesta **una sola llamada**: el motor
+es determinista y no vuelve a consultar al modelo para armarlo — esa es la
+tesis del proyecto, y aquí se le puede poner precio.
+
+**El hallazgo es que el gasto casi no depende de lo que se escriba.** Ocho
+frases de 19 a 150 caracteres dieron entre **3.222 y 3.300 tokens**: un 2,4% de
+diferencia. La entrada es el 93% del gasto, y la entrada es casi toda el prompt
+del sistema. Lo que se paga no es la petición, es el prompt.
+
+**Y por eso la optimización obvia no aplica.** El prompt del sistema es idéntico
+en todas las peticiones: es el caso de libro para el cacheo de prompts. Pero
+`claude-haiku-4-5` exige un prefijo de **4.096 tokens** para activarlo, y el
+nuestro ronda los **3.023**. Por debajo del mínimo no cachea **y no avisa**:
+devuelve `cache_creation_input_tokens: 0` sin error, así que se habría
+«activado» el cacheo, no se habría ahorrado nada, y no habría forma de notarlo
+salvo mirando ese campo.
+
+Queda anotado porque cambia con el modelo y no de forma monótona: el mínimo es
+de 512 tokens en los modelos más nuevos y de 4.096 en Haiku 4.5. El día que se
+cambie `planner_model`, esto puede pasar a ser gratis — o el prompt puede
+cruzar los 4.096 por su cuenta y volverse cacheable sin tocar código.
+
+Nota al margen del mismo rato: `chat_model` está en la configuración y **no se
+usa en ninguna parte**.
+
 ### Una cocina inventada cuesta una comida
 
 Visto en producción al probar lo recién desplegado. «Un día en San Salvador,
