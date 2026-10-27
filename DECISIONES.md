@@ -2078,6 +2078,45 @@ En escritorio no cambia nada: el asa es `lg:hidden`, el pie nunca está cerrado
 y la guarda de los controles del mapa vive en una media query, no en la clase,
 para que redimensionar la ventana no deje el mapa sin controles.
 
+### El botón de copiar se salía del panel
+
+Reportado con una captura: con el itinerario del Hotel Real Intercontinental,
+el botón «Copiar» quedaba cortado por el borde derecho del panel.
+
+La aritmética lo explica entera:
+
+```
+fila disponible: 383 px
+título:          240 px  — y su MÍNIMO también 240, porque "Intercontinental"
+                           es una sola palabra y no partía
+Compartir 100 + Copiar 80 + huecos ≈ 200 px
+240 + 200 = 440 en 383  →  Copiar quedaba 34 px fuera
+```
+
+El título llevaba `min-width: auto`, el valor por defecto de un elemento flex:
+no puede encogerse por debajo de su contenido, y su contenido mínimo era esa
+palabra. Los botones tenían `shrink-0`, así que lo que sobraba se salía.
+
+**El primer arreglo fue peor, y lo dijo la medición.** Poner `flex-wrap` para
+que los botones bajen de línea funciona con un nombre largo, pero medido con
+«Suchitoto» también bajaban, cuando antes cabían perfectamente al lado: la
+cabecera pasaba de 169 a 171 px y la acción se despegaba del título en todos
+los itinerarios, no solo en los que lo necesitaban.
+
+Lo que hacía falta era un orden: **que el título ceda primero y la palabra se
+parta solo cuando ya no queda sitio.** `flex-1 min-w-0` lo deja encogerse por
+debajo de su contenido, y `hyphens-auto` corta por sílabas —el documento ya
+declara `lang="es"`, así que el navegador sabe dónde—. Sale «Hotel Real
+Interconti-nental», que es una partición correcta.
+
+Medido después: con nombre corto la cabecera vuelve a **169 px exactos** y los
+botones siguen al lado; con el nombre largo nada se sale y los botones siguen
+al lado también.
+
+No se recortaron las etiquetas a solo iconos, que era la otra salida fácil: en
+un teléfono no hay hover que las explique, y es el mismo criterio por el que el
+crédito de la foto de zona va visible y no en un `title`.
+
 ### Un lugar pedido fuera de alcance se quedaba con el día entero
 
 Reportado desde la demo, con el enlace del itinerario. Siete días desde el

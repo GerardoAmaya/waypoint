@@ -201,8 +201,28 @@ export default function Panel({
       )}
 
       <header className="border-b border-borde px-5 pt-2 pb-3 sm:px-6 sm:pt-6 sm:pb-4 lg:pt-5">
+        {/*
+          Los botones bajan de línea cuando el nombre no les deja sitio.
+
+          **Un título largo no puede encogerse por debajo de su palabra más
+          larga**, y ahí el botón de copiar se salía del panel. Medido con
+          "Hotel Real Intercontinental": la fila mide 383 px, el título 240 —y
+          su mínimo también 240, porque "Intercontinental" no parte— más 200 de
+          los dos botones. Son 440 en 383, así que Copiar quedaba 34 px fuera.
+
+          La salida no es bajar los botones de línea: probado, y con un nombre
+          corto como "Suchitoto" también bajaban, cuando antes cabían al lado.
+          Lo que hace falta es que el título ceda primero —`flex-1 min-w-0`, que
+          lo deja encogerse por debajo de su contenido— y que la palabra larga
+          se parta solo cuando ya no queda sitio. `hyphens-auto` la corta por
+          sílabas, que para eso el documento declara `lang="es"`.
+
+          No se recortan las etiquetas a solo iconos: en un teléfono no hay
+          hover que las explique, que es el mismo criterio del crédito de la
+          foto de zona.
+        */}
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-titulo leading-tight font-semibold tracking-tight">
+          <h1 className="min-w-0 flex-1 hyphens-auto text-titulo leading-tight font-semibold tracking-tight break-words">
             {interpretation?.area?.name ?? "Tu itinerario"}
           </h1>
 
