@@ -2900,6 +2900,59 @@ podía hacer.
 
 ---
 
+### El itinerario se oscurece a la hora que de verdad oscurece
+
+La petición era una animación que reaccionara al clima: lluvia cayendo sobre el
+itinerario si el pronóstico la trae. Medí el pronóstico antes de dibujar nada
+—84 días, seis zonas, la ventana de 09:00 a 20:00— y el dato dice que no:
+**llueve en el 4% de esas horas**. Una animación que no sale casi nunca es una
+animación que nadie ve.
+
+El calor tampoco servía, por lo contrario: la temperatura va de 22° a 34° con
+media de 29°, así que un efecto de calor saldría en todos los itinerarios y
+diría lo mismo en todos. Un dato que no varía no es información.
+
+Lo que sí varía dentro de **cada** itinerario es la luz. El motor ya calcula el
+ocaso de la latitud y la fecha —`services/sol.py`, de 17:25 en noviembre a
+18:28 en junio— y lo usa para no mandar a nadie a un mirador a oscuras. Ese
+número estaba en el servidor y no llegaba a la pantalla.
+
+Ahora llega: `DayOut.sunset` lo expone, y el hilo que une las paradas cambia de
+color exactamente donde cae. El hilo ya era un eje de tiempo; ahora la posición
+del corte **es** el dato, y se ve de un vistazo qué paradas quedan con luz sin
+leer una sola hora.
+
+Tres cosas que no eran obvias al escribirlo:
+
+**El tramo se mide de llegada a llegada, no de salida a llegada.** El hilo
+arranca bajo la marca de una parada y termina en la de la siguiente, así que lo
+que abarca es todo ese rato, la estancia incluida. Medir solo el viaje dejaba
+un hueco: un ocaso que cae mientras se cena no aparecía en ningún tramo.
+
+**El color de la noche es `--acento`, no `--anil`.** El anil crudo sobre el
+basalto del tema oscuro queda a ras del borde —`#2b3a67` contra `#2a353f`— y el
+corte no se veía. `--acento` ya es el anil que cada tema puede permitirse.
+
+**La hora no se tiñe: se dice.** Teñir la hora de las paradas nocturnas era lo
+primero que hice, para que el dato no viviera solo en un color. Pero el anil
+sobre el basalto baja ese texto menudo por debajo de AA, y `--tinta-suave` lo
+cumple de sobra. Perder legibilidad para repetir algo que ya está escrito es
+mal negocio: la hora se queda como estaba y lleva un `(ya de noche)` que solo
+leen los lectores de pantalla.
+
+Sin fecha no hay ocaso calculado, y entonces el hilo se queda del color de
+siempre. Inventar a qué hora anochece para que el degradado salga siempre sería
+exactamente el error que este proyecto evita en todo lo demás.
+
+De paso salió un fallo viejo: la regla de `prefers-reduced-motion` acortaba la
+duración de las animaciones pero no el `animation-delay`, y los escalonados de
+esta pantalla —los pines, ahora el hilo— usan `backwards`, o sea que antes de
+arrancar el elemento está a cero de opacidad. Quien pide menos movimiento veía
+un parpadeo tardío de hasta medio segundo en vez de nada. Ahora el retraso
+también se anula.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento
@@ -2975,12 +3028,6 @@ obvios y no movieron nada.
 El [README](README.md#lo-que-falta) lo resume en una lista. Aca esta el motivo
 de cada cosa, que es lo que importa cuando llegue el momento de arreglarla.
 
-**Las fuentes vienen de un tercero en el camino crítico.** Las familias
-tipográficas se piden con `<link>` a Google Fonts, así que la primera pintura
-depende de un dominio ajeno. `next/font` lo arreglaría autohospedándolas, pero
-las descarga al compilar y eso ata el build a que `fonts.googleapis.com` esté
-alcanzable. La salida es versionar los `.woff2` en el repo.
-
 **El botón atrás del navegador no vuelve del itinerario.** La aplicación no
 toca la URL, así que atrás saca del sitio. Que devuelva al estado vacío es
 meter una entrada en el historial al enviar y escuchar `popstate`; arregla algo
@@ -2994,19 +3041,31 @@ lo que falta y propaga las desactivaciones del filtro y de la deduplicación. Lo
 que no hace es borrar: un lugar que ya no exista en el origen se queda en el
 destino. Para eso hay que vaciar las cuatro tablas antes.
 
-**El itinerario no se puede compartir por enlace.** Se copia como texto y nada
-más. Sin cuentas, la URL tendría que llevar el estado, y el estado son
-identificadores del catálogo: se puede, pero hay que decidir qué pasa cuando un
-lugar desaparece del catálogo entre que se comparte y se abre.
+**Los itinerarios compartidos no se borran solos.** La tabla guarda la fecha de
+creación y la cuenta de aperturas justamente para poder limpiarla —un enlace que
+nadie abrió en tres meses no le hace falta a nadie—, pero no hay nada que corra
+esa limpieza. Mientras el volumen sea el de un portafolio no molesta; con uso de
+verdad, crece sin techo.
 
-**El costo por itinerario en tokens no está medido.** Sí lo está el de rutas.
+**El OSRM propio es solo local.** El grafo de El Salvador se arma con
+`make osrm-datos` y se sirve en contenedor, así que en local no hay cupo ni
+tercero. El despliegue sigue midiendo con ORS porque subirlo pide hornear el
+grafo dentro de una imagen, y eso es un build de varios cientos de megas.
 
 **La cobertura de horarios de apertura hace imposible el dato fino.** Once de
 366 lugares bajo techo traen `opening_hours`. Mientras siga así, la hora de
 cierre es una suposición uniforme y un museo que cierra a la una queda igual
 que uno que cierra a las cinco.
 
-**Los tests de frontend cubren cuatro componentes, no el mapa.** Leaflet toca
-`window` al importarse y mide elementos que en jsdom no tienen tamaño; probarlo
-ahí sería probar un doble. El mapa se verifica en un navegador de verdad, a
-mano.
+**Los tests de frontend no cubren el mapa.** Leaflet toca `window` al importarse
+y mide elementos que en jsdom no tienen tamaño; probarlo ahí sería probar un
+doble. El mapa se verifica en un navegador de verdad, a mano. Lo que sí se
+prueba es todo lo que se pudo sacar de Leaflet a un módulo aparte: la animación
+del trazo, el abanico que separa los pines, y el cálculo de dónde se acaba la
+luz.
+
+**El clima informa y aconseja, pero todavía no decide.** Sabe que llueve sobre
+el mirador de las 15:00 y lo dice; lo que no hace es mover el mirador a la
+mañana. Reordenar por clima es meter una restricción blanda en un motor que hoy
+solo conoce duras, y una restricción blanda mal pesada arruina itinerarios
+enteros por una probabilidad del 30%.

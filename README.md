@@ -45,6 +45,11 @@ es ese plan y no uno rearmado. La pantalla de entrada lista los que armaste
 antes y los reabre. Cada día se baja al calendario como `.ics`, con un evento
 por parada, y cada parada enlaza a Google Maps con el modo de ese día.
 
+El hilo que une las paradas del día cambia de color donde cae el ocaso —el que
+el motor calcula de la latitud y la fecha, que en El Salvador va de las 17:25 a
+las 18:28 según el mes—, así que se ve de un vistazo qué paradas quedan con luz.
+Sin fecha no hay ocaso, y entonces el hilo se queda de un solo color.
+
 El modelo de lenguaje traduce la frase del usuario a restricciones. El motor las
 hace cumplir. Esa división es deliberada y es la respuesta al riesgo principal
 del proyecto: si el modelo armara el itinerario directamente, «odio madrugar»

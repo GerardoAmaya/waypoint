@@ -227,6 +227,15 @@ class DayOut(BaseModel):
     # porque el icono del traslado dice como se va, y en un viaje mixto decir
     # "en coche" en el dia que se camina es decir algo falso.
     mode: str = "driving"
+
+    # A que hora se pone el sol ese dia, o None si el viaje no tiene fecha.
+    #
+    # **Va en la respuesta porque el motor ya la calcula y la pantalla no puede
+    # deducirla.** El itinerario la usa para no mandar a nadie a un mirador a
+    # oscuras; mostrarla deja ver de un vistazo que paradas quedan con luz. No
+    # cuesta ninguna peticion: es astronomia. Ver app/services/sol.py.
+    sunset: time | None = None
+
     # El clima de este dia, o None si no se supo.
     weather: WeatherDayOut | None = None
 

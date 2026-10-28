@@ -194,3 +194,79 @@ describe("el clima del día", () => {
     expect(screen.getByText("12.3 km")).toBeInTheDocument();
   });
 });
+
+describe("la luz del dia en el hilo", () => {
+  /** Un dia que cruza el ocaso: sale de tarde y cena ya de noche. */
+  const hastaelAnochecer = dia({
+    sunset: "18:10:00",
+    stops: [
+      parada({
+        place: lugar({ name: "Mirador", category: "nature" }),
+        arrival: "16:00:00",
+        departure: "17:40:00",
+      }),
+      parada({
+        place: lugar({ name: "Pupuseria", category: "food" }),
+        arrival: "18:20:00",
+        departure: "19:20:00",
+        meal: "dinner",
+      }),
+      parada({ place: hotel, arrival: "19:40:00", departure: "19:40:00" }),
+    ],
+  });
+
+  const hilos = (base: HTMLElement) =>
+    Array.from(base.querySelectorAll<HTMLElement>(".waypoint-hilo"));
+
+  it("corta el hilo donde cae el ocaso", () => {
+    const { container } = pinta({ day: hastaelAnochecer });
+    const [primero] = hilos(container);
+
+    // El hilo va de la llegada al mirador (16:00) a la llegada a la pupuseria
+    // (18:20): 140 minutos, y el ocaso cae a los 130. El corte repetido es lo
+    // que hace que se lea como un momento y no como un atardecer difuso.
+    expect(primero.style.backgroundImage).toContain("var(--borde) 92.9%");
+    expect(primero.style.backgroundImage).toContain("var(--acento) 92.9%");
+  });
+
+  it("el tramo que ya va de noche no lleva nada de dia", () => {
+    const { container } = pinta({ day: hastaelAnochecer });
+    const [, segundo] = hilos(container);
+
+    // 18:20 a 19:40, entero despues del ocaso: el corte va al principio.
+    expect(segundo.style.backgroundImage).toContain("var(--acento) 0.0%");
+  });
+
+  it("dice con palabras que ya es de noche", () => {
+    // El color del hilo no es informacion para quien no lo ve.
+    pinta({ day: hastaelAnochecer });
+
+    expect(screen.getByText(/18:20/).textContent).toContain("ya de noche");
+    // 16:00 sale dos veces: en la hora de la parada y en el resumen del dia.
+    for (const nodo of screen.getAllByText(/16:00/)) {
+      expect(nodo.textContent).not.toContain("ya de noche");
+    }
+  });
+
+  it("sin ocaso el hilo se queda como estaba", () => {
+    // Un itinerario sin fecha no tiene ocaso calculado. Pintar el degradado
+    // igual seria inventarse a que hora anochece.
+    const { container } = pinta({
+      day: dia({ sunset: null, stops: hastaelAnochecer.stops }),
+    });
+
+    for (const hilo of hilos(container)) {
+      expect(hilo.style.backgroundImage).toBe("");
+    }
+    expect(screen.queryByText(/ya de noche/)).not.toBeInTheDocument();
+  });
+
+  it("escalona el dibujo del hilo con las paradas", () => {
+    const { container } = pinta({ day: hastaelAnochecer });
+    const retrasos = hilos(container).map((h) =>
+      h.style.getPropertyValue("--retraso-hilo"),
+    );
+
+    expect(retrasos).toEqual(["0ms", "45ms"]);
+  });
+});

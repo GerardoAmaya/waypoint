@@ -19,7 +19,10 @@ import Detalle from "./Detalle";
 import { CATEGORIA } from "@/lib/categorias";
 import { iconoDelClima, lluviaEnPalabras } from "@/lib/clima";
 import { fechaEnPalabras } from "@/lib/fecha";
+import { esDeNoche, fraccionConLuz } from "@/lib/luz";
 import { comoIcs, nombreDelArchivo } from "@/lib/calendario";
+import type { CSSProperties } from "react";
+
 import type { Advice, Day, Mode, Stop, Violation } from "@/lib/types";
 
 interface Props {
@@ -39,6 +42,46 @@ interface Props {
    * veces actualice los eventos en vez de duplicarlos.
    */
   shareCode: string | null;
+}
+
+
+/**
+ * El estilo del hilo entre dos paradas, segun donde caiga el ocaso.
+ *
+ * Devuelve un degradado con el corte exactamente en la fraccion del tramo que
+ * todavia tiene luz, y el retraso para que el hilo se dibuje escalonado con
+ * las paradas: el dia se va oscureciendo de arriba abajo mientras aparece.
+ *
+ * Sin ocaso devuelve un objeto vacio y el hilo se queda con su color de
+ * siempre. El degradado va en el estilo y no en una clase porque el corte es
+ * un numero distinto en cada tramo: no hay clase que lo exprese.
+ */
+function luzDelTramo(
+  parada: Stop,
+  siguiente: Stop,
+  ocaso: string | null,
+  indice: number,
+): CSSProperties {
+  const retraso = { "--retraso-hilo": `${Math.min(indice * 45, 400)}ms` } as CSSProperties;
+  // De llegada a llegada, no de salida a llegada: el hilo arranca bajo la
+  // marca de esta parada y termina en la marca de la siguiente, asi que lo que
+  // abarca es todo ese rato, la estancia incluida. Medir solo el viaje dejaria
+  // fuera las horas que uno pasa dentro del lugar, y un ocaso que cae mientras
+  // se cena no apareceria en ningun tramo.
+  const conLuz = fraccionConLuz(parada.arrival, siguiente.arrival, ocaso);
+  if (conLuz === null) return retraso;
+
+  const corte = `${(conLuz * 100).toFixed(1)}%`;
+  return {
+    ...retraso,
+    // Un degradado de dos paradas duras: el cambio tiene que leerse como un
+    // momento —el ocaso—, no como una transicion difusa de media tarde.
+    //
+    // El tramo de noche va con --acento y no con --anil a secas porque --anil
+    // sobre el basalto del tema oscuro queda casi a ras del borde: --acento ya
+    // es el anil que cada tema puede permitirse.
+    backgroundImage: `linear-gradient(to bottom, var(--borde) ${corte}, var(--acento) ${corte})`,
+  };
 }
 
 const hora = (valor: string | null) => (valor ? valor.slice(0, 5) : "");
@@ -232,15 +275,41 @@ export default function Linea({
               */}
               <span className="dato pt-1 text-right text-menudo text-tinta-suave">
                 {hora(parada.arrival)}
+                {/*
+                  Que una parada caiga de noche lo dice el hilo con un color, y
+                  **un color solo no es informacion para todo el mundo**. Aqui
+                  va dicho con palabras para quien no lo ve.
+
+                  No se tiñe la hora: el anil sobre el basalto del tema oscuro
+                  baja el contraste de este texto menudo por debajo de AA, y
+                  --tinta-suave lo cumple de sobra. Perder legibilidad para
+                  repetir un dato que ya esta escrito es mal negocio.
+                */}
+                {esDeNoche(parada.arrival, day.sunset) && (
+                  <span className="sr-only"> (ya de noche)</span>
+                )}
               </span>
 
               <span className="relative flex justify-center">
                 <Marca parada={parada} />
-                {/* El hilo une las paradas del dia y se corta en la ultima. */}
+                {/*
+                  El hilo une las paradas del dia y se corta en la ultima.
+
+                  **Y es un eje de tiempo, asi que dice donde se acaba la
+                  luz.** Cada tramo va de la hora de una parada a la de la
+                  siguiente; el degradado cambia de color justo donde cae el
+                  ocaso, que el motor calcula de la latitud y la fecha. La
+                  posicion del cambio es el dato: se ve que paradas quedan con
+                  luz sin leer una sola hora.
+
+                  Sin fecha no hay ocaso, y el hilo se queda liso: inventar una
+                  hora de anochecer seria peor que no decir nada. Ver lib/luz.ts.
+                */}
                 {indice < day.stops.length - 1 && (
                   <span
                     aria-hidden
-                    className="absolute top-7 bottom-[-1rem] w-px bg-borde sm:bottom-[-1.5rem]"
+                    className="waypoint-hilo absolute top-7 bottom-[-1rem] w-px bg-borde sm:bottom-[-1.5rem]"
+                    style={luzDelTramo(parada, day.stops[indice + 1], day.sunset, indice)}
                   />
                 )}
               </span>

@@ -224,6 +224,13 @@ def _to_out(
                 mode=(
                     constraints.mode_for(dia.number) if constraints is not None else "driving"
                 ),
+                # Solo con fecha: sin ella dusk_for cae en la constante, y
+                # enseñar una hora inventada seria peor que no enseñar ninguna.
+                sunset=(
+                    constraints.dusk_for(dia.number)
+                    if constraints is not None and constraints.date_of_day(dia.number)
+                    else None
+                ),
                 visits=(
                     motor.visits_of_day(dia, constraints)
                     if constraints is not None

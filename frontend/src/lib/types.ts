@@ -91,6 +91,15 @@ export interface Day {
    */
   date: string | null;
 
+  /**
+   * A que hora se pone el sol ese dia, o null si el viaje no tiene fecha.
+   *
+   * La calcula el motor de la latitud y la fecha, sin pedirle nada a nadie.
+   * La linea de tiempo la usa para cambiar de color donde se acaba la luz;
+   * ver lib/luz.ts.
+   */
+  sunset: string | null;
+
   /** El clima de este dia, o null si no se supo. */
   weather: DayWeather | null;
   stops: Stop[];
