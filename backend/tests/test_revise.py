@@ -7,6 +7,7 @@ que no deja retocar nada, porque rompe lo que ya habias aceptado.
 
 import uuid
 from dataclasses import replace
+from datetime import time
 
 import pytest
 
@@ -355,3 +356,110 @@ class TestLosConsejosSeRecalculan:
         resultado = revise_day(None, con_comidas, estado(), target=3)
 
         assert not any(c.kind == "rain_outdoors" for c in resultado.itinerary.advice)
+
+
+class TestElDiaRevisadoSeJuzgaConSusRestricciones:
+    """Lo que la revision pide para un dia tiene que llegar a los consejos.
+
+    **Reportado desde la demo:** «le dije que agregara desayuno, respondio como
+    exito pero no lo agrego». Tenia razon y la causa era la que sospechaba: el
+    dia empezaba a las 10:00 y la franja del desayuno cierra a las 09:30.
+
+    El motor ya sabia explicarlo. Lo que no hacia era enterarse: `revise_day`
+    rehacia el dia con las restricciones nuevas —ahi si estaba el desayuno— y
+    despues llamaba a `advise` con las del viaje, donde nadie lo habia pedido.
+    Asi que el consejo no se generaba, el cliente leia "Con desayuno" y el dia
+    salia sin el, sin una palabra en ninguna parte.
+    """
+
+    @pytest.fixture
+    def tarde(self):
+        """Un viaje que arranca a las 10:00, como el de la captura."""
+        return Constraints(
+            days=3,
+            center_lat=13.72,
+            center_lon=-89.24,
+            max_travel_km_per_day=80,
+            include_meals=True,
+            max_stops_per_day=2,
+            earliest_start=time(10, 0),
+        )
+
+    def _pidiendo_desayuno(self, base):
+        return replace(base, must_include_meals=["breakfast"])
+
+    def test_explica_por_que_el_desayuno_no_cupo(self, catalogo, tarde):
+        resultado = revise_day(
+            None,
+            tarde,
+            estado(),
+            target=1,
+            day_constraints=self._pidiendo_desayuno(tarde),
+        )
+
+        del_dia = [c for c in resultado.itinerary.advice if c.day == 1]
+        assert any(c.kind == "bring_breakfast" for c in del_dia), (
+            "pedir desayuno a un dia que no llega a su franja tiene que decirlo"
+        )
+        assert "09:30" in next(c.detail for c in del_dia if c.kind == "bring_breakfast")
+
+    def test_y_el_desayuno_de_verdad_no_esta(self, catalogo, tarde):
+        """El consejo explica un hecho, no lo sustituye."""
+        resultado = revise_day(
+            None,
+            tarde,
+            estado(),
+            target=1,
+            day_constraints=self._pidiendo_desayuno(tarde),
+        )
+
+        dia = next(d for d in resultado.itinerary.days if d.number == 1)
+        assert not any(p.meal == "breakfast" for p in dia.stops)
+
+    def test_los_otros_dias_no_estrenan_el_consejo(self, catalogo, tarde):
+        """Pedir desayuno para el dia 1 no se lo pide a los demas.
+
+        Revisar un dia no mueve a los otros, y un consejo que apareciera en el
+        dia 3 por haber tocado el 1 seria tan falso como el silencio de antes.
+        """
+        resultado = revise_day(
+            None,
+            tarde,
+            estado(),
+            target=1,
+            day_constraints=self._pidiendo_desayuno(tarde),
+        )
+
+        otros = [c for c in resultado.itinerary.advice if c.day != 1]
+        assert not any(c.kind == "bring_breakfast" for c in otros)
+
+    def test_una_revision_puede_encender_las_comidas_de_un_solo_dia(self, catalogo):
+        """El corte de `include_meals` iba antes del bucle y cortaba todo.
+
+        Con las comidas apagadas en el viaje, encenderlas en un dia dejaba ese
+        dia sin un solo consejo de comida: el `return` temprano se iba del
+        itinerario entero antes de mirar ninguno.
+        """
+        sin_comidas = Constraints(
+            days=3,
+            center_lat=13.72,
+            center_lon=-89.24,
+            max_travel_km_per_day=80,
+            include_meals=False,
+            max_stops_per_day=2,
+            earliest_start=time(10, 0),
+        )
+
+        resultado = revise_day(
+            None,
+            sin_comidas,
+            estado(),
+            target=1,
+            day_constraints=replace(
+                sin_comidas, include_meals=True, must_include_meals=["breakfast"]
+            ),
+        )
+
+        assert any(
+            c.kind == "bring_breakfast" and c.day == 1 for c in resultado.itinerary.advice
+        )

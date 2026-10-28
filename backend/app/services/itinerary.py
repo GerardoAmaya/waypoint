@@ -2672,6 +2672,7 @@ def advise(
     comidas: list[PlaceHit],
     travel: TravelProvider | None = None,
     clima: ClimaDelViaje | None = None,
+    por_dia: dict[int, Constraints] | None = None,
 ) -> list[Advice]:
     """Lo que el viajero deberia saber y no es un limite incumplido.
 
@@ -2684,15 +2685,25 @@ def advise(
     """
     consejos: list[Advice] = weather_advice(itinerario, constraints, clima)
 
-    # El corte va despues de la lluvia a proposito: apagar las comidas no apaga
-    # el clima, y antes este `return` se llevaba por delante los dos.
-    if not constraints.include_meals:
-        return consejos
-
-    pedidas = set(constraints.must_include_meals)
-
     for dia in itinerario.days:
-        medidor = _travel_or_estimate(travel, constraints.mode_for(dia.number))
+        # **Las restricciones del dia, que no siempre son las del viaje.**
+        # Revisar un dia lo rehace con las suyas —"agregá desayuno" solo toca
+        # ese— y hasta ahora los consejos se calculaban con las de todo el
+        # viaje. El dia salia sin desayuno, porque su franja cierra a las
+        # 09:30 y el dia empieza a las 10:00, y el unico sitio que lo explica
+        # miraba unas restricciones donde nadie habia pedido desayuno: el
+        # cliente veia "Con desayuno" y un dia sin el, sin una palabra.
+        del_dia = (por_dia or {}).get(dia.number, constraints)
+
+        # El corte va despues de la lluvia a proposito: apagar las comidas no
+        # apaga el clima, y antes este `return` se llevaba por delante los dos.
+        # Y va por dia y no antes del bucle, porque una revision puede
+        # encenderlas en uno solo.
+        if not del_dia.include_meals:
+            continue
+
+        pedidas = set(del_dia.must_include_meals)
+        medidor = _travel_or_estimate(travel, del_dia.mode_for(dia.number))
         if not dia.stops or not dia.start or not dia.end:
             continue
 
@@ -2703,7 +2714,7 @@ def advise(
             # sin mencionarlo.
             servida = next((p for p in dia.stops if p.meal == tipo), None)
             if servida is not None:
-                cocina = constraints.cuisine_for(tipo)
+                cocina = del_dia.cuisine_for(tipo)
                 if cocina and not sirve_cocina(servida.place, cocina):
                     consejos.append(_cocina_no_encontrada(dia, tipo, cocina, servida))
                 continue
@@ -2719,9 +2730,7 @@ def advise(
             # termina despues de que abre.
             llega = dia.start <= ventana[1] and dia.end >= ventana[0]
             if llega:
-                consejos.append(
-                    _meal_advice(dia, constraints, comidas, medidor, tipo, ventana)
-                )
+                consejos.append(_meal_advice(dia, del_dia, comidas, medidor, tipo, ventana))
                 continue
 
             # **Si la pidio con nombre, el silencio no vale.** Un dia que no
@@ -2734,12 +2743,12 @@ def advise(
                         dia,
                         tipo,
                         ventana,
-                        constraints.budget_was_asked_for,
-                        constraints.latest_end,
+                        del_dia.budget_was_asked_for,
+                        del_dia.latest_end,
                     )
                 )
 
-        aviso = _ayuno_largo(dia, constraints, pedidas)
+        aviso = _ayuno_largo(dia, del_dia, pedidas)
         if aviso is not None:
             consejos.append(aviso)
 
@@ -3716,7 +3725,19 @@ def revise_day(
     # que nace Itinerary, asi que revisar un dia borraba el "llevá almuerzo" de
     # todos los dias —incluidos los que nadie toco— y desde el cliente eso se
     # ve como si el problema se hubiera resuelto solo.
-    itinerario.advice = advise(itinerario, constraints, comidas, travel, clima)
+    # **Y el dia revisado se juzga con SUS restricciones.** Es la otra mitad
+    # del mismo arreglo: sin esto, "agregá desayuno" a un dia que empieza a
+    # las 10:00 aplicaba la restriccion, no cabia el desayuno, y el consejo
+    # que lo explica no salia porque se calculaba mirando unas restricciones
+    # donde nadie lo habia pedido.
+    itinerario.advice = advise(
+        itinerario,
+        constraints,
+        comidas,
+        travel,
+        clima,
+        por_dia={target: restricciones_dia},
+    )
     return RevisionResult(itinerary=itinerario, missing=faltantes, weather=clima)
 
 

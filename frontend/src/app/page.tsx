@@ -261,7 +261,7 @@ export default function Home() {
           la salida del primero.
         */
         setHistorial((previo) => [...previo, itinerario]);
-        setLoDicho(loQueCambio(resultado));
+        setLoDicho(loQueCambio(resultado, itinerario, diaActivo));
         setItinerario(resultado.itinerary);
         // El dia se rehizo: la parada elegida puede ya no estar en el.
         setParada(null);

@@ -3079,6 +3079,60 @@ a usar el ayudante que ya existía.
 
 ---
 
+### «Respondió como éxito pero no lo agregó»
+
+Reportado desde la demo: pedir «agregá desayuno» a un día que empieza a las
+10:00. La revisión contestaba «Con desayuno» y el día salía sin desayuno. La
+sospecha de quien lo reportó —que era por la hora de inicio— era correcta: la
+franja del desayuno cierra a las 09:30.
+
+Reproducido contra la API, el motor **ya sabía explicarlo**:
+
+```
+/itinerary  earliest_start 10:00 + must_include_meals [breakfast]
+  advice: bring_breakfast → "Pediste desayuno y este día no llega:
+          empieza a las 10:00, después de que cierra la franja"
+```
+
+Pero por el camino de la revisión salía `advice: []`. Dos fallos encadenados,
+y ninguno visible desde el otro lado:
+
+**1. El día revisado se juzgaba con las restricciones del viaje.** `revise_day`
+rehacía el día con `restricciones_dia` —donde sí estaba el desayuno— y después
+llamaba a `advise` con `constraints`, las del viaje, donde nadie lo había
+pedido. `advise` leía ahí `must_include_meals`, no veía desayuno, y concluía
+que no había nada que explicar. Ahora recibe `por_dia={target: ...}` y resuelve
+las restricciones **dentro** del bucle de días, no antes.
+
+Lo mismo pasaba con el corte de `include_meals`, que vivía antes del bucle:
+una revisión que encendiera las comidas en un solo día se topaba con un
+`return` que se había ido del itinerario entero sin mirar ninguno.
+
+**2. Y aunque se generara, no se veía.** El consejo se pinta al final de la
+lista de paradas —debajo de siete— mientras arriba, pegada al campo, la
+revisión declaraba el éxito. Así que la respuesta de la revisión ahora carga
+también los consejos **que ese cambio provocó**, diferenciados contra el
+itinerario anterior: los que ya estaban siguen abajo, donde viven.
+
+La lección es la de siempre con dos sitios que miran el mismo hecho: *aplicar
+una restricción y cumplirla no son lo mismo*, y una pantalla que dice «Con
+desayuno» está contando lo primero mientras quien lee entiende lo segundo.
+
+Sin el itinerario anterior la comparación devuelve lista vacía en vez de
+atribuirle al cambio todos los consejos del día. Entre atribuir de más y
+callar, este proyecto calla: un día con lluvia pedida hace rato no se volvió
+lluvioso porque alguien moviera la hora de inicio.
+
+Lo que **no** se tocó: que esto sea consejo y no violación. No es un fallo del
+motor —es consecuencia de la hora de inicio que se pidió— y el texto nombra la
+causa y la hora exacta, que es más de lo que diría un `satisfies_all_
+constraints: false`.
+
+Banco después del cambio: 25/26 límites duros, 0 lugares inventados, 15% de
+días con «llevá comida», 0 paradas fuera de hora.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

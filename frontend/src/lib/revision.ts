@@ -15,7 +15,7 @@
 
 import { CATEGORIA } from "./categorias";
 import { COMIDA } from "./texto";
-import type { Aplicado, Category, Revision } from "./types";
+import type { Aplicado, Category, Itinerary, Revision } from "./types";
 
 /** "07:00:00" a "07:00". Lo que viene sin segundos se queda igual. */
 const hora = (valor: string) => valor.slice(0, 5);
@@ -65,6 +65,45 @@ export interface LoQueCambio {
   quitadas: string[];
   /** Lo que no supo usar y los avisos del camino. */
   avisos: string[];
+  /**
+   * Los consejos que este cambio provocó y que antes no estaban.
+   *
+   * **Aplicar una restricción y cumplirla no son lo mismo.** Pedir desayuno a
+   * un día que empieza a las 10:00 aplica la restricción —y la revisión lo
+   * dice— pero el desayuno no cabe, porque su franja cierra a las 09:30. El
+   * motor ya explicaba exactamente eso; lo hacía al final de la lista de
+   * paradas, debajo de siete, donde no se ve.
+   */
+  consecuencias: string[];
+}
+
+/**
+ * Los consejos del día revisado que no estaban antes.
+ *
+ * Se diferencia contra el itinerario anterior en vez de mostrar todos los del
+ * día porque los que ya estaban —que llueve sobre el mirador— siguen abajo,
+ * donde viven, y repetirlos arriba convertiría la respuesta en un resumen del
+ * día en vez de en la respuesta a lo que se acaba de pedir.
+ *
+ * El texto es la identidad: dos consejos del mismo tipo se distinguen por lo
+ * que dicen, y es lo que se compara porque es lo que se lee.
+ */
+function consecuenciasDe(
+  antes: Itinerary | null | undefined,
+  despues: Itinerary,
+  dia: number,
+): string[] {
+  const deEseDia = (it: Itinerary) =>
+    (it.advice ?? []).filter((a) => a.day === dia).map((a) => a.detail);
+
+  // Sin el itinerario de antes no hay con qué comparar. Devolver todos los
+  // consejos del día sería decir que este cambio los provocó, y entre
+  // atribuir de más y callar, este proyecto calla: un día con lluvia pedida
+  // hace rato no se volvió lluvioso porque alguien moviera la hora de inicio.
+  if (!antes) return [];
+
+  const previos = new Set(deEseDia(antes));
+  return deEseDia(despues).filter((detalle) => !previos.has(detalle));
 }
 
 /**
@@ -74,7 +113,11 @@ export interface LoQueCambio {
  * restricción, que pasa y no es un error: pedir lo que el día ya cumplía lo
  * deja igual. Quien llama decide si eso merece decirse.
  */
-export function loQueCambio(revision: Revision): LoQueCambio {
+export function loQueCambio(
+  revision: Revision,
+  antes?: Itinerary | null,
+  dia?: number,
+): LoQueCambio {
   const cambios = Object.entries(revision.applied ?? {}).map(([clave, valor]) =>
     (COMO_SE_DICE[clave] ?? (() => `${clave}: ${valor}`))(valor),
   );
@@ -86,6 +129,12 @@ export function loQueCambio(revision: Revision): LoQueCambio {
     // y separarlos en pantalla obligaría a explicar la diferencia, que no le
     // importa a nadie que esté mirando su itinerario.
     avisos: [...(revision.unmapped ?? []), ...(revision.notes ?? [])],
+    // Sin el itinerario de antes no hay con qué comparar, y enseñar todos los
+    // consejos del día sería decir que este cambio los provocó.
+    consecuencias:
+      dia && revision.itinerary
+        ? consecuenciasDe(antes, revision.itinerary, dia)
+        : [],
   };
 }
 
@@ -94,6 +143,7 @@ export function dijoAlgo(cambio: LoQueCambio): boolean {
   return (
     cambio.cambios.length > 0 ||
     cambio.quitadas.length > 0 ||
-    cambio.avisos.length > 0
+    cambio.avisos.length > 0 ||
+    cambio.consecuencias.length > 0
   );
 }

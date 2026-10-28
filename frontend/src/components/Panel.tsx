@@ -9,6 +9,7 @@ import {
   faLink,
   faChevronDown,
   faCopy,
+  faLightbulb,
   faPenToSquare,
   faRotateLeft,
   faTriangleExclamation,
@@ -524,6 +525,36 @@ export default function Panel({
                       className="mt-0.5 size-3 shrink-0"
                     />
                     <span>No supe qué hacer con: {aviso}</span>
+                  </p>
+                ))}
+
+                {/*
+                  Y lo que el cambio provocó. **Aplicar una restricción y
+                  cumplirla no son lo mismo**: pedir desayuno a un día que
+                  empieza a las 10:00 aplica la restricción, y arriba se lee
+                  «Con desayuno», pero el desayuno no cabe porque su franja
+                  cerró a las 09:30.
+
+                  El motor ya decía exactamente eso, al final de la lista de
+                  paradas. Debajo de siete paradas, o sea fuera de pantalla,
+                  mientras arriba la revisión declaraba el éxito.
+
+                  Sale también abajo, en su día, y eso no sobra: abajo es el
+                  estado del día y vive mientras el día lo tenga; aquí es la
+                  respuesta a lo que se acaba de pedir y se va con el próximo
+                  cambio.
+                */}
+                {loDicho.consecuencias.map((consejo) => (
+                  <p
+                    key={consejo}
+                    className="flex items-start gap-1.5 text-dato leading-relaxed text-tinta"
+                  >
+                    <FontAwesomeIcon
+                      icon={faLightbulb}
+                      aria-hidden
+                      className="mt-0.5 size-3 shrink-0 text-acento"
+                    />
+                    <span>{consejo}</span>
                   </p>
                 ))}
               </div>

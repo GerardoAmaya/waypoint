@@ -135,6 +135,7 @@ describe("lo que contesta una revisión", () => {
     cambios: ["Empieza a las 07:00", "Máximo 4 paradas"],
     quitadas: ["Montemilia", "Palm Plaza"],
     avisos: [],
+    consecuencias: [],
   };
 
   it("dice qué entendió y qué paradas sacó", () => {
@@ -149,7 +150,7 @@ describe("lo que contesta una revisión", () => {
 
   it("avisa de lo que no supo usar", () => {
     pinta(false, ITINERARIO, {
-      loDicho: { cambios: [], quitadas: [], avisos: ["el cerro ese"] },
+      loDicho: { cambios: [], quitadas: [], avisos: ["el cerro ese"], consecuencias: [] },
     });
 
     expect(screen.getByText(/No supe qué hacer con: el cerro ese/)).toBeInTheDocument();
@@ -157,7 +158,7 @@ describe("lo que contesta una revisión", () => {
 
   it("un día que se rehízo sin cambiar nada no inventa una respuesta", () => {
     const { container } = pinta(false, ITINERARIO, {
-      loDicho: { cambios: [], quitadas: [], avisos: [] },
+      loDicho: { cambios: [], quitadas: [], avisos: [], consecuencias: [] },
     });
 
     expect(container.querySelector(".border-acento")).toBeNull();
@@ -196,5 +197,47 @@ describe("volver al itinerario anterior", () => {
     pinta(false, ITINERARIO, { onDeshacer: () => {}, revising: true });
 
     expect(screen.getByRole("button", { name: /Volver al anterior/i })).toBeDisabled();
+  });
+});
+
+describe("lo que el cambio provocó", () => {
+  it("dice por qué lo que pediste no cupo, donde lo pediste", () => {
+    /*
+      El caso reportado desde la demo: «agregá desayuno» a un día que empieza
+      a las 10:00. La restricción se aplica —arriba se lee «Con desayuno»— y
+      el desayuno no cabe, porque su franja cerró a las 09:30. El motor lo
+      explicaba al final de la lista de paradas, debajo de siete, o sea fuera
+      de pantalla, mientras aquí arriba la revisión declaraba el éxito.
+    */
+    pinta(false, ITINERARIO, {
+      loDicho: {
+        cambios: ["Con desayuno"],
+        quitadas: [],
+        avisos: [],
+        consecuencias: [
+          "Pediste desayuno y este día no llega: empieza a las 10:00, después de que cierra la franja de desayuno a las 09:30",
+        ],
+      },
+    });
+
+    expect(screen.getByText("Con desayuno")).toBeInTheDocument();
+    expect(
+      screen.getByText(/después de que cierra la franja de desayuno a las 09:30/),
+    ).toBeInTheDocument();
+  });
+
+  it("una consecuencia sola ya merece abrir la respuesta", () => {
+    // Un cambio puede no aplicar ninguna restricción nueva y aun así tener
+    // algo que contar.
+    pinta(false, ITINERARIO, {
+      loDicho: {
+        cambios: [],
+        quitadas: [],
+        avisos: [],
+        consecuencias: ["Llevá almuerzo: el comedor más cercano suma 14 km"],
+      },
+    });
+
+    expect(screen.getByText(/Llevá almuerzo/)).toBeInTheDocument();
   });
 });
