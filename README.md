@@ -57,6 +57,11 @@ que llover sobre un museo no marca nada. En temporada sale en el 92% de los
 itinerarios de tres días, y nunca cubre la jornada entera — de 1.540 días
 medidos, ninguno llovió de las nueve a las ocho seguidas.
 
+Un día se cambia escribiendo: «menos carro», «sacá el museo», «empezá a las 7».
+La revisión contesta qué entendió y qué paradas sacó —nombrándolas— y se puede
+volver al itinerario anterior, porque afinar un día es normal y un cambio que
+empeora no debería costar empezar de cero.
+
 El modelo de lenguaje traduce la frase del usuario a restricciones. El motor las
 hace cumplir. Esa división es deliberada y es la respuesta al riesgo principal
 del proyecto: si el modelo armara el itinerario directamente, «odio madrugar»

@@ -3016,6 +3016,69 @@ es el mapa, no la línea de tiempo.
 
 ---
 
+### El backend ya contestaba y la pantalla tiraba la respuesta
+
+La pregunta era si convenía un bot flotante sobre el mapa para que la revisión
+pareciera un chat. La respuesta salió de leer qué devuelve `POST /plan/revise`
+de verdad, llamándolo con tres pedidos:
+
+| pedido | lo que devolvía |
+|---|---|
+| «empezá a las 7 y sólo 4 paradas» | `applied: {earliest_start: 07:00, max_stops_per_day: 4}`, `removed: [Montemilia, Monumento a La Constitución, Celeste Imperio, Palm Plaza]` |
+| «menos carro, máximo 10 km» | `applied: {max_travel_km_per_day: 10.0}` |
+| «sacá el museo» | 422 con explicación |
+
+**El servidor nombraba una por una las cuatro paradas que quitaba, y
+`page.tsx` se quedaba sólo con `resultado.itinerary`.** Un «sólo 4 paradas»
+borraba cuatro lugares y la pantalla se callaba: había que comparar el antes
+con el después, y el antes ya no existía porque tampoco había forma de volver.
+
+Así que la burbuja no era la respuesta. La revisión no se sentía conversacional
+porque **no contestaba** y porque **no se podía deshacer**, y una cáscara de
+chat sobre eso habría prometido un hilo que no existe —cada revisión es una
+orden que rehace el día, no un turno de una conversación con memoria—, encima
+tapando mapa y diciendo «una IA te armó esto», que es justo lo que la división
+entre modelo y motor existe para desmentir.
+
+Lo construido es lo otro: la respuesta aparece sobre el mismo campo que la
+pidió —qué restricción entendió, qué paradas sacó, qué no supo usar— y debajo
+un «Volver al anterior».
+
+**El historial vive en el cliente.** El servidor es sin estado a propósito:
+cada revisión le manda el plan entero de ida y vuelta, así que guardar
+versiones allá sería inventar sesiones para algo que la pestaña recuerda sola.
+Se pierden al recargar, y está bien: lo que no se puede perder —el itinerario—
+tiene su propio enlace. Es una pila y no un solo paso atrás porque revisar dos
+veces seguidas es lo normal, y con un solo hueco el segundo cambio borra la
+salida del primero.
+
+De paso salió un defecto que nadie podía ver precisamente porque el campo se
+tiraba: `applied` se serializaba con `str(v)` de Python. Una lista de
+categorías llegaba al cliente como `"[<Category.nature: 'nature'>]"` —repr de
+Python en una respuesta HTTP— y un número como texto. El día que alguien lo
+pintara tendría que deshacer ese repr a mano, que es como se empieza a parsear
+Python con expresiones regulares. Ahora sale JSON de verdad, y la traducción a
+castellano vive en `lib/revision.ts`, que es donde toca: una API no debería
+hablar castellano.
+
+Dos detalles que no eran obvios:
+
+**Deshacer sólo aparece cuando hay adónde volver**, no deshabilitado desde el
+principio. Un botón apagado en el primer segundo enseña una puerta que todavía
+no está y hace preguntarse qué falta para abrirla.
+
+**Una clave de `applied` que no esté traducida sale cruda** en vez de
+desaparecer. Si el motor aprende una restricción nueva y la pantalla no se
+actualiza, el día se mueve igual: un cambio aplicado y sin nombrar es peor que
+uno nombrado a medias.
+
+Y en los tests, el mismo patrón que ya mordió antes: `Panel.prueba.tsx`
+construía un segundo `<Panel>` a mano con la lista entera de props copiada, así
+que añadir uno rompía la compilación de una prueba que no se había tocado. Pasó
+a usar el ayudante que ya existía.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

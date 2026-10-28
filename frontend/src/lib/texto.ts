@@ -13,7 +13,7 @@
 import { CATEGORIA } from "./categorias";
 
 /** Como se nombra cada comida. El mismo texto que muestra el panel. */
-const COMIDA = {
+export const COMIDA = {
   breakfast: "Desayuno",
   lunch: "Almuerzo",
   dinner: "Cena",

@@ -17,6 +17,7 @@ import Tema from "@/components/Tema";
 import { fetchCompartido, fetchField, reviseDay, streamPlan } from "@/lib/api";
 import { leer, olvidar, recordar, type Reciente } from "@/lib/recientes";
 import type { Fondo as FondoId, ParadaElegida } from "@/components/Mapa";
+import { loQueCambio, type LoQueCambio } from "@/lib/revision";
 import type { Constraints, Interpretation, Itinerary } from "@/lib/types";
 
 // Leaflet toca window al importarse, asi que el mapa no puede renderizarse en
@@ -57,6 +58,18 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [revisando, setRevisando] = useState(false);
   const [errorRevision, setErrorRevision] = useState<string | null>(null);
+  /*
+    Los itinerarios anteriores, para poder volver. Viven en el cliente y no en
+    el servidor porque el servidor ya es sin estado a proposito: cada revision
+    le manda el plan entero de ida y vuelta, asi que guardar versiones alla
+    seria inventar sesiones para algo que la pestaña puede recordar sola.
+
+    Se pierden al recargar, y esta bien: lo que no se puede perder —el
+    itinerario— tiene su propio enlace.
+  */
+  const [historial, setHistorial] = useState<Itinerary[]>([]);
+  /** Que contesto la ultima revision, o null si no hay ninguna que contar. */
+  const [loDicho, setLoDicho] = useState<LoQueCambio | null>(null);
   const aborto = useRef<AbortController | null>(null);
   /*
     La lista vive en estado ademas de en localStorage porque la pantalla de
@@ -238,6 +251,17 @@ export default function Home() {
           interpretacion.constraints as Constraints,
           itinerario.days,
         );
+        /*
+          El itinerario de antes se guarda ANTES de pisarlo, y solo cuando la
+          revision salio bien: si fallo, no hay nada que deshacer y apilar el
+          mismo plan dos veces convertiria el boton en una mentira.
+
+          Es una pila y no un solo paso atras porque revisar dos veces seguidas
+          es lo normal —se afina— y con un solo hueco el segundo cambio borra
+          la salida del primero.
+        */
+        setHistorial((previo) => [...previo, itinerario]);
+        setLoDicho(loQueCambio(resultado));
         setItinerario(resultado.itinerary);
         // El dia se rehizo: la parada elegida puede ya no estar en el.
         setParada(null);
@@ -250,6 +274,18 @@ export default function Home() {
     [itinerario, interpretacion, diaActivo],
   );
 
+  const deshacer = useCallback(() => {
+    setHistorial((previo) => {
+      if (!previo.length) return previo;
+      setItinerario(previo[previo.length - 1]);
+      setParada(null);
+      // Lo que contesto la revision ya no describe lo que se ve.
+      setLoDicho(null);
+      setErrorRevision(null);
+      return previo.slice(0, -1);
+    });
+  }, []);
+
   const reiniciar = useCallback(() => {
     aborto.current?.abort();
     setItinerario(null);
@@ -258,6 +294,8 @@ export default function Home() {
     setParada(null);
     setPanelExpandido(false);
     setError(null);
+    setHistorial([]);
+    setLoDicho(null);
     setFase("quieto");
   }, []);
 
@@ -422,6 +460,8 @@ export default function Home() {
                 onRevise={revisar}
                 revising={revisando}
                 reviseError={errorRevision}
+                loDicho={loDicho}
+                onDeshacer={historial.length ? deshacer : null}
                 midiendo={fase === "midiendo"}
                 expandido={panelExpandido}
                 onToggleExpandido={() => setPanelExpandido((v) => !v)}

@@ -6,6 +6,7 @@ pedido que el sistema no puede cumplir se diga en vez de ignorarse.
 """
 
 import uuid
+from datetime import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -151,6 +152,38 @@ class TestAplicaElCambio:
         respuesta = cliente.post("/plan/revise", json=cuerpo()).json()
 
         assert "max_travel_km_per_day" in respuesta["applied"]
+
+    def test_lo_que_aplico_sale_en_JSON_y_no_en_repr_de_python(self, cliente, monkeypatch):
+        """`applied` se serializaba con `str()`, que es repr de Python.
+
+        Una lista de categorias salia como "['nature', 'culture']" —comillas
+        simples, corchetes y todo— y un numero como texto. Nadie lo noto
+        porque el cliente tiraba el campo entero; ahora lo pinta, y deshacer
+        un repr a mano es como se empieza a parsear Python con expresiones
+        regulares.
+        """
+        con_revision(
+            monkeypatch,
+            Revision(
+                changes={
+                    "earliest_start": time(7, 0),
+                    "max_stops_per_day": 4,
+                    "max_travel_km_per_day": 15.0,
+                    "preferred_categories": [Category.nature, Category.culture],
+                    "include_meals": False,
+                }
+            ),
+        )
+
+        aplicado = cliente.post("/plan/revise", json=cuerpo()).json()["applied"]
+
+        # Las horas a texto, que es lo que `time` significa en JSON y lo que
+        # el resto de la API ya devuelve. Lo demas con su tipo.
+        assert aplicado["earliest_start"] == "07:00:00"
+        assert aplicado["max_stops_per_day"] == 4
+        assert aplicado["max_travel_km_per_day"] == 15.0
+        assert aplicado["preferred_categories"] == ["nature", "culture"]
+        assert aplicado["include_meals"] is False
 
     def test_saca_la_parada_pedida(self, cliente, monkeypatch):
         con_revision(monkeypatch, Revision(changes={"max_stops_per_day": 2}, remove=["Museo"]))

@@ -19,6 +19,8 @@ import json
 import logging
 from collections.abc import Iterator
 from dataclasses import replace
+from datetime import time
+from enum import Enum
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -221,6 +223,31 @@ def shared(codigo: str, db: Session = Depends(get_db)) -> dict:
     return guardado
 
 
+def _json_llano(valor):
+    """Un valor de `changes` en algo que JSON sepa escribir.
+
+    **Esto salia con `str()`, y eso es repr de Python en una respuesta HTTP.**
+    Una lista de categorias llegaba al cliente como "['nature', 'culture']":
+    comillas simples, corchetes y todo. Nadie lo noto porque el cliente tiraba
+    el campo entero; el dia que alguien lo pinte tendria que deshacer ese repr
+    a mano, que es como se empieza a parsear Python con expresiones regulares.
+
+    Las horas si van a texto, porque es lo que `datetime.time` significa en
+    JSON y lo que el resto de la API ya devuelve.
+    """
+    # Antes que nada, porque Category hereda de str y si no cae en la rama de
+    # abajo: `str([Category.nature])` daba "[<Category.nature: 'nature'>]".
+    if isinstance(valor, Enum):
+        return valor.value
+    if isinstance(valor, time):
+        return valor.isoformat()
+    if isinstance(valor, dict):
+        return {k: _json_llano(v) for k, v in valor.items()}
+    if isinstance(valor, list | tuple | set):
+        return [_json_llano(v) for v in valor]
+    return valor
+
+
 @router.post("", dependencies=[Depends(limitar)])
 def plan(peticion: PlanMessage) -> StreamingResponse:
     """Arma un itinerario a partir de una frase, transmitiendo cada fase.
@@ -347,7 +374,7 @@ def revise(peticion: ReviseRequest) -> RevisionOut:
                 base,
                 resultado.weather,
             ),
-            applied={k: str(v) for k, v in cambio.changes.items()},
+            applied={k: _json_llano(v) for k, v in cambio.changes.items()},
             removed=cambio.remove,
             missing=resultado.missing,
             unmapped=cambio.unmapped,

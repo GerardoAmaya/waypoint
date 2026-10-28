@@ -7,8 +7,10 @@
  * hacer falta, y dos segundos después el mapa cambia las rectas por el trazo
  * por carretera sin que nada lo hubiera anunciado.
  */
-import { describe, expect, it } from "vitest";
+import type { ComponentProps } from "react";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import Panel from "./Panel";
 import { dia, itinerario, lugar, parada } from "@/pruebas/datos";
@@ -17,7 +19,11 @@ const ITINERARIO = itinerario({
   days: [dia({ stops: [parada({ place: lugar({ name: "Museo de Arte" }) })] })],
 });
 
-function pinta(midiendo: boolean, itinerario = ITINERARIO) {
+function pinta(
+  midiendo: boolean,
+  itinerario = ITINERARIO,
+  extra: Partial<ComponentProps<typeof Panel>> = {},
+) {
   return render(
     <Panel
       interpretation={null}
@@ -31,7 +37,10 @@ function pinta(midiendo: boolean, itinerario = ITINERARIO) {
       onSelectStop={() => {}}
       expandido={false}
       onToggleExpandido={() => {}}
+      loDicho={null}
+      onDeshacer={null}
       midiendo={midiendo}
+      {...extra}
     />,
   );
 }
@@ -60,25 +69,13 @@ describe("Panel", () => {
       estimadas. La línea decía "se acabó el cupo diario de rutas, así que salen
       de la línea recta" y se leía como que las líneas del mapa eran rectas.
     */
-    render(
-      <Panel
-        interpretation={null}
-        itinerary={{
-          ...ITINERARIO,
-          travel: { ...ITINERARIO.travel, reason: "no_quota" },
-        }}
-        selectedDay={1}
-        onSelectDay={() => {}}
-        onRevise={async () => {}}
-        revising={false}
-        reviseError={null}
-        selectedStop={null}
-        onSelectStop={() => {}}
-        expandido={false}
-        onToggleExpandido={() => {}}
-        midiendo={false}
-      />,
-    );
+    // Por `pinta` y no armando otro <Panel> a mano: la copia de la lista de
+    // props se queda vieja en cuanto el componente aprende uno nuevo, y lo
+    // que falla entonces es la compilacion de un test que no cambio.
+    pinta(false, {
+      ...ITINERARIO,
+      travel: { ...ITINERARIO.travel, reason: "no_quota" },
+    });
 
     expect(screen.getByText(/cupo diario para medirlas/i)).toBeInTheDocument();
     expect(
@@ -130,5 +127,74 @@ describe("el crédito del clima", () => {
 
     expect(screen.getByText(/dieciséis días/)).toBeInTheDocument();
     expect(screen.queryByText(/Open-Meteo/)).not.toBeInTheDocument();
+  });
+});
+
+describe("lo que contesta una revisión", () => {
+  const dicho = {
+    cambios: ["Empieza a las 07:00", "Máximo 4 paradas"],
+    quitadas: ["Montemilia", "Palm Plaza"],
+    avisos: [],
+  };
+
+  it("dice qué entendió y qué paradas sacó", () => {
+    // El motor nombra las paradas que quita una por una. Decir «saqué 4» sin
+    // cuáles obliga a comparar el antes y el después, y el antes ya no está.
+    pinta(false, ITINERARIO, { loDicho: dicho });
+
+    expect(screen.getByText("Empieza a las 07:00")).toBeInTheDocument();
+    expect(screen.getByText("Máximo 4 paradas")).toBeInTheDocument();
+    expect(screen.getByText(/Saqué Montemilia y Palm Plaza/)).toBeInTheDocument();
+  });
+
+  it("avisa de lo que no supo usar", () => {
+    pinta(false, ITINERARIO, {
+      loDicho: { cambios: [], quitadas: [], avisos: ["el cerro ese"] },
+    });
+
+    expect(screen.getByText(/No supe qué hacer con: el cerro ese/)).toBeInTheDocument();
+  });
+
+  it("un día que se rehízo sin cambiar nada no inventa una respuesta", () => {
+    const { container } = pinta(false, ITINERARIO, {
+      loDicho: { cambios: [], quitadas: [], avisos: [] },
+    });
+
+    expect(container.querySelector(".border-acento")).toBeNull();
+  });
+
+  it("sin revisiones no hay nada que contar", () => {
+    pinta(false);
+
+    expect(screen.queryByText(/No supe qué hacer con/)).toBeNull();
+  });
+});
+
+describe("volver al itinerario anterior", () => {
+  it("no ofrece la salida mientras no exista", () => {
+    // Un botón apagado desde el primer segundo enseña una puerta que todavía
+    // no está y hace preguntarse qué falta para abrirla.
+    pinta(false, ITINERARIO, { onDeshacer: null });
+
+    expect(screen.queryByRole("button", { name: /Volver al anterior/i })).toBeNull();
+  });
+
+  it("aparece en cuanto hay adónde volver, y llama al volver", async () => {
+    const volver = vi.fn();
+    pinta(false, ITINERARIO, { onDeshacer: volver });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Volver al anterior/i }),
+    );
+
+    expect(volver).toHaveBeenCalledOnce();
+  });
+
+  it("no se puede volver mientras el día se está rehaciendo", () => {
+    // Deshacer a mitad de una revisión dejaría el resultado pisando el plan
+    // al que se acaba de volver.
+    pinta(false, ITINERARIO, { onDeshacer: () => {}, revising: true });
+
+    expect(screen.getByRole("button", { name: /Volver al anterior/i })).toBeDisabled();
   });
 });

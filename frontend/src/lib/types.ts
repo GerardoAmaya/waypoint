@@ -261,9 +261,28 @@ export interface Candidates {
   meals: number;
 }
 
+/**
+ * Un valor de `applied`, tal como lo escribe el backend.
+ *
+ * Son los tipos de las restricciones que una revision puede tocar: una hora
+ * ("07:00:00"), un numero de paradas o de kilometros, un si/no de las comidas,
+ * una lista de categorias, o los minutos por categoria.
+ */
+export type Aplicado =
+  | string
+  | number
+  | boolean
+  | string[]
+  | Record<string, number>;
+
 export interface Revision {
   itinerary: Itinerary;
-  applied: Record<string, string>;
+  /**
+   * Que restriccion entendio y con que valor. Las claves son las del motor
+   * —`earliest_start`, `max_stops_per_day`…—, no texto para mostrar: lo que
+   * se lee en pantalla lo arma lib/revision.ts.
+   */
+  applied: Record<string, Aplicado>;
   removed: string[];
   missing: string[];
   unmapped: string[];

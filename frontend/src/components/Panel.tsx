@@ -10,6 +10,7 @@ import {
   faChevronDown,
   faCopy,
   faPenToSquare,
+  faRotateLeft,
   faTriangleExclamation,
 } from "@fortawesome/free-solid-svg-icons";
 
@@ -17,6 +18,7 @@ import Asa from "./Asa";
 import FotoZona from "./FotoZona";
 import Linea from "./Linea";
 import { itinerarioComoTexto } from "@/lib/texto";
+import { dijoAlgo, lista, type LoQueCambio } from "@/lib/revision";
 import type { Interpretation, Itinerary } from "@/lib/types";
 
 interface Props {
@@ -27,6 +29,15 @@ interface Props {
   onRevise: (mensaje: string) => Promise<void>;
   revising: boolean;
   reviseError: string | null;
+  /**
+   * Que contesto la ultima revision, o null si no hay ninguna.
+   *
+   * El backend siempre lo devolvio y la pantalla lo tiraba: un «solo 4
+   * paradas» borraba cuatro lugares por su nombre y nadie decia cuales.
+   */
+  loDicho: LoQueCambio | null;
+  /** Volver al itinerario anterior, o null si no hay ninguno al que volver. */
+  onDeshacer: (() => void) | null;
   selectedStop: string | null;
   onSelectStop: (id: string | null) => void;
   expandido: boolean;
@@ -107,6 +118,8 @@ export default function Panel({
   onRevise,
   revising,
   reviseError,
+  loDicho,
+  onDeshacer,
   selectedStop,
   onSelectStop,
   expandido,
@@ -461,6 +474,64 @@ export default function Panel({
 
       <footer className="shrink-0 border-t border-borde px-6 py-3 lg:py-4">
         {/*
+          Lo que contestó la revisión, encima del campo que la pidió.
+
+          **Esto es lo que vuelve conversacional al cambio de un día.** Antes
+          el día se rehacía y la pantalla se callaba: había que comparar el
+          antes y el después a ojo, y el antes ya no estaba. Ahora dice qué
+          entendió y qué paradas sacó —que el motor nombra una por una— y se
+          puede volver.
+
+          Va aquí y no en un panel flotante sobre el mapa porque el cambio se
+          pide aquí: la respuesta tiene que aparecer donde uno está mirando, y
+          un hilo aparte obligaría a ir a buscarla.
+        */}
+        <AnimatePresence initial={false}>
+          {loDicho && dijoAlgo(loDicho) && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.22 }}
+              className="overflow-hidden"
+            >
+              <div className="mb-3 space-y-1.5 border-l-2 border-acento pl-3">
+                {loDicho.cambios.map((linea) => (
+                  <p key={linea} className="text-dato leading-relaxed text-tinta">
+                    {linea}
+                  </p>
+                ))}
+
+                {/*
+                  Las paradas que salieron van juntas y nombradas. Decir «saqué
+                  4 paradas» sin cuáles obliga a buscar la diferencia, que es
+                  justo el trabajo que esto existe para quitar.
+                */}
+                {!!loDicho.quitadas.length && (
+                  <p className="text-dato leading-relaxed text-tinta-suave">
+                    Saqué {lista(loDicho.quitadas)}
+                  </p>
+                )}
+
+                {loDicho.avisos.map((aviso) => (
+                  <p
+                    key={aviso}
+                    className="flex items-start gap-1.5 text-dato leading-relaxed text-aviso"
+                  >
+                    <FontAwesomeIcon
+                      icon={faTriangleExclamation}
+                      aria-hidden
+                      className="mt-0.5 size-3 shrink-0"
+                    />
+                    <span>No supe qué hacer con: {aviso}</span>
+                  </p>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/*
           Cerrado es un boton de una linea; abierto es el campo. En pantalla
           ancha nunca esta cerrado, asi que el desplegable no molesta ahi.
         */}
@@ -514,6 +585,22 @@ export default function Panel({
             )}
           </button>
         </div>
+
+        {/*
+          Deshacer sale solo cuando hay adonde volver, y no deshabilitado: un
+          botón apagado desde el primer segundo enseña una salida que todavía
+          no existe y hace preguntarse qué hace falta para encenderlo.
+        */}
+        {onDeshacer && (
+          <button
+            onClick={onDeshacer}
+            disabled={revising}
+            className="mt-2 inline-flex items-center gap-1.5 text-dato text-tinta-tenue transition-colors hover:text-tinta disabled:opacity-40"
+          >
+            <FontAwesomeIcon icon={faRotateLeft} aria-hidden className="size-3" />
+            Volver al anterior
+          </button>
+        )}
         {reviseError && (
           <p className="mt-2 text-dato leading-relaxed text-aviso">
             {reviseError}
