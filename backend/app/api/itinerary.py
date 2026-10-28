@@ -88,6 +88,7 @@ def _to_stop(
     parada: motor.Stop,
     trazo: list[tuple[float, float]] | None = None,
     cocina_pedida: str | None = None,
+    mojada: bool = False,
 ) -> StopOut:
     lugar = parada.place
     return StopOut(
@@ -110,6 +111,7 @@ def _to_stop(
         travel_km_from_previous=parada.travel_km_from_previous,
         meal=parada.meal,
         geometry_from_previous=trazo,
+        rained_on=mojada,
     )
 
 
@@ -143,6 +145,21 @@ def _to_travel_source(stats) -> TravelSourceOut:
     )
 
 
+def _clima_del_dia(
+    dia: motor.Day,
+    constraints: motor.Constraints | None,
+    clima: ClimaDelViaje | None,
+):
+    """El pronostico del dia que toca, o None si falta cualquier pieza.
+
+    La fecha sale de las restricciones y no del dia: el dia sabe su numero, y
+    convertir numero en fecha es una cuenta que ya vive en `date_of_day`.
+    """
+    if constraints is None or clima is None or not clima.hay:
+        return None
+    return clima.de(constraints.date_of_day(dia.number))
+
+
 def _to_weather_day(
     dia: motor.Day,
     constraints: motor.Constraints | None,
@@ -154,12 +171,10 @@ def _to_weather_day(
     las horas del dia— porque todas son necesarias para decir algo cierto, y
     un resumen a medias se leeria como un dato.
     """
-    if constraints is None or clima is None or not clima.hay:
-        return None
     if dia.start is None or dia.end is None:
         return None
 
-    del_dia = clima.de(constraints.date_of_day(dia.number))
+    del_dia = _clima_del_dia(dia, constraints, clima)
     if del_dia is None:
         return None
 
@@ -174,6 +189,60 @@ def _to_weather_day(
         rain_hours=list(resumen.horas_de_lluvia),
         description=resumen.descripcion,
         code=resumen.codigo,
+    )
+
+
+def _to_day(
+    dia: motor.Day,
+    trazos: dict,
+    constraints: motor.Constraints | None,
+    clima: ClimaDelViaje | None,
+) -> DayOut:
+    """Serializa un dia con sus paradas.
+
+    El pronostico se resuelve una vez aca y no dentro de la lista de paradas:
+    es el mismo dia para todas, y cruzarlo por parada seria repetir la misma
+    busqueda tantas veces como paradas tenga.
+    """
+    meteoro = _clima_del_dia(dia, constraints, clima)
+
+    return DayOut(
+        number=dia.number,
+        date=(constraints.date_of_day(dia.number) if constraints is not None else None),
+        weather=_to_weather_day(dia, constraints, clima),
+        stops=[
+            _to_stop(
+                parada,
+                trazos.get((anterior.place.id, parada.place.id))
+                if anterior is not None
+                else None,
+                # Si se pidio una cocina para esa comida y el sitio la sirve,
+                # es esa la que se muestra. Ver cocina_legible.
+                constraints.cuisine_for(parada.meal)
+                if constraints is not None and parada.meal
+                else None,
+                # Quien decide si una parada se moja es el motor, con el mismo
+                # predicado que arma el consejo del dia.
+                mojada=meteoro is not None and motor.se_moja(parada, meteoro),
+            )
+            for anterior, parada in zip([None, *dia.stops], dia.stops, strict=False)
+        ],
+        travel_km=dia.travel_km,
+        start=dia.start,
+        end=dia.end,
+        mode=(constraints.mode_for(dia.number) if constraints is not None else "driving"),
+        # Solo con fecha: sin ella dusk_for cae en la constante, y enseñar una
+        # hora inventada seria peor que no enseñar ninguna.
+        sunset=(
+            constraints.dusk_for(dia.number)
+            if constraints is not None and constraints.date_of_day(dia.number)
+            else None
+        ),
+        visits=(
+            motor.visits_of_day(dia, constraints)
+            if constraints is not None
+            else len(dia.stops)
+        ),
     )
 
 
@@ -197,48 +266,7 @@ def _to_out(
             source="forecast" if clima is not None and clima.hay else None,
             reason=clima.reason if clima is not None else None,
         ),
-        days=[
-            DayOut(
-                number=dia.number,
-                date=(
-                    constraints.date_of_day(dia.number) if constraints is not None else None
-                ),
-                weather=_to_weather_day(dia, constraints, clima),
-                stops=[
-                    _to_stop(
-                        parada,
-                        trazos.get((anterior.place.id, parada.place.id))
-                        if anterior is not None
-                        else None,
-                        # Si se pidio una cocina para esa comida y el sitio la
-                        # sirve, es esa la que se muestra. Ver cocina_legible.
-                        constraints.cuisine_for(parada.meal)
-                        if constraints is not None and parada.meal
-                        else None,
-                    )
-                    for anterior, parada in zip([None, *dia.stops], dia.stops, strict=False)
-                ],
-                travel_km=dia.travel_km,
-                start=dia.start,
-                end=dia.end,
-                mode=(
-                    constraints.mode_for(dia.number) if constraints is not None else "driving"
-                ),
-                # Solo con fecha: sin ella dusk_for cae en la constante, y
-                # enseñar una hora inventada seria peor que no enseñar ninguna.
-                sunset=(
-                    constraints.dusk_for(dia.number)
-                    if constraints is not None and constraints.date_of_day(dia.number)
-                    else None
-                ),
-                visits=(
-                    motor.visits_of_day(dia, constraints)
-                    if constraints is not None
-                    else len(dia.stops)
-                ),
-            )
-            for dia in itinerario.days
-        ],
+        days=[_to_day(dia, trazos, constraints, clima) for dia in itinerario.days],
         violations=[
             ViolationOut(constraint=v.constraint, day=v.day, detail=v.detail)
             for v in itinerario.violations

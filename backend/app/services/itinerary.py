@@ -2573,8 +2573,8 @@ def _franjas_en_palabras(horas: Iterable[int]) -> str:
     return ", ".join(textos[:-1]) + " y " + textos[-1]
 
 
-def _paradas_mojadas(dia: Day, clima: DiaDeClima) -> list[Stop]:
-    """Las paradas al aire libre que caen en una hora de lluvia.
+def se_moja(parada: Stop, clima: DiaDeClima) -> bool:
+    """Si a esta parada le llueve encima.
 
     **Solo las de afuera, y solo las que coinciden.** Que llueva mientras se
     esta en un museo no es un problema que la persona tenga que resolver, y un
@@ -2582,17 +2582,29 @@ def _paradas_mojadas(dia: Day, clima: DiaDeClima) -> list[Stop]:
 
     Una parada ocupa desde que se llega hasta que se va, asi que basta con que
     una de las horas que abarca venga con agua.
+
+    Vive aparte porque hay dos lecturas del mismo hecho: el consejo, que nombra
+    los lugares sin repetirlos, y la marca de cada parada en la pantalla, que
+    si tiene que salir las dos veces que se pasa por el mismo sitio. Partirlo
+    en dos definiciones de "mojada" seria pedir que se separen.
+    """
+    if parada.place.category not in OUTDOOR_CATEGORIES:
+        return False
+    return bool(clima.horas_de_lluvia(parada.arrival, parada.departure))
+
+
+def _paradas_mojadas(dia: Day, clima: DiaDeClima) -> list[Stop]:
+    """Las paradas al aire libre que caen en una hora de lluvia, sin repetir.
+
+    Para el consejo, que las nombra: un dia que vuelve al punto de partida trae
+    el mismo lugar dos veces y no hay que nombrarlo dos veces.
     """
     mojadas: list[Stop] = []
     vistos: set[uuid.UUID] = set()
     for parada in dia.stops:
-        if parada.place.category not in OUTDOOR_CATEGORIES:
-            continue
-        # Un dia que vuelve al punto de partida trae el mismo lugar dos veces y
-        # no hay que nombrarlo dos veces.
         if parada.place.id in vistos:
             continue
-        if clima.horas_de_lluvia(parada.arrival, parada.departure):
+        if se_moja(parada, clima):
             mojadas.append(parada)
             vistos.add(parada.place.id)
     return mojadas

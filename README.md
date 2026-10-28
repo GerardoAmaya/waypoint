@@ -50,6 +50,13 @@ el motor calcula de la latitud y la fecha, que en El Salvador va de las 17:25 a
 las 18:28 según el mes—, así que se ve de un vistazo qué paradas quedan con luz.
 Sin fecha no hay ocaso, y entonces el hilo se queda de un solo color.
 
+Al lado del hilo, y solo en el trecho que lo trae, cae la lluvia del
+pronóstico, y la parada que se moja lleva un paraguas. La decide el motor, no
+el dibujo: tiene que estar al aire libre y coincidir con una hora con agua, así
+que llover sobre un museo no marca nada. En temporada sale en el 92% de los
+itinerarios de tres días, y nunca cubre la jornada entera — de 1.540 días
+medidos, ninguno llovió de las nueve a las ocho seguidas.
+
 El modelo de lenguaje traduce la frase del usuario a restricciones. El motor las
 hace cumplir. Esa división es deliberada y es la respuesta al riesgo principal
 del proyecto: si el modelo armara el itinerario directamente, «odio madrugar»

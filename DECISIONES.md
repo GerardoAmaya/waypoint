@@ -2953,6 +2953,69 @@ también se anula.
 
 ---
 
+### La lluvia: medí mal y por poco entierro la función
+
+Al descartar la animación de clima medí **horas con lluvia sobre horas de
+paseo** y salió 4%. Con ese número dije que no y pasé a otra cosa. El número
+era cierto y la pregunta estaba mal: lo que decide si un efecto se ve no es qué
+fracción del tiempo llueve, sino **en cuántos itinerarios aparece**. Y lo medí
+el 28 de octubre, al final de la temporada de lluvias, que es la peor fecha del
+año para esa pregunta.
+
+Volví a medir sobre las 20 zonas del nomenclátor, ventana de 09:00 a 20:00 y el
+mismo umbral de 1 mm/h que usa el motor —320 días de pronóstico y 1.220 del
+archivo histórico:
+
+| | días con lluvia | itinerarios de 2 días | de 3 días |
+|---|---|---|---|
+| septiembre | **66%** | **85%** | **92%** |
+| próximos 16 días | 13% | 21% | 28% |
+| marzo | 9% | 14% | 18% |
+
+En temporada sale en 9 de cada 10 itinerarios de tres días. Lo que lo decidió
+no fue eso, sino el otro número: **de 1.540 días medidos, ni uno llovió la
+ventana entera.** Media de 2,5 horas en septiembre, máximo 8. O sea que la
+lluvia siempre marca *una parte* del día — el mismo criterio por el que la luz
+del día ganó y el calor perdió.
+
+La lección no es sobre la lluvia. Es que una medición que contesta la pregunta
+equivocada se lee igual de convincente que una que contesta la correcta, y la
+única defensa es decir en voz alta qué decide la pregunta antes de medirla.
+
+**El motor ya lo sabía todo.** `_paradas_mojadas` calcula desde hace tiempo qué
+paradas caen bajo agua, y solo las de afuera: que llueva mientras se está en un
+museo no es un problema que resolver. Ese cálculo terminaba convertido en una
+frase. Lo único que faltaba era dejarlo salir por parada, así que el predicado
+se partió en `se_moja(parada, clima)` y `StopOut.rained_on` lo expone. Dos
+lecturas del mismo hecho, una definición: el consejo nombra los lugares sin
+repetirlos y la marca sale las dos veces que se pasa por el mismo sitio.
+
+**Al lado del hilo, no encima.** El hilo ya dice dónde se acaba la luz, y dos
+datos sobre la misma línea de un píxel se pisan. La lluvia ocupa una franja de
+9 px pegada al hilo, con el trecho exacto que viene con agua, y la parada que
+se moja lleva un paraguas. Un canal dice "este rato del día", el otro "y esta
+parada tuya está afuera justo ahí".
+
+Lo que costó afinarlo fue el tamaño. Las gotas solas no se ven: son finas y el
+ojo las pierde en cuanto deja de mirar. Hizo falta un fondo tenue debajo —la
+franja existe aunque uno no la mire— y dos capas de gotas a velocidades
+distintas, porque una sola se lee como una textura quieta que alguien arrastra.
+Se animan con `transform` sobre `::before` y `::after`, no con
+`background-position`: el degradado se pinta una vez y de ahí lo mueve el
+compositor. Y el radio es de 2 px y no capsular, porque con el radio completo
+media hora de chubasco sale redonda por los dos lados y se lee como una
+pastilla puesta ahí, no como el tramo de un eje.
+
+Las tres primeras versiones se midieron en el navegador antes de elegir: una
+franja de 6 px era invisible, una banda de 22 px detrás del hilo parecía un
+esqueleto de carga, y la de 9 px con fondo fue la que se lee sin gritar.
+
+Honestamente: dentro de esa columna de 24 px esto es una **banda discreta**, no
+la animación aparatosa de la petición original. El sitio con espacio para eso
+es el mapa, no la línea de tiempo.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

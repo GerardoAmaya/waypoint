@@ -270,3 +270,101 @@ describe("la luz del dia en el hilo", () => {
     expect(retrasos).toEqual(["0ms", "45ms"]);
   });
 });
+
+describe("la lluvia en la linea", () => {
+  /** Un dia de septiembre: chubascos de 13:00 a 15:59, ocaso a las 18:10. */
+  const conChubascos = dia({
+    sunset: "18:10:00",
+    weather: {
+      temp_max: 31,
+      temp_min: 22,
+      rain_mm: 7.4,
+      rain_hours: [13, 14, 15],
+      description: "chubascos",
+      code: 80,
+    },
+    stops: [
+      parada({
+        place: lugar({ name: "Mirador", category: "nature" }),
+        arrival: "11:00:00",
+        departure: "13:30:00",
+        rained_on: true,
+      }),
+      parada({
+        place: lugar({ name: "Pupuseria", category: "food" }),
+        arrival: "15:00:00",
+        departure: "16:00:00",
+        meal: "lunch",
+      }),
+      parada({ place: hotel, arrival: "17:00:00", departure: "17:00:00" }),
+    ],
+  });
+
+  const franjas = (base: HTMLElement) =>
+    Array.from(base.querySelectorAll<HTMLElement>(".waypoint-lluvia"));
+
+  /** Lo que el navegador guarda es "50%", no "50.0%": se compara el numero. */
+  const pct = (valor: string) => Number.parseFloat(valor);
+
+  /** Las horas de la columna izquierda, sin la del resumen del dia. */
+  const horas = (base: HTMLElement) =>
+    Array.from(base.querySelectorAll<HTMLElement>("li > span.dato"));
+
+  it("pone el agua sobre el trecho que la trae y no sobre el resto", () => {
+    const { container } = pinta({ day: conChubascos });
+    const [primera, segunda] = franjas(container);
+
+    // Primer tramo, de 11:00 a 15:00: cuatro horas, y llueve las dos ultimas.
+    expect(pct(primera.style.top)).toBeCloseTo(50);
+    expect(pct(primera.style.height)).toBeCloseTo(50);
+    // Segundo, de 15:00 a 17:00: llueve la primera hora.
+    expect(pct(segunda.style.top)).toBeCloseTo(0);
+    expect(pct(segunda.style.height)).toBeCloseTo(50);
+  });
+
+  it("sin pronostico no cae ni una gota", () => {
+    const { container } = pinta({
+      day: dia({ weather: null, stops: conChubascos.stops }),
+    });
+
+    expect(franjas(container)).toHaveLength(0);
+  });
+
+  it("un dia seco tampoco la pinta", () => {
+    const { container } = pinta({
+      day: dia({
+        weather: { ...conChubascos.weather!, rain_hours: [] },
+        stops: conChubascos.stops,
+      }),
+    });
+
+    expect(franjas(container)).toHaveLength(0);
+  });
+
+  it("marca la parada que se moja, y solo esa", () => {
+    // Quien decide que parada se moja es el motor: aca solo se dibuja. La
+    // pupuseria esta dentro de la franja de lluvia y no lleva marca porque
+    // esta bajo techo, y eso llega resuelto desde el servidor.
+    const { container } = pinta({ day: conChubascos });
+    const [mirador, pupuseria] = horas(container);
+
+    expect(mirador.textContent).toContain("11:00");
+    expect(mirador.textContent).toContain("bajo lluvia");
+    expect(pupuseria.textContent).toContain("15:00");
+    expect(pupuseria.textContent).not.toContain("bajo lluvia");
+  });
+
+  it("la lluvia no le quita el ocaso al hilo", () => {
+    // Son dos canales distintos a proposito: el hilo sigue diciendo donde se
+    // acaba la luz aunque ese mismo tramo venga con agua.
+    const { container } = pinta({ day: conChubascos });
+    const hilos = Array.from(
+      container.querySelectorAll<HTMLElement>(".waypoint-hilo"),
+    );
+
+    expect(hilos).toHaveLength(2);
+    for (const hilo of hilos) {
+      expect(hilo.style.backgroundImage).toContain("var(--borde)");
+    }
+  });
+});

@@ -36,6 +36,7 @@ export function parada(parcial: Partial<Stop> = {}): Stop {
     travel_km_from_previous: 2.4,
     meal: null,
     geometry_from_previous: null,
+    rained_on: false,
     ...parcial,
   };
 }

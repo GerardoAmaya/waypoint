@@ -51,6 +51,17 @@ export interface Stop {
    * primera parada de cada dia nunca lo tiene, porque no llega de ningun lado.
    */
   geometry_from_previous: [number, number][] | null;
+
+  /**
+   * Si a esta parada le llueve encima: esta al aire libre y alguna de las
+   * horas que ocupa viene con agua.
+   *
+   * Lo decide el motor, con el mismo predicado que arma el consejo del dia.
+   * Llega resuelto a proposito: cruzar `rain_hours` con las horas de cada
+   * parada aca obligaria al cliente a saber tambien que categorias son de
+   * afuera, y entonces habria dos definiciones de "se moja" que separar.
+   */
+  rained_on: boolean;
 }
 
 /**

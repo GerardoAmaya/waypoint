@@ -507,6 +507,118 @@ summary {
   }
 }
 
+/*
+  La lluvia sobre el trecho del dia que la trae.
+
+  **Va al lado del hilo, no encima.** El hilo ya dice donde se acaba la luz, y
+  dos datos sobre la misma linea de un pixel se pisan: cada canal dice una
+  cosa. El trecho que ocupa sale de las horas con agua del pronostico, asi que
+  esto nunca cubre la jornada entera — en 1.540 dias medidos no llovio ni una
+  vez de las nueve a las ocho seguidas.
+
+  **Dos capas a velocidades distintas.** Una sola se lee como una textura
+  quieta que alguien arrastra; dos desfasadas dan la profundidad que hace que
+  parezca que cae. Van en ::before y ::after y no en dos nodos del marcado
+  porque esto se repite por cada tramo con lluvia de cada dia, y porque asi
+  cada capa puede llevar su propia transformacion.
+
+  Se anima `transform` y no `background-position`: el degradado se pinta una
+  sola vez y de ahi en adelante lo mueve el compositor, sin repintar.
+*/
+.waypoint-lluvia {
+  overflow: hidden;
+  /*
+    Casi recto, y no una capsula: con el radio completo, un trecho corto —media
+    hora de chubasco— sale redondo por los dos lados y se lee como una pastilla
+    puesta ahi, no como el tramo de un eje.
+  */
+  border-radius: 2px;
+  /*
+    Un fondo tenue debajo de las gotas. Sin el, la franja solo existe mientras
+    se mira: las gotas son finas y el ojo las pierde. El fondo dice "este
+    trecho" aunque uno no este mirando, y las gotas dicen que es.
+  */
+  background: color-mix(in srgb, var(--acero-medio) 16%, transparent);
+  /* Que el agua empiece donde empieza el trecho y no de golpe. */
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 6%,
+    #000 94%,
+    transparent
+  );
+}
+
+.waypoint-lluvia::before,
+.waypoint-lluvia::after {
+  content: "";
+  position: absolute;
+  /* De sobra por arriba y por abajo: lo que se mueve no puede dejar hueco. */
+  inset: -100% 0;
+  background-repeat: repeat-y;
+}
+
+/* La capa de delante: gotas mas marcadas y mas rapidas. */
+.waypoint-lluvia::before {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 9px,
+    color-mix(in srgb, var(--acero-medio) 95%, transparent) 9px 15px
+  );
+  background-size: 2px 24px;
+  background-position: 0 0;
+  animation: llover-cerca 820ms linear infinite;
+}
+
+/* La de atras: mas tenue, mas lenta, y pegada al otro borde. */
+.waypoint-lluvia::after {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 14px,
+    color-mix(in srgb, var(--acero-medio) 55%, transparent) 14px 19px
+  );
+  background-size: 2px 33px;
+  background-position: 100% 0;
+  animation: llover-lejos 1240ms linear infinite;
+}
+
+/*
+  Cada capa se desplaza su propio periodo —24px y 33px— para que el bucle
+  cierre sin salto. Con un solo valor para las dos, la mas lenta daba un tiron
+  cada vuelta.
+*/
+@keyframes llover-cerca {
+  to {
+    transform: translateY(24px);
+  }
+}
+
+@keyframes llover-lejos {
+  to {
+    transform: translateY(33px);
+  }
+}
+
+/*
+  El paraguas de una parada mojada entra una vez y se queda: lo que dice es un
+  hecho del plan, no algo que este pasando ahora.
+*/
+.waypoint-mojada {
+  animation: asomar 360ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation-delay: 420ms;
+}
+
+@keyframes asomar {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @keyframes caer {
   from {
     opacity: 0;

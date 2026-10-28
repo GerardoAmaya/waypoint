@@ -211,3 +211,93 @@ class TestConsejos:
         ).json()
 
         assert not any(v["constraint"] == "include_meals" for v in cuerpo["violations"])
+
+
+class TestLoQueElDiaLeCuentaALaPantalla:
+    """Dos datos que el motor ya calculaba y antes se quedaban en el servidor.
+
+    Los dos se dibujan en la linea de tiempo: el ocaso parte el hilo en dia y
+    noche, y `rained_on` marca la parada que se moja. Se prueban en la
+    traduccion a schema porque es ahi donde se pierden sin que nada reviente:
+    el motor sigue calculandolos y la pantalla deja de recibirlos.
+    """
+
+    def _dia(self, paradas, fecha, clima=None):
+        from datetime import date as _date
+
+        from app.api.itinerary import _to_day
+
+        restricciones = motor.Constraints(
+            days=1, start_date=fecha, center_lat=13.99, center_lon=-89.55
+        )
+        assert restricciones.date_of_day(1) == _date.fromisoformat(str(fecha))
+        return _to_day(
+            motor.Day(number=1, stops=paradas),
+            {},
+            restricciones,
+            clima,
+        )
+
+    def test_el_ocaso_del_dia_viaja_con_el_dia(self):
+        from datetime import date, time
+
+        cerro = lugar("Cerro Verde", 13.99, -89.55, Category.viewpoint, "viewpoint")
+        parada = motor.Stop(place=cerro, arrival=time(15, 0), departure=time(17, 0))
+
+        # Junio y noviembre no anochecen a la misma hora, y el campo tiene que
+        # notarlo: si devolviera la constante, el hilo mentiria medio ano.
+        junio = self._dia([parada], date(2026, 6, 21)).sunset
+        noviembre = self._dia([parada], date(2026, 11, 21)).sunset
+
+        assert junio is not None and noviembre is not None
+        assert junio > noviembre
+
+    def test_sin_fecha_no_hay_ocaso_inventado(self):
+        from datetime import time
+
+        from app.api.itinerary import _to_day
+
+        cerro = lugar("Cerro Verde", 13.99, -89.55, Category.viewpoint, "viewpoint")
+        parada = motor.Stop(place=cerro, arrival=time(15, 0), departure=time(17, 0))
+        dia = _to_day(
+            motor.Day(number=1, stops=[parada]),
+            {},
+            motor.Constraints(days=1, center_lat=13.99, center_lon=-89.55),
+            None,
+        )
+
+        assert dia.sunset is None
+
+    def test_la_parada_mojada_llega_marcada_y_la_de_al_lado_no(self):
+        """El dato que antes se quedaba en el consejo, ahora por parada."""
+        from datetime import date, time
+
+        from app.services.clima import ClimaDelViaje
+        from tests.test_clima import dia_de, lluviosa
+
+        cuando = date(2026, 6, 21)
+        cerro = lugar("Cerro Verde", 13.99, -89.55, Category.viewpoint, "viewpoint")
+        museo = lugar("Museo", 13.99, -89.55, Category.culture, "museum")
+        dia = self._dia(
+            [
+                motor.Stop(place=cerro, arrival=time(15, 0), departure=time(16, 0)),
+                motor.Stop(place=museo, arrival=time(16, 30), departure=time(17, 30)),
+            ],
+            cuando,
+            clima=ClimaDelViaje(dias={cuando: dia_de(cuando, [lluviosa(15), lluviosa(17)])}),
+        )
+
+        # Al cerro le llueve a las 15:00. Al museo tambien le llueve encima a
+        # las 17:00, y da igual: esta bajo techo.
+        assert [p.rained_on for p in dia.stops] == [True, False]
+
+    def test_sin_pronostico_ninguna_parada_se_marca(self):
+        """No saber se parece mas a no marcar nada que a marcarlo todo."""
+        from datetime import date, time
+
+        cerro = lugar("Cerro Verde", 13.99, -89.55, Category.viewpoint, "viewpoint")
+        parada = motor.Stop(place=cerro, arrival=time(15, 0), departure=time(17, 0))
+
+        dia = self._dia([parada], date(2026, 6, 21), clima=None)
+
+        assert [p.rained_on for p in dia.stops] == [False]

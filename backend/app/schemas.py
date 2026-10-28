@@ -205,6 +205,18 @@ class StopOut(BaseModel):
     # lado.
     geometry_from_previous: list[tuple[float, float]] | None = None
 
+    # Si a esta parada le llueve encima: esta al aire libre y alguna de las
+    # horas que ocupa viene con agua.
+    #
+    # El consejo del dia ya lo dice en palabras, y nombra los lugares. Esto es
+    # el mismo hecho a escala de parada, que es lo que permite marcarla en la
+    # linea y en el mapa sin que el cliente tenga que cruzar `rain_hours` con
+    # las horas de cada parada ni saber que categorias son de afuera.
+    #
+    # False tambien cuando no hubo pronostico: no se sabe, y no saber se parece
+    # mas a no marcar nada que a marcarlo todo.
+    rained_on: bool = False
+
 
 class DayOut(BaseModel):
     number: int

@@ -30,6 +30,7 @@ from app.services.itinerary import (
     Stop,
     _franjas,
     advise,
+    se_moja,
     weather_advice,
 )
 from app.services.places import PlaceHit
@@ -475,6 +476,66 @@ class TestAvisoDeLluvia:
         clima = ClimaDelViaje(dias={HOY: dia_de(HOY, [lluviosa(15)])})
 
         assert weather_advice(itinerario, restricciones, clima) == []
+
+
+class TestUnaParadaSabeSiSeMoja:
+    """El consejo nombra los lugares; `se_moja` marca cada parada.
+
+    Son dos lecturas del mismo hecho y tienen que coincidir, porque el consejo
+    dice "llevá algo para el agua" y la marca dice de cuál parada habla.
+    """
+
+    def _clima(self, horas):
+        return dia_de(HOY, horas)
+
+    def test_al_mirador_bajo_el_chubasco_le_llueve(self):
+        clima = self._clima([lluviosa(15), lluviosa(16)])
+
+        assert se_moja(parada("Cerro Verde", 15, 17), clima) is True
+
+    def test_al_museo_no(self):
+        """Lo mismo que calla el consejo: bajo techo no hay nada que resolver."""
+        clima = self._clima([lluviosa(15), lluviosa(16)])
+
+        assert se_moja(parada("Museo de Arte", 15, 17, Category.culture), clima) is False
+
+    def test_la_lluvia_de_otra_hora_no_cuenta(self):
+        clima = self._clima([lluviosa(21)])
+
+        assert se_moja(parada("Cerro Verde", 10, 12), clima) is False
+
+    def test_basta_con_que_coincida_una_hora(self):
+        """Una parada ocupa desde que se llega hasta que se va."""
+        clima = self._clima([lluviosa(16)])
+
+        assert se_moja(parada("Cerro Verde", 14, 17), clima) is True
+
+    def test_el_mismo_lugar_dos_veces_se_marca_las_dos(self):
+        """Donde el consejo deduplica, la marca no puede.
+
+        Un dia que vuelve al punto de partida pasa dos veces por el mismo
+        sitio. El aviso lo nombra una vez —nombrarlo dos seria tartamudear—,
+        pero si las dos visitas caen bajo agua, las dos paradas se marcan: son
+        dos ratos distintos de la tarde.
+        """
+        clima = self._clima([lluviosa(10), lluviosa(16)])
+        # El mismo lugar, no dos con el mismo nombre: la deduplicacion del
+        # consejo va por id, que es lo unico que de verdad dice "es el mismo".
+        cerro = lugar("Cerro Verde")
+        ida = Stop(place=cerro, arrival=time(10, 0), departure=time(11, 0))
+        vuelta = Stop(place=cerro, arrival=time(16, 0), departure=time(17, 0))
+
+        assert se_moja(ida, clima) is True
+        assert se_moja(vuelta, clima) is True
+
+        itinerario = Itinerary(days=[Day(number=1, stops=[ida, vuelta])])
+        restricciones = Constraints(
+            days=1, start_date=HOY, center_lat=13.99, center_lon=-89.55
+        )
+        consejos = weather_advice(itinerario, restricciones, ClimaDelViaje(dias={HOY: clima}))
+
+        assert len(consejos) == 1
+        assert consejos[0].detail.count("Cerro Verde") == 1
 
 
 class TestElAvisoSobreviveASinComidas:

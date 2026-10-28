@@ -9,6 +9,7 @@ import {
   faClock,
   faLightbulb,
   faLocationDot,
+  faUmbrella,
   faPersonWalking,
   faRoute,
   faTriangleExclamation,
@@ -20,6 +21,7 @@ import { CATEGORIA } from "@/lib/categorias";
 import { iconoDelClima, lluviaEnPalabras } from "@/lib/clima";
 import { fechaEnPalabras } from "@/lib/fecha";
 import { esDeNoche, fraccionConLuz } from "@/lib/luz";
+import { tramosDeLluvia } from "@/lib/lluvia";
 import { comoIcs, nombreDelArchivo } from "@/lib/calendario";
 import type { CSSProperties } from "react";
 
@@ -288,6 +290,7 @@ export default function Linea({
                 {esDeNoche(parada.arrival, day.sunset) && (
                   <span className="sr-only"> (ya de noche)</span>
                 )}
+                {parada.rained_on && <span className="sr-only"> (bajo lluvia)</span>}
               </span>
 
               <span className="relative flex justify-center">
@@ -306,11 +309,46 @@ export default function Linea({
                   hora de anochecer seria peor que no decir nada. Ver lib/luz.ts.
                 */}
                 {indice < day.stops.length - 1 && (
+                  /*
+                    El contenedor abarca exactamente el tramo —de bajo esta
+                    marca a la siguiente— y por eso los hijos se colocan en
+                    porcentajes. Sin el, un "50%" se mediria contra el alto de
+                    la fila entera y la lluvia caeria sobre la parada
+                    equivocada.
+                  */
                   <span
                     aria-hidden
-                    className="waypoint-hilo absolute top-7 bottom-[-1rem] w-px bg-borde sm:bottom-[-1.5rem]"
-                    style={luzDelTramo(parada, day.stops[indice + 1], day.sunset, indice)}
-                  />
+                    className="absolute inset-x-0 top-7 bottom-[-1rem] sm:bottom-[-1.5rem]"
+                  >
+                    <span
+                      className="waypoint-hilo absolute inset-y-0 left-[calc(50%-0.5px)] w-px bg-borde"
+                      style={luzDelTramo(parada, day.stops[indice + 1], day.sunset, indice)}
+                    />
+                    {/*
+                      Y al lado del hilo, no encima: el hilo ya dice donde se
+                      acaba la luz, y dos datos sobre la misma linea de un
+                      pixel se pisan. Cada canal dice una cosa.
+
+                      Las horas con agua las manda el backend; que trecho del
+                      tramo ocupan lo saca lib/lluvia.ts. Viene partido en
+                      varios cuando el dia trae dos chubascos con una tarde
+                      seca en medio.
+                    */}
+                    {tramosDeLluvia(
+                      parada.arrival,
+                      day.stops[indice + 1].arrival,
+                      day.weather?.rain_hours,
+                    ).map(([arranca, acaba]) => (
+                      <span
+                        key={arranca}
+                        className="waypoint-lluvia absolute left-[calc(50%+2px)] w-[9px]"
+                        style={{
+                          top: `${(arranca * 100).toFixed(1)}%`,
+                          height: `${((acaba - arranca) * 100).toFixed(1)}%`,
+                        }}
+                      />
+                    ))}
+                  </span>
                 )}
               </span>
 
@@ -433,7 +471,7 @@ function Marca({ parada }: { parada: Stop }) {
   return (
     <span
       aria-hidden
-      className="grid size-6 shrink-0 place-items-center rounded-full border"
+      className="relative grid size-6 shrink-0 place-items-center rounded-full border"
       style={{
         color,
         borderColor: `color-mix(in srgb, ${color} 45%, transparent)`,
@@ -441,6 +479,21 @@ function Marca({ parada }: { parada: Stop }) {
       }}
     >
       <FontAwesomeIcon icon={icono} className="size-2.5" />
+      {/*
+        El paraguas sale solo cuando el motor dice que a esta parada le llueve
+        encima: esta al aire libre y alguna de las horas que ocupa viene con
+        agua. Que llueva mientras se esta en un museo no es un problema que la
+        persona tenga que resolver, y una marca que se dispara igual en los dos
+        casos deja de querer decir nada.
+      */}
+      {parada.rained_on && (
+        <span
+          className="waypoint-mojada absolute -top-1 -right-1 grid size-3 place-items-center rounded-full"
+          style={{ background: "var(--superficie-alta)", color: "var(--acero-medio)" }}
+        >
+          <FontAwesomeIcon icon={faUmbrella} className="size-[0.4rem]" />
+        </span>
+      )}
     </span>
   );
 }
