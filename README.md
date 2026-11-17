@@ -45,6 +45,12 @@ es ese plan y no uno rearmado. La pantalla de entrada lista los que armaste
 antes y los reabre. Cada día se baja al calendario como `.ics`, con un evento
 por parada, y cada parada enlaza a Google Maps con el modo de ese día.
 
+Al pegar ese enlace en un chat sale una tarjeta del itinerario, no del sitio:
+la zona y las fechas en el título, los días y los kilómetros en la descripción,
+y una imagen con una tira por día —un punto por parada, del color de su
+categoría—. Se genera en el servidor a partir del plan guardado, así que dos
+itinerarios distintos se ven distintos antes de abrirlos.
+
 El hilo que une las paradas del día cambia de color donde cae el ocaso —el que
 el motor calcula de la latitud y la fecha, que en El Salvador va de las 17:25 a
 las 18:28 según el mes—, así que se ve de un vistazo qué paradas quedan con luz.

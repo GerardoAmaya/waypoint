@@ -14,10 +14,42 @@ import "./globals.css";
 */
 config.autoAddCss = false;
 
+/*
+  El sitio se comparte pegando una URL en un chat, y hasta ahora ahí salía solo
+  el título. `metadataBase` es lo que deja que `opengraph-image.tsx` se
+  convierta en una URL absoluta, que es la única forma en que la entienden
+  WhatsApp, Slack o X.
+
+  En Vercel la URL de produccion llega en VERCEL_PROJECT_PRODUCTION_URL, y con
+  eso las vistas previas de rama se anuncian con el dominio de produccion: es
+  lo que se quiere, porque una tarjeta que apunte a una preview caduca cuando
+  la preview se borra, y el enlace ya está pegado en el chat de alguien.
+*/
+const SITIO =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "http://localhost:3000");
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITIO),
   title: "Waypoint — itinerarios por El Salvador",
   description:
     "Escribí el viaje que querés hacer y el plan sale sobre lugares que existen, con distancias medidas.",
+  openGraph: {
+    type: "website",
+    siteName: "Waypoint",
+    locale: "es_SV",
+    title: "Waypoint — itinerarios por El Salvador",
+    description:
+      "Escribí el viaje que querés hacer y el plan sale sobre lugares que existen, con distancias medidas.",
+  },
+  twitter: {
+    // La tarjeta grande y no la resumida: lo que se enseña es una composición
+    // con la forma de los días, y en el formato chico queda del tamaño de un
+    // avatar.
+    card: "summary_large_image",
+  },
 };
 
 /*

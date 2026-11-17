@@ -3133,6 +3133,76 @@ días con «llevá comida», 0 paradas fuera de hora.
 
 ---
 
+### Compartir existía, pero el enlace no decía nada
+
+Toda la función de compartir consiste en pegar una URL en un chat. Y hasta
+ahora, al pegarla, salía esto:
+
+> **Waypoint — itinerarios por El Salvador**
+> Escribí el viaje que querés hacer…
+
+El mismo texto para tres días por la Ruta de las Flores que para una tarde en
+Suchitoto. El único sitio donde el producto se encuentra con alguien que
+todavía no lo conoce no sabía decir qué plan era.
+
+Tres huecos, todos en el mismo punto: `layout.tsx` solo declaraba `title` y
+`description` —ni `openGraph`, ni `twitter`, ni imagen—, y `/i/[codigo]` era un
+`export { default } from "../../page"` sobre una pantalla `"use client"`, o sea
+sin ningún sitio donde correr `generateMetadata`. El dato, mientras tanto,
+estaba entero: `GET /plan/shared/{codigo}` devuelve `{interpretation,
+itinerary}`, con zona, fechas, días, paradas y kilómetros.
+
+Ahora la ruta es un componente de servidor que envuelve al de cliente, y la
+tarjeta se genera por itinerario: el título dice **dónde y cuándo** («Ruta de
+las Flores · 14 nov – 16 nov»), la descripción dice **cuánto** («3 días · 18
+paradas · 113 km»), y la imagen enseña la forma del viaje — una tira por día
+con un punto por parada, del color de su categoría. Dos itinerarios distintos
+se ven distintos antes de abrirlos, que era lo que faltaba.
+
+**Lo que costó trabajo no fue el diseño, fue Satori.** Genera la imagen desde
+JSX con un subconjunto de CSS: nada de `grid`, nada de `var()`, y las fuentes
+hay que pasárselas a mano en `ttf`, `otf` o `woff` — **no lee `woff2`**, que es
+justo el único formato que el sitio tenía desde que las fuentes se
+autohospedaron. Así que en `app/fuentes` conviven los dos: el `woff2` variable
+para la web y dos instancias estáticas en `ttf` para la tarjeta, sacadas del
+mismo archivo con `fontTools`. Son 112 kB de los 500 que el bundle permite.
+
+**Los colores se leen del CSS, no se copian.** Satori necesita literales, igual
+que Leaflet, y `paleta.ts` ya documenta lo que pasó la última vez que este
+proyecto mantuvo una constante paralela a `globals.css`: «se desincronizaron
+igual — tinta-suave terminó con dos valores distintos». Allá se resuelve con
+`getComputedStyle`; aquí no hay navegador, así que `paleta-servidor.ts` lee el
+archivo y sigue las referencias, porque la forma normal de escribirlo en este
+proyecto es `--cat-nature: var(--verde)` y sin seguirla se pinta la cadena
+«var(--verde)», que es nada. Una tarjeta con el verde viejo es peor que un pin
+con el verde viejo: el pin se arregla al recargar, la tarjeta se queda en el
+chat de otra persona.
+
+Comprobado en el build, que era el riesgo real: los `.nft.json` de las dos
+rutas rastrean `globals.css` y los `.ttf`, así que el despliegue los lleva.
+
+Tres detalles que salieron de mirar las imágenes, no de pensarlas:
+
+**Un viaje de un día repetía la fecha** —arriba como rango y al lado de su
+única tira— y el canal que alinea las etiquetas lo dejaba flotando. Con un solo
+día la tira va sin etiqueta y pegada a la izquierda.
+
+**El bloque de tiras colgaba de `space-between`**, así que un itinerario de un
+día dejaba su única fila a media altura, más cerca del pie que del título.
+Ahora ocupa el hueco y se centra dentro.
+
+**El respaldo decía demasiado.** Un código que ya no existe salía con
+«Itinerarios sobre lugares que existen» en el pie, que se partía en dos líneas
+y empujaba a la frase de la derecha a partirse también. Sin itinerario no hay
+resumen que dar, y el hueco se lee mejor que el relleno.
+
+Lo que la tarjeta **no** hace es fallar cuando el backend no contesta: sale la
+genérica. Quien la vea va a abrir el enlace de todos modos, y la aplicación sí
+explica el 404; una tarjeta rota en el chat de alguien no lo explica y además
+se queda ahí.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento
