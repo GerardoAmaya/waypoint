@@ -366,9 +366,7 @@ class TestCambiarUnaParadaSinModelo:
     def test_una_parada_de_otro_dia_se_rechaza(self, cliente):
         """Pedir que salga del día 1 algo que está en el 2 no es un cambio:
         es un malentendido, y rehacer el día 1 por él lo movería por nada."""
-        respuesta = cliente.post(
-            "/plan/swap", json=cuerpo_swap(place_id=str(DESTINOS[2].id))
-        )
+        respuesta = cliente.post("/plan/swap", json=cuerpo_swap(place_id=str(DESTINOS[2].id)))
 
         assert respuesta.status_code == 422
 
