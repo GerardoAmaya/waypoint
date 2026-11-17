@@ -113,6 +113,7 @@ describe("loQueCambio", () => {
     expect(cambio).toEqual({
       cambios: [],
       quitadas: [],
+      mudada: null,
       entraron: [],
       avisos: [],
       consecuencias: [],

@@ -39,8 +39,16 @@ interface Props {
   zona: string;
   /** Rehacer el día sin esa parada, o null si todavía no se puede. */
   onCambiarParada?: ((placeId: string) => void) | null;
+  /** Quitarla y dejar el día más corto. */
+  onQuitarParada?: ((placeId: string) => void) | null;
+  /** Mandarla a otro día. */
+  onMoverParada?: ((placeId: string, dia: number) => void) | null;
+  /** Los números de día del viaje, para ofrecer destinos al mover. */
+  diasDelViaje?: number[];
   /** El id de la parada que se está cambiando, o null. */
   cambiandoParada?: string | null;
+  /** El id de la parada sobre la que hay una operación en curso, o null. */
+  paradaOcupada?: string | null;
   /**
    * El codigo del itinerario compartido, si lo tiene.
    *
@@ -101,7 +109,11 @@ export default function Linea({
   onSelectStop,
   zona,
   onCambiarParada = null,
+  onQuitarParada = null,
+  onMoverParada = null,
+  diasDelViaje = [],
   cambiandoParada = null,
+  paradaOcupada = null,
   shareCode,
 }: Props) {
   const delDia = advice.filter((a) => a.day === day.number);
@@ -451,7 +463,26 @@ export default function Linea({
                         ? () => onCambiarParada(parada.place.id)
                         : null
                     }
+                    /*
+                      Un día no se puede quedar sin ninguna parada: eso es
+                      borrar el día, que nadie pidió. El servidor también lo
+                      rechaza; aquí el botón ni sale, que explica mejor.
+                    */
+                    onQuitar={
+                      onQuitarParada &&
+                      parada.place.category !== "lodging" &&
+                      day.stops.length > 1
+                        ? () => onQuitarParada(parada.place.id)
+                        : null
+                    }
+                    onMover={
+                      onMoverParada && parada.place.category !== "lodging"
+                        ? (destino) => onMoverParada(parada.place.id, destino)
+                        : null
+                    }
+                    otrosDias={diasDelViaje.filter((n) => n !== day.number)}
                     cambiando={cambiandoParada === parada.place.id}
+                    ocupada={paradaOcupada === parada.place.id}
                   />
                 )}
               </div>

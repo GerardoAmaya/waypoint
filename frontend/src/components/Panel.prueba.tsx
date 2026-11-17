@@ -26,6 +26,7 @@ import { dia, itinerario, lugar, parada } from "@/pruebas/datos";
 const dicho = (parcial: Partial<LoQueCambio> = {}): LoQueCambio => ({
   cambios: [],
   quitadas: [],
+  mudada: null,
   entraron: [],
   avisos: [],
   consecuencias: [],
@@ -56,7 +57,10 @@ function pinta(
       onToggleExpandido={() => {}}
       loDicho={null}
       onCambiarParada={null}
+      onQuitarParada={null}
+      onMoverParada={null}
       cambiandoParada={null}
+      paradaOcupada={null}
       onDeshacer={null}
       midiendo={midiendo}
       {...extra}
@@ -275,5 +279,98 @@ describe("cambiar una parada por otra", () => {
     pinta(false, ITINERARIO, { loDicho: dicho({ entraron: ["Cascada"] }) });
 
     expect(screen.getByText("Entra Cascada")).toBeInTheDocument();
+  });
+});
+
+describe("quitar y mover una parada", () => {
+  const conDosDias = itinerario({
+    days: [
+      dia({
+        number: 1,
+        stops: [
+          parada({ place: lugar({ name: "Hotel Barceló", category: "lodging" }) }),
+          parada({ place: lugar({ name: "Mirador El Mulo", category: "viewpoint" }) }),
+        ],
+      }),
+      dia({ number: 2, stops: [parada({ place: lugar({ name: "Cerro Verde" }) })] }),
+    ],
+  });
+
+  const abierto = (extra = {}) =>
+    pinta(false, conDosDias, {
+      selectedStop: conDosDias.days[0].stops[1].place.id,
+      onCambiarParada: () => {},
+      onQuitarParada: () => {},
+      onMoverParada: () => {},
+      ...extra,
+    });
+
+  it("ofrece los tres verbos sobre la parada elegida", () => {
+    // Son tres cosas distintas: cambiar rellena el hueco, quitar lo deja
+    // abierto, mover se la lleva sin rellenar el día que la pierde.
+    abierto();
+
+    expect(screen.getByRole("button", { name: /Cambiar por otra/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Quitar/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /día 2/i })).toBeInTheDocument();
+  });
+
+  it("no ofrece el día en el que ya está", () => {
+    abierto();
+
+    expect(screen.queryByRole("button", { name: /^día 1$/i })).toBeNull();
+  });
+
+  it("llama a mover con el día de destino", async () => {
+    const mover = vi.fn();
+    abierto({ onMoverParada: mover });
+
+    await userEvent.click(screen.getByRole("button", { name: /día 2/i }));
+
+    expect(mover).toHaveBeenCalledWith(conDosDias.days[0].stops[1].place.id, 2);
+  });
+
+  it("un día de una sola parada no ofrece quitarla", () => {
+    // Quedaría vacío, y eso es borrar el día, que nadie pidió. El servidor
+    // también lo rechaza; que el botón no salga lo explica mejor.
+    pinta(false, conDosDias, {
+      selectedDay: 2,
+      selectedStop: conDosDias.days[1].stops[0].place.id,
+      onQuitarParada: () => {},
+    });
+
+    expect(screen.queryByRole("button", { name: /Quitar/i })).toBeNull();
+  });
+
+  it("el alojamiento no se toca", () => {
+    // Es de donde se sale y a donde se vuelve, no una visita que sobre.
+    pinta(false, conDosDias, {
+      selectedStop: conDosDias.days[0].stops[0].place.id,
+      onCambiarParada: () => {},
+      onQuitarParada: () => {},
+      onMoverParada: () => {},
+    });
+
+    expect(screen.queryByRole("button", { name: /Quitar/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Cambiar por otra/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /día 2/i })).toBeNull();
+  });
+
+  it("mientras hay algo en curso no se puede pulsar dos veces", () => {
+    abierto({ paradaOcupada: conDosDias.days[0].stops[1].place.id });
+
+    expect(screen.getByRole("button", { name: /Quitar/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /día 2/i })).toBeDisabled();
+  });
+
+  it("dice que la parada pasó a otro día, no que la sacó", () => {
+    // El fallo que trajo esto: pedir mover borraba la parada y la pantalla
+    // decía «Saqué Mirador El Mulo» como si fuera lo pedido.
+    pinta(false, conDosDias, {
+      loDicho: dicho({ mudada: { nombre: "Mirador El Mulo", dia: 2 } }),
+    });
+
+    expect(screen.getByText("Mirador El Mulo pasa al día 2")).toBeInTheDocument();
+    expect(screen.queryByText(/Saqué/)).toBeNull();
   });
 });

@@ -162,6 +162,86 @@ export async function fetchField(): Promise<[number, number][]> {
  *
  * Devuelve lo mismo que una revision, asi que la pantalla la pinta igual.
  */
+/** El itinerario que el cliente tiene, como lo espera el servidor. */
+const estado = (days: { number: number; stops: Stop[] }[]) =>
+  days.map((d) => ({
+    number: d.number,
+    stops: d.stops.map((s) => ({ place_id: s.place.id, meal: s.meal })),
+  }));
+
+/**
+ * Las tres operaciones sobre una parada concreta.
+ *
+ * Ninguna pasa por el modelo: la parada trae identificador, asi que no hay
+ * frase que interpretar. Las tres devuelven lo mismo que una revision, asi
+ * que la pantalla las pinta igual.
+ */
+async function sobreLaParada(
+  ruta: string,
+  cuerpo: Record<string, unknown>,
+  constraints: Constraints,
+  days: { number: number; stops: Stop[] }[],
+  siFalla: string,
+): Promise<Revision> {
+  const respuesta = await fetch(`${API}/plan/${ruta}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...cuerpo, constraints, days: estado(days) }),
+  });
+
+  if (!respuesta.ok) {
+    const salida = await respuesta.json().catch(() => null);
+    throw new Error(typeof salida?.detail === "string" ? salida.detail : siFalla);
+  }
+  return respuesta.json();
+}
+
+/**
+ * Quita una parada y deja el dia mas corto.
+ *
+ * **No es cambiarla por otra.** Al cambiarla el motor rehace el dia y rellena
+ * el hueco; aqui el hueco es el punto: quien la quita quiere el dia mas
+ * suelto, no otro lugar en el mismo sitio.
+ */
+export async function removeStop(
+  placeId: string,
+  day: number,
+  constraints: Constraints,
+  days: { number: number; stops: Stop[] }[],
+): Promise<Revision> {
+  return sobreLaParada(
+    "remove",
+    { place_id: placeId, day },
+    constraints,
+    days,
+    "No se pudo quitar esa parada.",
+  );
+}
+
+/**
+ * Mueve una parada a otro dia.
+ *
+ * El dia del que sale no se rellena —mover es reequilibrar, y rellenarlo lo
+ * desharia— y el que la recibe conserva las suyas. Si con ella no cabe en su
+ * horario, llega como violacion en vez de reordenarle a nadie un dia que no
+ * pidio tocar.
+ */
+export async function moveStop(
+  placeId: string,
+  fromDay: number,
+  toDay: number,
+  constraints: Constraints,
+  days: { number: number; stops: Stop[] }[],
+): Promise<Revision> {
+  return sobreLaParada(
+    "move",
+    { place_id: placeId, from_day: fromDay, to_day: toDay },
+    constraints,
+    days,
+    "No se pudo mover esa parada.",
+  );
+}
+
 export async function swapStop(
   placeId: string,
   day: number,

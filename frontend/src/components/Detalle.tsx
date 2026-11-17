@@ -8,6 +8,7 @@ import {
   faMountain,
   faPhone,
   faShuffle,
+  faTrashCan,
   faUtensils,
 } from "@fortawesome/free-solid-svg-icons";
 import type { IconDefinition } from "@fortawesome/free-solid-svg-icons";
@@ -30,7 +31,11 @@ export default function Detalle({
   place,
   mode,
   onCambiar,
+  onQuitar,
+  onMover,
+  otrosDias = [],
   cambiando = false,
+  ocupada = false,
 }: {
   place: Place;
   mode: Mode;
@@ -41,7 +46,20 @@ export default function Detalle({
    * visita que sobre. Y null mientras no haya itinerario que mandar.
    */
   onCambiar?: (() => void) | null;
+  /**
+   * Quitarla y que el día quede más corto, o null si no se puede.
+   *
+   * **No es lo mismo que cambiarla.** Cambiarla rehace el día y rellena el
+   * hueco; esto lo deja abierto, que a veces es justo lo que se quiere. Null
+   * cuando el día se quedaría sin ninguna parada.
+   */
+  onQuitar?: (() => void) | null;
+  /** Mandarla a otro día, o null si el viaje tiene uno solo. */
+  onMover?: ((dia: number) => void) | null;
+  /** Los otros días del viaje, para ofrecerlos como destino. */
+  otrosDias?: number[];
   cambiando?: boolean;
+  ocupada?: boolean;
 }) {
   const caja = useRef<HTMLDivElement>(null);
 
@@ -112,12 +130,52 @@ export default function Detalle({
       {onCambiar && (
         <button
           onClick={onCambiar}
-          disabled={cambiando}
+          disabled={ocupada}
           className="inline-flex items-center gap-1.5 rounded-md border border-borde-fuerte px-2 py-1 text-dato text-tinta-suave transition-colors hover:border-acento hover:text-tinta disabled:opacity-50"
         >
           <FontAwesomeIcon icon={faShuffle} aria-hidden className="size-3" />
           {cambiando ? "Cambiando" : "Cambiar por otra"}
         </button>
+      )}
+
+      {/*
+        Y quitarla a secas. **Son tres verbos distintos y no variaciones del
+        mismo**: cambiar rellena el hueco, quitar lo deja abierto, y mover se
+        la lleva a otro día sin rellenar el que la pierde. Hasta ahora solo
+        existía el primero, así que no había forma de aligerar un día.
+      */}
+      {onQuitar && (
+        <button
+          onClick={onQuitar}
+          disabled={ocupada}
+          className="inline-flex items-center gap-1.5 rounded-md border border-borde-fuerte px-2 py-1 text-dato text-tinta-suave transition-colors hover:border-aviso hover:text-tinta disabled:opacity-50"
+        >
+          <FontAwesomeIcon icon={faTrashCan} aria-hidden className="size-3" />
+          Quitar
+        </button>
+      )}
+
+      {/*
+        Mover: el destino va en el botón y no en una frase, porque pedirlo
+        escribiendo **borraba la parada**. El vocabulario de la revisión solo
+        sabe quitar, así que el modelo traducía «mové el mirador al día 2» por
+        «sacá el mirador» y la pantalla cantaba éxito sobre una parada que la
+        persona quería conservar.
+      */}
+      {onMover && otrosDias.length > 0 && (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="text-dato text-tinta-tenue">Mover al</span>
+          {otrosDias.map((numero) => (
+            <button
+              key={numero}
+              onClick={() => onMover(numero)}
+              disabled={ocupada}
+              className="inline-flex items-center rounded-md border border-borde-fuerte px-2 py-1 text-dato text-tinta-suave transition-colors hover:border-acento hover:text-tinta disabled:opacity-50"
+            >
+              día {numero}
+            </button>
+          ))}
+        </span>
       )}
 
       {place.website && (

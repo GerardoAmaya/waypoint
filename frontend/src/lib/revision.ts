@@ -64,6 +64,14 @@ export interface LoQueCambio {
   /** Las paradas que sacó por su nombre. */
   quitadas: string[];
   /**
+   * La parada que cambió de día, y a cuál.
+   *
+   * Null salvo al mover. Se dice aparte de `quitadas` porque «saqué el
+   * mirador» y «el mirador pasa al día 2» no describen lo mismo, y
+   * confundirlos fue el fallo que trajo esto: pedir mover borraba la parada.
+   */
+  mudada: { nombre: string; dia: number } | null;
+  /**
    * Las paradas que no estaban antes en ese día.
    *
    * **Rehacer un día no es un trueque de uno por uno.** Quitar una parada
@@ -155,6 +163,10 @@ export function loQueCambio(
   return {
     cambios,
     quitadas: revision.removed ?? [],
+    mudada:
+      revision.moved && revision.moved_to
+        ? { nombre: revision.moved, dia: revision.moved_to }
+        : null,
     // Sin el día de antes no se puede saber qué es nuevo, y llamar nuevas a
     // todas las paradas sería decir que el cambio rehízo el día entero.
     entraron: antesDelDia
@@ -178,6 +190,7 @@ export function dijoAlgo(cambio: LoQueCambio): boolean {
   return (
     cambio.cambios.length > 0 ||
     cambio.quitadas.length > 0 ||
+    cambio.mudada !== null ||
     cambio.avisos.length > 0 ||
     cambio.entraron.length > 0 ||
     cambio.consecuencias.length > 0

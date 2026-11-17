@@ -3251,6 +3251,78 @@ factoría, como en los otros dos sitios donde ya mordió.
 
 ---
 
+### Tres verbos donde solo había uno
+
+Sobre una parada solo se podía hacer una cosa: cambiarla por otra, que rehace
+el día y rellena el hueco. Faltaban las otras dos, y una de ellas estaba rota
+de una forma fea.
+
+**Pedir mover borraba la parada.** El vocabulario de la revisión solo sabe
+quitar —`remove`— así que el modelo traducía «mové el mirador al día 2» por
+«sacá el mirador». Comprobado contra la API: las dos frases devolvían
+resultados idénticos. La parada desaparecía, nunca llegaba al día 2, y la
+pantalla decía «Saqué Mirador El Mulo» como si fuera lo pedido. Es la misma
+forma que el fallo del desayuno: hacer algo contiguo a lo que se pidió y
+cantar éxito.
+
+**Y no había forma de aligerar un día.** Cambiar siempre rellena, y a veces el
+hueco es el punto: se quiere el día más suelto, no otro lugar en el mismo
+sitio. La idea vino de fuera, mirando la pantalla, y cambió el diseño: no son
+dos operaciones con una variante, son tres verbos.
+
+| | el hueco |
+|---|---|
+| Cambiar por otra | se rellena |
+| Quitar | se queda abierto |
+| Al día N | se queda abierto, y la parada aparece en el otro día |
+
+Los dos nuevos necesitaban algo que el motor no sabía hacer: **reprogramar sin
+reconstruir**. `revise_day` acepta `target=None` y entonces se salta la
+selección de candidatos y el reparto por días enteros, y solo recalcula horas
+sobre el estado que recibe. Medido: quitar una parada lleva el día 1 de 50,69
+a 50,31 km y de las 18:27 a las 17:47 —los dos tramos se funden en uno— con el
+día 2 intacto.
+
+**Mover no rellena el día de origen.** Mover es reequilibrar: si el día 1 se
+vuelve a llenar solo, no sirvió de nada. Y el día que recibe conserva las
+suyas: si con la nueva no cabe en su horario, eso es una violación y se dice,
+porque reordenarle a alguien un día que no pidió tocar es peor que avisarle de
+que se le hizo largo. Medido: mover al día 2 lo lleva a las 20:25 con un
+`latest_end` que lo explica.
+
+El alojamiento no lleva ninguno de los tres: es de donde se sale y a donde se
+vuelve, no una visita que sobre. Y un día de una sola parada no ofrece
+quitarla —quedaría vacío, y eso es borrar el día, que nadie pidió—. El
+servidor también lo rechaza; que el botón no salga lo explica mejor que un 422.
+
+`RevisionOut` gana `moved` y `moved_to`, aparte de `removed`, porque «saqué el
+mirador» y «el mirador pasa al día 2» no describen lo mismo y confundirlos fue
+exactamente el fallo.
+
+**Lo que no se pudo verificar aquí:** las distancias por HTTP. OSRM no está
+levantado en este entorno, así que los bloques de matriz caen a estimación y
+cuáles fallan cambia entre llamadas —el mismo par dio 15 km y 70 km en dos
+peticiones seguidas—. Afecta a todos los endpoints por igual, no solo a los
+nuevos. La lógica está verificada dentro del motor, donde las distancias son
+deterministas.
+
+---
+
+### La lluvia no para a las 15:59
+
+El resumen del día decía «lluvia de 13:00 a 15:59». Es exacto —las horas con
+agua son la 13, la 14 y la 15, y la última acaba a las 15:59— y se lee como un
+error de formato. Nadie dice a qué minuto para la lluvia con una precisión que
+el pronóstico no tiene: el propio módulo del clima documenta que la marca
+horaria puede estar corrida hasta sesenta minutos.
+
+Ahora el tramo se nombra por sus bordes: «de 13:00 a 16:00», en el consejo del
+motor y en el panel, que es como se dicen los horarios en todas partes. Una
+franja que llega al final del día dice «desde las 22:00» en vez de cerrar en un
+«24:00» que no existe en ningún reloj.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

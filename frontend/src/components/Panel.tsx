@@ -39,8 +39,14 @@ interface Props {
   loDicho: LoQueCambio | null;
   /** Rehacer el día sin esa parada, o null si todavía no se puede. */
   onCambiarParada: ((placeId: string) => void) | null;
+  /** Quitarla y dejar el día más corto. */
+  onQuitarParada: ((placeId: string) => void) | null;
+  /** Mandarla a otro día. */
+  onMoverParada: ((placeId: string, dia: number) => void) | null;
   /** El id de la parada que se está cambiando, o null. */
   cambiandoParada: string | null;
+  /** El id de la parada con una operación en curso, o null. */
+  paradaOcupada: string | null;
   /** Volver al itinerario anterior, o null si no hay ninguno al que volver. */
   onDeshacer: (() => void) | null;
   selectedStop: string | null;
@@ -125,7 +131,10 @@ export default function Panel({
   reviseError,
   loDicho,
   onCambiarParada,
+  onQuitarParada,
+  onMoverParada,
   cambiandoParada,
+  paradaOcupada,
   onDeshacer,
   selectedStop,
   onSelectStop,
@@ -459,7 +468,11 @@ export default function Panel({
               zona={interpretation?.area?.name ?? "itinerario"}
               shareCode={itinerary.share_code ?? null}
               onCambiarParada={revising ? null : onCambiarParada}
+              onQuitarParada={revising ? null : onQuitarParada}
+              onMoverParada={revising ? null : onMoverParada}
+              diasDelViaje={itinerary.days.map((d) => d.number)}
               cambiandoParada={cambiandoParada}
+              paradaOcupada={paradaOcupada}
             />
           </motion.div>
         </AnimatePresence>
@@ -530,6 +543,12 @@ export default function Panel({
                   que salió deja la mitad de la historia, y la otra mitad hay
                   que buscarla comparando con un día que ya no está.
                 */}
+                {loDicho.mudada && (
+                  <p className="text-dato leading-relaxed text-tinta-suave">
+                    {loDicho.mudada.nombre} pasa al día {loDicho.mudada.dia}
+                  </p>
+                )}
+
                 {!!loDicho.entraron.length && (
                   <p className="text-dato leading-relaxed text-tinta-suave">
                     {loDicho.entraron.length === 1 ? "Entra" : "Entran"}{" "}

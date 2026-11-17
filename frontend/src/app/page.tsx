@@ -17,6 +17,8 @@ import Tema from "@/components/Tema";
 import {
   fetchCompartido,
   fetchField,
+  moveStop,
+  removeStop,
   reviseDay,
   streamPlan,
   swapStop,
@@ -24,7 +26,12 @@ import {
 import { leer, olvidar, recordar, type Reciente } from "@/lib/recientes";
 import type { Fondo as FondoId, ParadaElegida } from "@/components/Mapa";
 import { loQueCambio, type LoQueCambio } from "@/lib/revision";
-import type { Constraints, Interpretation, Itinerary } from "@/lib/types";
+import type {
+  Constraints,
+  Interpretation,
+  Itinerary,
+  Revision,
+} from "@/lib/types";
 
 // Leaflet toca window al importarse, asi que el mapa no puede renderizarse en
 // el servidor.
@@ -78,6 +85,8 @@ export default function Home() {
   const [loDicho, setLoDicho] = useState<LoQueCambio | null>(null);
   /** El id de la parada que se esta cambiando, o null. */
   const [cambiandoParada, setCambiandoParada] = useState<string | null>(null);
+  /** El id de la parada con cualquier operacion en curso, o null. */
+  const [paradaOcupada, setParadaOcupada] = useState<string | null>(null);
   const aborto = useRef<AbortController | null>(null);
   /*
     La lista vive en estado ademas de en localStorage porque la pantalla de
@@ -289,30 +298,71 @@ export default function Home() {
    * porque es el mismo tipo de cambio con otro disparador. Lo que no comparte
    * es el camino al servidor: aqui no hay frase que interpretar.
    */
-  const cambiarParada = useCallback(
-    async (placeId: string) => {
+  /**
+   * Las tres operaciones sobre una parada: cambiar, quitar y mover.
+   *
+   * Comparten todo menos la llamada —historial, respuesta, deshacer, el aviso
+   * de ocupada— porque son el mismo tipo de cambio con distinto verbo. Lo que
+   * de verdad las distingue vive en el servidor: cambiar rehace el dia y
+   * rellena, quitar y mover solo reprograman.
+   */
+  const sobreLaParada = useCallback(
+    async (
+      placeId: string,
+      llamar: (
+        constraints: Constraints,
+        dia: number,
+        it: Itinerary,
+      ) => Promise<Revision>,
+    ) => {
       if (!itinerario || !interpretacion?.constraints || !diaActivo) return;
-      setCambiandoParada(placeId);
+      setParadaOcupada(placeId);
       setErrorRevision(null);
       try {
-        const resultado = await swapStop(
-          placeId,
-          diaActivo,
+        const resultado = await llamar(
           interpretacion.constraints as Constraints,
-          itinerario.days,
+          diaActivo,
+          itinerario,
         );
         setHistorial((previo) => [...previo, itinerario]);
         setLoDicho(loQueCambio(resultado, itinerario, diaActivo));
         setItinerario(resultado.itinerary);
-        // La parada elegida es justo la que acaba de salir del dia.
+        // La parada elegida puede haber salido del dia o haberse mudado.
         setParada(null);
       } catch (e) {
         setErrorRevision((e as Error).message);
       } finally {
+        setParadaOcupada(null);
         setCambiandoParada(null);
       }
     },
     [itinerario, interpretacion, diaActivo],
+  );
+
+  const cambiarParada = useCallback(
+    (placeId: string) => {
+      setCambiandoParada(placeId);
+      return sobreLaParada(placeId, (c, dia, it) =>
+        swapStop(placeId, dia, c, it.days),
+      );
+    },
+    [sobreLaParada],
+  );
+
+  const quitarParada = useCallback(
+    (placeId: string) =>
+      void sobreLaParada(placeId, (c, dia, it) =>
+        removeStop(placeId, dia, c, it.days),
+      ),
+    [sobreLaParada],
+  );
+
+  const moverParada = useCallback(
+    (placeId: string, destino: number) =>
+      void sobreLaParada(placeId, (c, dia, it) =>
+        moveStop(placeId, dia, destino, c, it.days),
+      ),
+    [sobreLaParada],
   );
 
   const deshacer = useCallback(() => {
@@ -504,7 +554,10 @@ export default function Home() {
                 reviseError={errorRevision}
                 loDicho={loDicho}
                 onCambiarParada={cambiarParada}
+                onQuitarParada={quitarParada}
+                onMoverParada={moverParada}
                 cambiandoParada={cambiandoParada}
+                paradaOcupada={paradaOcupada}
                 onDeshacer={historial.length ? deshacer : null}
                 midiendo={fase === "midiendo"}
                 expandido={panelExpandido}

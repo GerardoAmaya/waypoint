@@ -287,6 +287,16 @@ export interface Revision {
   missing: string[];
   unmapped: string[];
   notes: string[];
+
+  /**
+   * La parada que cambio de dia, y a cual.
+   *
+   * Aparte de `removed` porque no es lo mismo: "saqué el mirador" y "el
+   * mirador pasa al día 2" describen resultados distintos, y confundirlos fue
+   * el fallo que trajo esto —pedir mover borraba la parada—.
+   */
+  moved: string | null;
+  moved_to: number | null;
 }
 
 /** Las fases que emite POST /plan, en el orden en que llegan. */
