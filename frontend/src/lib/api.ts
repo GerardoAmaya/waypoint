@@ -151,6 +151,48 @@ export async function fetchField(): Promise<[number, number][]> {
   return cuerpo.points ?? [];
 }
 
+/**
+ * Cambia una parada por otra: rehace ese dia sin ella.
+ *
+ * **No pasa por el modelo**, al contrario que `reviseDay`. Revisar nace de una
+ * frase y hay que adivinar de que parada habla; esto nace de un clic sobre una
+ * parada que ya trae identificador. Mandar "sacá el museo" para recuperar un
+ * id que ya se tiene costaria tokens, una espera y la posibilidad de que el
+ * nombre se entienda mal, a cambio de nada.
+ *
+ * Devuelve lo mismo que una revision, asi que la pantalla la pinta igual.
+ */
+export async function swapStop(
+  placeId: string,
+  day: number,
+  constraints: Constraints,
+  days: { number: number; stops: Stop[] }[],
+): Promise<Revision> {
+  const respuesta = await fetch(`${API}/plan/swap`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      place_id: placeId,
+      day,
+      constraints,
+      days: days.map((d) => ({
+        number: d.number,
+        stops: d.stops.map((s) => ({ place_id: s.place.id, meal: s.meal })),
+      })),
+    }),
+  });
+
+  if (!respuesta.ok) {
+    const cuerpo = await respuesta.json().catch(() => null);
+    throw new Error(
+      typeof cuerpo?.detail === "string"
+        ? cuerpo.detail
+        : "No se pudo cambiar esa parada.",
+    );
+  }
+  return respuesta.json();
+}
+
 /** Lo que se guarda de un itinerario compartido. */
 export interface Compartido {
   interpretation: Interpretation;

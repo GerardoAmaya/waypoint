@@ -14,7 +14,13 @@ import Fondo from "@/components/Fondo";
 import Leyenda from "@/components/Leyenda";
 import Panel from "@/components/Panel";
 import Tema from "@/components/Tema";
-import { fetchCompartido, fetchField, reviseDay, streamPlan } from "@/lib/api";
+import {
+  fetchCompartido,
+  fetchField,
+  reviseDay,
+  streamPlan,
+  swapStop,
+} from "@/lib/api";
 import { leer, olvidar, recordar, type Reciente } from "@/lib/recientes";
 import type { Fondo as FondoId, ParadaElegida } from "@/components/Mapa";
 import { loQueCambio, type LoQueCambio } from "@/lib/revision";
@@ -70,6 +76,8 @@ export default function Home() {
   const [historial, setHistorial] = useState<Itinerary[]>([]);
   /** Que contesto la ultima revision, o null si no hay ninguna que contar. */
   const [loDicho, setLoDicho] = useState<LoQueCambio | null>(null);
+  /** El id de la parada que se esta cambiando, o null. */
+  const [cambiandoParada, setCambiandoParada] = useState<string | null>(null);
   const aborto = useRef<AbortController | null>(null);
   /*
     La lista vive en estado ademas de en localStorage porque la pantalla de
@@ -274,6 +282,39 @@ export default function Home() {
     [itinerario, interpretacion, diaActivo],
   );
 
+  /**
+   * Cambiar una parada por otra: rehace ese dia sin ella.
+   *
+   * Pasa por la misma maquinaria que revisar —historial, respuesta, deshacer—
+   * porque es el mismo tipo de cambio con otro disparador. Lo que no comparte
+   * es el camino al servidor: aqui no hay frase que interpretar.
+   */
+  const cambiarParada = useCallback(
+    async (placeId: string) => {
+      if (!itinerario || !interpretacion?.constraints || !diaActivo) return;
+      setCambiandoParada(placeId);
+      setErrorRevision(null);
+      try {
+        const resultado = await swapStop(
+          placeId,
+          diaActivo,
+          interpretacion.constraints as Constraints,
+          itinerario.days,
+        );
+        setHistorial((previo) => [...previo, itinerario]);
+        setLoDicho(loQueCambio(resultado, itinerario, diaActivo));
+        setItinerario(resultado.itinerary);
+        // La parada elegida es justo la que acaba de salir del dia.
+        setParada(null);
+      } catch (e) {
+        setErrorRevision((e as Error).message);
+      } finally {
+        setCambiandoParada(null);
+      }
+    },
+    [itinerario, interpretacion, diaActivo],
+  );
+
   const deshacer = useCallback(() => {
     setHistorial((previo) => {
       if (!previo.length) return previo;
@@ -296,6 +337,7 @@ export default function Home() {
     setError(null);
     setHistorial([]);
     setLoDicho(null);
+    setCambiandoParada(null);
     setFase("quieto");
   }, []);
 
@@ -461,6 +503,8 @@ export default function Home() {
                 revising={revisando}
                 reviseError={errorRevision}
                 loDicho={loDicho}
+                onCambiarParada={cambiarParada}
+                cambiandoParada={cambiandoParada}
                 onDeshacer={historial.length ? deshacer : null}
                 midiendo={fase === "midiendo"}
                 expandido={panelExpandido}

@@ -309,3 +309,81 @@ class TestElTrazoSobreviveALaRevision:
         assert len(paradas) > 1, "hace falta mas de una parada para que haya tramo"
         con_trazo = [p for p in paradas[1:] if p.get("geometry_from_previous")]
         assert con_trazo, "la revisión devolvió el día sin ningún trazo"
+
+
+def cuerpo_swap(**extra):
+    """El mismo estado que `cuerpo`, pero para el camino sin modelo."""
+    base = cuerpo()
+    del base["message"]
+    base["day"] = 1
+    base["place_id"] = str(DESTINOS[0].id)
+    base.update(extra)
+    return base
+
+
+class TestCambiarUnaParadaSinModelo:
+    """`POST /plan/swap`: un clic sobre una parada, no una frase sobre ella.
+
+    El motor ya sabía excluir un lugar; lo que faltaba era llegar hasta él sin
+    pasar por el modelo. Mandar "sacá el museo" para recuperar un id que el
+    cliente ya tiene cuesta tokens, una espera y la posibilidad de que el
+    nombre se entienda mal, a cambio de nada.
+    """
+
+    def test_la_parada_pedida_sale_del_dia(self, cliente):
+        respuesta = cliente.post("/plan/swap", json=cuerpo_swap())
+
+        assert respuesta.status_code == 200
+        assert DESTINOS[0].name not in nombres(respuesta.json(), 1)
+
+    def test_dice_cual_saco(self, cliente):
+        """Lo mismo que contesta una revisión: el cliente ya sabe pintarlo."""
+        respuesta = cliente.post("/plan/swap", json=cuerpo_swap()).json()
+
+        assert respuesta["removed"] == [DESTINOS[0].name]
+
+    def test_el_otro_dia_no_se_mueve(self, cliente):
+        """Lo que ya aceptaste no se te puede mover por cambiar otra cosa.
+
+        Se compara contra el estado que se mandó, que es lo que la persona
+        tiene en pantalla, y no contra otra llamada: `cuerpo()` revisa el día
+        2, así que usarla de referencia compararía con un día ya movido.
+        """
+        respuesta = cliente.post("/plan/swap", json=cuerpo_swap()).json()
+
+        assert nombres(respuesta, 2) == [DESTINOS[2].name, DESTINOS[3].name]
+
+    def test_no_llama_al_modelo(self, cliente, monkeypatch):
+        """Es la razón de que este camino exista aparte del de revisar."""
+
+        def explota(*_args, **_kwargs):
+            raise AssertionError("swap no debería interpretar nada")
+
+        monkeypatch.setattr("app.api.plan.interpret_revision", explota)
+
+        assert cliente.post("/plan/swap", json=cuerpo_swap()).status_code == 200
+
+    def test_una_parada_de_otro_dia_se_rechaza(self, cliente):
+        """Pedir que salga del día 1 algo que está en el 2 no es un cambio:
+        es un malentendido, y rehacer el día 1 por él lo movería por nada."""
+        respuesta = cliente.post(
+            "/plan/swap", json=cuerpo_swap(place_id=str(DESTINOS[2].id))
+        )
+
+        assert respuesta.status_code == 422
+
+    def test_un_dia_que_no_existe_se_rechaza(self, cliente):
+        respuesta = cliente.post("/plan/swap", json=cuerpo_swap(day=5))
+
+        assert respuesta.status_code == 422
+
+    def test_un_lugar_que_salio_del_catalogo_se_dice(self, cliente, monkeypatch):
+        """El plan viaja de ida y vuelta, así que el catálogo pudo cambiar
+        entre que se armó y ahora. Rehacer el día excluyendo algo que ya no
+        existe lo movería por nada."""
+        monkeypatch.setattr("app.api.plan.places_by_ids", lambda db, ids: {})
+
+        respuesta = cliente.post("/plan/swap", json=cuerpo_swap())
+
+        assert respuesta.status_code == 404
+        assert "catálogo" in respuesta.json()["detail"]

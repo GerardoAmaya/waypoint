@@ -37,6 +37,10 @@ interface Props {
   onSelectStop: (id: string | null) => void;
   /** Para nombrar el archivo de calendario que se descarga. */
   zona: string;
+  /** Rehacer el día sin esa parada, o null si todavía no se puede. */
+  onCambiarParada?: ((placeId: string) => void) | null;
+  /** El id de la parada que se está cambiando, o null. */
+  cambiandoParada?: string | null;
   /**
    * El codigo del itinerario compartido, si lo tiene.
    *
@@ -96,6 +100,8 @@ export default function Linea({
   selectedStop,
   onSelectStop,
   zona,
+  onCambiarParada = null,
+  cambiandoParada = null,
   shareCode,
 }: Props) {
   const delDia = advice.filter((a) => a.day === day.number);
@@ -431,7 +437,22 @@ export default function Linea({
                 </button>
 
                 {parada.place.id === selectedStop && (
-                  <Detalle place={parada.place} mode={mode} />
+                  <Detalle
+                    place={parada.place}
+                    mode={mode}
+                    /*
+                      El alojamiento no se cambia: es de donde se sale y a
+                      donde se vuelve, no una visita que sobre. Cambiarlo
+                      rehacía el día desde otro sitio, que no es lo que pide
+                      quien pulsa "cambiar por otra".
+                    */
+                    onCambiar={
+                      onCambiarParada && parada.place.category !== "lodging"
+                        ? () => onCambiarParada(parada.place.id)
+                        : null
+                    }
+                    cambiando={cambiandoParada === parada.place.id}
+                  />
                 )}
               </div>
             </motion.li>

@@ -113,6 +113,7 @@ describe("loQueCambio", () => {
     expect(cambio).toEqual({
       cambios: [],
       quitadas: [],
+      entraron: [],
       avisos: [],
       consecuencias: [],
     });
@@ -210,6 +211,78 @@ describe("lo que el cambio provocó", () => {
     const cambio = loQueCambio(
       revision({ itinerary: conConsejos(["Pediste desayuno y este día no llega"]) }),
       conConsejos([]),
+      1,
+    );
+
+    expect(dijoAlgo(cambio)).toBe(true);
+  });
+});
+
+describe("lo que entró en el día", () => {
+  const conParadas = (nombres: string[], dia = 1) =>
+    ({
+      days: [
+        {
+          number: dia,
+          stops: nombres.map((name) => ({ place: { name } })),
+        },
+      ],
+    }) as unknown as Itinerary;
+
+  const entraron = (antes: string[], despues: string[], dia = 1) =>
+    loQueCambio(
+      revision({ itinerary: conParadas(despues, dia) }),
+      conParadas(antes, dia),
+      dia,
+    ).entraron;
+
+  it("nombra las paradas que no estaban", () => {
+    // Rehacer un día no es un trueque de uno por uno: quitar una parada
+    // libera su rato y el motor rellena con lo que quepa. Medido contra el
+    // motor, sacar una pizzería de un día de seis trajo tres lugares nuevos.
+    expect(entraron(["Mirador", "Pizzería", "Museo"], ["Mirador", "Cascada", "Café"]))
+      .toEqual(["Cascada", "Café"]);
+  });
+
+  it("no nombra las que ya estaban aunque se muevan de orden", () => {
+    expect(entraron(["Mirador", "Museo"], ["Museo", "Mirador"])).toEqual([]);
+  });
+
+  it("un día que vuelve al mismo sitio no lo nombra dos veces", () => {
+    expect(entraron(["Museo"], ["Hotel", "Museo", "Hotel"])).toEqual(["Hotel"]);
+  });
+
+  it("solo mira el día que se tocó", () => {
+    const antes = {
+      days: [
+        { number: 1, stops: [{ place: { name: "Mirador" } }] },
+        { number: 2, stops: [{ place: { name: "Museo" } }] },
+      ],
+    } as unknown as Itinerary;
+    const despues = {
+      days: [
+        { number: 1, stops: [{ place: { name: "Cascada" } }] },
+        { number: 2, stops: [{ place: { name: "Museo" } }] },
+      ],
+    } as unknown as Itinerary;
+
+    expect(loQueCambio(revision({ itinerary: despues }), antes, 1).entraron).toEqual([
+      "Cascada",
+    ]);
+    expect(loQueCambio(revision({ itinerary: despues }), antes, 2).entraron).toEqual([]);
+  });
+
+  it("sin el día de antes no llama nuevas a todas", () => {
+    // Sería decir que el cambio rehízo el día entero.
+    expect(
+      loQueCambio(revision({ itinerary: conParadas(["Mirador"]) }), null, 1).entraron,
+    ).toEqual([]);
+  });
+
+  it("una parada que entra ya es algo que contar", () => {
+    const cambio = loQueCambio(
+      revision({ itinerary: conParadas(["Cascada"]) }),
+      conParadas(["Mirador"]),
       1,
     );
 

@@ -457,6 +457,35 @@ class ReviseRequest(BaseModel):
         return self
 
 
+class SwapRequest(BaseModel):
+    """Cambiar una parada concreta por otra, sin pasar por el modelo.
+
+    **La diferencia con ReviseRequest es que aqui no hay nada que interpretar.**
+    Revisar nace de una frase —"sacá el museo"— y el modelo tiene que adivinar
+    de que parada se habla; esto nace de un clic sobre una parada que ya tiene
+    identificador. Mandar una frase para recuperar un id que ya se tiene
+    costaria tokens, una espera y la posibilidad de que el nombre se entienda
+    mal, a cambio de nada.
+
+    El resto del contrato es el de revisar, respuesta incluida: el cliente ya
+    sabe pintar lo que una revision contesta.
+    """
+
+    place_id: uuid.UUID
+    day: int = Field(ge=1, le=7)
+    constraints: ItineraryRequest
+    days: list[DayStateIn] = Field(min_length=1, max_length=7)
+
+    @model_validator(mode="after")
+    def _la_parada_esta_en_ese_dia(self) -> SwapRequest:
+        dia = next((d for d in self.days if d.number == self.day), None)
+        if dia is None:
+            raise ValueError(f"el itinerario no tiene un día {self.day}")
+        if self.place_id not in {p.place_id for p in dia.stops}:
+            raise ValueError(f"el día {self.day} no tiene esa parada")
+        return self
+
+
 class RevisionOut(BaseModel):
     """El itinerario revisado y que se entendio del pedido."""
 

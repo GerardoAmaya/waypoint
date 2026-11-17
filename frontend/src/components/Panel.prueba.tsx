@@ -13,7 +13,24 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import Panel from "./Panel";
+import type { LoQueCambio } from "@/lib/revision";
 import { dia, itinerario, lugar, parada } from "@/pruebas/datos";
+
+/**
+ * Lo que contesta una revisión, con todo vacío salvo lo que la prueba diga.
+ *
+ * Literal en cada sitio, añadir un campo rompía la compilación de cinco
+ * pruebas que no se habían tocado. Es el mismo patrón que ya se arregló en el
+ * doble del propio Panel.
+ */
+const dicho = (parcial: Partial<LoQueCambio> = {}): LoQueCambio => ({
+  cambios: [],
+  quitadas: [],
+  entraron: [],
+  avisos: [],
+  consecuencias: [],
+  ...parcial,
+});
 
 const ITINERARIO = itinerario({
   days: [dia({ stops: [parada({ place: lugar({ name: "Museo de Arte" }) })] })],
@@ -38,6 +55,8 @@ function pinta(
       expandido={false}
       onToggleExpandido={() => {}}
       loDicho={null}
+      onCambiarParada={null}
+      cambiandoParada={null}
       onDeshacer={null}
       midiendo={midiendo}
       {...extra}
@@ -131,17 +150,15 @@ describe("el crédito del clima", () => {
 });
 
 describe("lo que contesta una revisión", () => {
-  const dicho = {
+  const cambio = dicho({
     cambios: ["Empieza a las 07:00", "Máximo 4 paradas"],
     quitadas: ["Montemilia", "Palm Plaza"],
-    avisos: [],
-    consecuencias: [],
-  };
+  });
 
   it("dice qué entendió y qué paradas sacó", () => {
     // El motor nombra las paradas que quita una por una. Decir «saqué 4» sin
     // cuáles obliga a comparar el antes y el después, y el antes ya no está.
-    pinta(false, ITINERARIO, { loDicho: dicho });
+    pinta(false, ITINERARIO, { loDicho: cambio });
 
     expect(screen.getByText("Empieza a las 07:00")).toBeInTheDocument();
     expect(screen.getByText("Máximo 4 paradas")).toBeInTheDocument();
@@ -150,7 +167,7 @@ describe("lo que contesta una revisión", () => {
 
   it("avisa de lo que no supo usar", () => {
     pinta(false, ITINERARIO, {
-      loDicho: { cambios: [], quitadas: [], avisos: ["el cerro ese"], consecuencias: [] },
+      loDicho: dicho({ avisos: ["el cerro ese"] }),
     });
 
     expect(screen.getByText(/No supe qué hacer con: el cerro ese/)).toBeInTheDocument();
@@ -158,7 +175,7 @@ describe("lo que contesta una revisión", () => {
 
   it("un día que se rehízo sin cambiar nada no inventa una respuesta", () => {
     const { container } = pinta(false, ITINERARIO, {
-      loDicho: { cambios: [], quitadas: [], avisos: [], consecuencias: [] },
+      loDicho: dicho(),
     });
 
     expect(container.querySelector(".border-acento")).toBeNull();
@@ -210,14 +227,12 @@ describe("lo que el cambio provocó", () => {
       de pantalla, mientras aquí arriba la revisión declaraba el éxito.
     */
     pinta(false, ITINERARIO, {
-      loDicho: {
+      loDicho: dicho({
         cambios: ["Con desayuno"],
-        quitadas: [],
-        avisos: [],
         consecuencias: [
           "Pediste desayuno y este día no llega: empieza a las 10:00, después de que cierra la franja de desayuno a las 09:30",
         ],
-      },
+      }),
     });
 
     expect(screen.getByText("Con desayuno")).toBeInTheDocument();
@@ -230,14 +245,35 @@ describe("lo que el cambio provocó", () => {
     // Un cambio puede no aplicar ninguna restricción nueva y aun así tener
     // algo que contar.
     pinta(false, ITINERARIO, {
-      loDicho: {
-        cambios: [],
-        quitadas: [],
-        avisos: [],
+      loDicho: dicho({
         consecuencias: ["Llevá almuerzo: el comedor más cercano suma 14 km"],
-      },
+      }),
     });
 
     expect(screen.getByText(/Llevá almuerzo/)).toBeInTheDocument();
+  });
+});
+
+describe("cambiar una parada por otra", () => {
+  it("dice lo que salió y lo que entró", () => {
+    // Medido contra el motor: sacar una parada de un día de seis trajo tres
+    // lugares nuevos. Decir solo lo que salió deja la mitad de la historia.
+    pinta(false, ITINERARIO, {
+      loDicho: dicho({
+        quitadas: ["Piccolo Giardino"],
+        entraron: ["Mr. Croissant", "Peña Blanca", "Pupusería Primavera"],
+      }),
+    });
+
+    expect(screen.getByText(/Saqué Piccolo Giardino/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Entran Mr. Croissant, Peña Blanca y Pupusería Primavera/),
+    ).toBeInTheDocument();
+  });
+
+  it("concuerda el singular de lo que entra", () => {
+    pinta(false, ITINERARIO, { loDicho: dicho({ entraron: ["Cascada"] }) });
+
+    expect(screen.getByText("Entra Cascada")).toBeInTheDocument();
   });
 });

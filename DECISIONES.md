@@ -3203,6 +3203,54 @@ se queda ahí.
 
 ---
 
+### «Cambiame esta parada»: el motor ya sabía, no se llegaba hasta él
+
+Para quitar una parada había que escribirlo —«sacá el museo»—, esperar al
+modelo y confiar en que acertara el nombre. Pero el motor tiene `exclude` desde
+hace tiempo, y un clic sobre una parada no tiene nada que interpretar: trae el
+identificador puesto. Mandar una frase para recuperar un id que ya se tiene
+cuesta tokens, una espera y la posibilidad de que el nombre se entienda mal, a
+cambio de nada.
+
+`POST /plan/swap` es el camino corto: mismo contrato que revisar, misma
+respuesta —así el cliente la pinta igual—, sin modelo en medio. En pantalla es
+un botón junto a «Cómo llegar», dentro del detalle que ya se abre al elegir una
+parada. Va ahí y no en la fila porque **la fila entera es un botón**, y un
+botón dentro de otro es HTML inválido.
+
+Medido antes de construirlo, sobre 37 paradas de seis zonas, llamando al motor
+sin modelo:
+
+| | |
+|---|---|
+| encontraron reemplazo | **37 de 37 (100%)** |
+| el día volvió con las mismas paradas | 29 de 37 (78%) |
+| el día volvió más corto | 8 de 37 (22%) |
+
+El 22% no es un fallo: quitar el Volcán de San Salvador libera dos horas y el
+día se rellena distinto. Lo que sí era un fallo es no decirlo.
+
+**Y rehacer un día no es un trueque de uno por uno.** Sacar una pizzería de un
+día de seis trajo tres lugares nuevos. La respuesta decía «Saqué Piccolo
+Giardino» y se callaba el resto, así que la otra mitad de la historia había que
+buscarla comparando con un día que ya no estaba en pantalla. Ahora dice también
+qué entró, y eso sirve igual para las revisiones escritas: «empezá a las 7»
+sacaba cuatro paradas y metía otras, y solo se nombraban las que salían.
+
+El alojamiento no lleva el botón: es de donde se sale y a donde se vuelve, no
+una visita que sobre.
+
+Dos cosas que el camino corto permite comprobar y el largo no: que **no llama
+al modelo** —hay un test que revienta si alguien lo llama— y que una parada de
+otro día se rechaza en el schema en vez de rehacer un día por un malentendido.
+
+En los tests salió por tercera vez el mismo patrón: `Panel.prueba.tsx` tenía
+cinco literales de `LoQueCambio` escritos a mano, así que añadirle un campo
+rompía la compilación de cinco pruebas que nadie había tocado. Ahora hay una
+factoría, como en los otros dos sitios donde ya mordió.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento
@@ -3277,12 +3325,6 @@ obvios y no movieron nada.
 
 El [README](README.md#lo-que-falta) lo resume en una lista. Aca esta el motivo
 de cada cosa, que es lo que importa cuando llegue el momento de arreglarla.
-
-**El botón atrás del navegador no vuelve del itinerario.** La aplicación no
-toca la URL, así que atrás saca del sitio. Que devuelva al estado vacío es
-meter una entrada en el historial al enviar y escuchar `popstate`; arregla algo
-que la gente ya trae aprendido del móvil. La petición escrita sí sobrevive a
-"Empezar de nuevo", que era el caso más molesto.
 
 **El volcado del catálogo no borra.** `make dump` genera
 `INSERT ... ON CONFLICT DO NOTHING` más un `UPDATE` que sincroniza las

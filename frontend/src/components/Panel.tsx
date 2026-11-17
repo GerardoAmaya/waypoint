@@ -37,6 +37,10 @@ interface Props {
    * paradas» borraba cuatro lugares por su nombre y nadie decia cuales.
    */
   loDicho: LoQueCambio | null;
+  /** Rehacer el día sin esa parada, o null si todavía no se puede. */
+  onCambiarParada: ((placeId: string) => void) | null;
+  /** El id de la parada que se está cambiando, o null. */
+  cambiandoParada: string | null;
   /** Volver al itinerario anterior, o null si no hay ninguno al que volver. */
   onDeshacer: (() => void) | null;
   selectedStop: string | null;
@@ -120,6 +124,8 @@ export default function Panel({
   revising,
   reviseError,
   loDicho,
+  onCambiarParada,
+  cambiandoParada,
   onDeshacer,
   selectedStop,
   onSelectStop,
@@ -452,6 +458,8 @@ export default function Panel({
               onSelectStop={onSelectStop}
               zona={interpretation?.area?.name ?? "itinerario"}
               shareCode={itinerary.share_code ?? null}
+              onCambiarParada={revising ? null : onCambiarParada}
+              cambiandoParada={cambiandoParada}
             />
           </motion.div>
         </AnimatePresence>
@@ -511,6 +519,21 @@ export default function Panel({
                 {!!loDicho.quitadas.length && (
                   <p className="text-dato leading-relaxed text-tinta-suave">
                     Saqué {lista(loDicho.quitadas)}
+                  </p>
+                )}
+
+                {/*
+                  Y lo que entró en su lugar. **Rehacer un día no es un trueque
+                  de uno por uno**: quitar una parada libera su rato y el motor
+                  rellena con lo que quepa, así que sacar una pizzería de un
+                  día de seis puede traer tres lugares nuevos. Decir solo lo
+                  que salió deja la mitad de la historia, y la otra mitad hay
+                  que buscarla comparando con un día que ya no está.
+                */}
+                {!!loDicho.entraron.length && (
+                  <p className="text-dato leading-relaxed text-tinta-suave">
+                    {loDicho.entraron.length === 1 ? "Entra" : "Entran"}{" "}
+                    {lista(loDicho.entraron)}
                   </p>
                 )}
 

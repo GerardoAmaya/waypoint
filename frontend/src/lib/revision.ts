@@ -63,6 +63,16 @@ export interface LoQueCambio {
   cambios: string[];
   /** Las paradas que sacó por su nombre. */
   quitadas: string[];
+  /**
+   * Las paradas que no estaban antes en ese día.
+   *
+   * **Rehacer un día no es un trueque de uno por uno.** Quitar una parada
+   * libera su rato y el motor rellena el día con lo que quepa: sacar una
+   * pizzería de un día de seis puede traer tres lugares nuevos. Decir solo lo
+   * que salió deja la mitad de la historia, y la otra mitad hay que buscarla
+   * comparando con un día que ya no está en pantalla.
+   */
+  entraron: string[];
   /** Lo que no supo usar y los avisos del camino. */
   avisos: string[];
   /**
@@ -88,6 +98,21 @@ export interface LoQueCambio {
  * El texto es la identidad: dos consejos del mismo tipo se distinguen por lo
  * que dicen, y es lo que se compara porque es lo que se lee.
  */
+/**
+ * Los nombres de las paradas de un día, en orden.
+ *
+ * Con `?.` en cada paso por lo mismo que el resto del módulo: esto lee lo que
+ * manda el servidor, y una pantalla que se rompe por un campo que falta es
+ * peor que una que no dice nada.
+ */
+function paradasDe(itinerario: Itinerary, dia: number): string[] {
+  return (
+    itinerario.days
+      ?.find((d) => d.number === dia)
+      ?.stops?.map((p) => p.place.name) ?? []
+  );
+}
+
 function consecuenciasDe(
   antes: Itinerary | null | undefined,
   despues: Itinerary,
@@ -122,9 +147,19 @@ export function loQueCambio(
     (COMO_SE_DICE[clave] ?? (() => `${clave}: ${valor}`))(valor),
   );
 
+  const antesDelDia = antes && dia ? paradasDe(antes, dia) : null;
+  const despuesDelDia =
+    dia && revision.itinerary ? paradasDe(revision.itinerary, dia) : [];
+  const yaEstaban = new Set(antesDelDia ?? []);
+
   return {
     cambios,
     quitadas: revision.removed ?? [],
+    // Sin el día de antes no se puede saber qué es nuevo, y llamar nuevas a
+    // todas las paradas sería decir que el cambio rehízo el día entero.
+    entraron: antesDelDia
+      ? [...new Set(despuesDelDia.filter((n) => !yaEstaban.has(n)))]
+      : [],
     // Los dos dicen lo mismo desde dos sitios —"no supe qué hacer con esto"—
     // y separarlos en pantalla obligaría a explicar la diferencia, que no le
     // importa a nadie que esté mirando su itinerario.
@@ -144,6 +179,7 @@ export function dijoAlgo(cambio: LoQueCambio): boolean {
     cambio.cambios.length > 0 ||
     cambio.quitadas.length > 0 ||
     cambio.avisos.length > 0 ||
+    cambio.entraron.length > 0 ||
     cambio.consecuencias.length > 0
   );
 }

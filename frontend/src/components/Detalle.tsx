@@ -7,6 +7,7 @@ import {
   faDiamondTurnRight,
   faMountain,
   faPhone,
+  faShuffle,
   faUtensils,
 } from "@fortawesome/free-solid-svg-icons";
 import type { IconDefinition } from "@fortawesome/free-solid-svg-icons";
@@ -25,7 +26,23 @@ import type { Mode, Place } from "@/lib/types";
  * hay ninguno, así que lo único que siempre está es la acción de ir: eso no
  * depende de que OSM tenga el dato, solo de las coordenadas.
  */
-export default function Detalle({ place, mode }: { place: Place; mode: Mode }) {
+export default function Detalle({
+  place,
+  mode,
+  onCambiar,
+  cambiando = false,
+}: {
+  place: Place;
+  mode: Mode;
+  /**
+   * Rehacer el día sin esta parada, o null si no se puede cambiar.
+   *
+   * Null en el alojamiento: es de donde se sale y a donde se vuelve, no una
+   * visita que sobre. Y null mientras no haya itinerario que mandar.
+   */
+  onCambiar?: (() => void) | null;
+  cambiando?: boolean;
+}) {
   const caja = useRef<HTMLDivElement>(null);
 
   /*
@@ -79,6 +96,29 @@ export default function Detalle({ place, mode }: { place: Place; mode: Mode }) {
         <FontAwesomeIcon icon={faDiamondTurnRight} aria-hidden className="size-3" />
         Cómo llegar
       </a>
+
+      {/*
+        Y la otra acción que siempre se puede ofrecer: que esta parada no te
+        interese.
+
+        **Va aquí y no en la fila de la parada** porque esa fila entera es un
+        botón, y un botón dentro de otro es HTML inválido. Al elegir una parada
+        ya se mira esto, así que la acción cae donde está la atención.
+
+        No llama al modelo: la parada que se quiere fuera trae identificador,
+        y mandar una frase para recuperarlo costaría tokens y una espera a
+        cambio de nada. Ver lib/api.ts, swapStop.
+      */}
+      {onCambiar && (
+        <button
+          onClick={onCambiar}
+          disabled={cambiando}
+          className="inline-flex items-center gap-1.5 rounded-md border border-borde-fuerte px-2 py-1 text-dato text-tinta-suave transition-colors hover:border-acento hover:text-tinta disabled:opacity-50"
+        >
+          <FontAwesomeIcon icon={faShuffle} aria-hidden className="size-3" />
+          {cambiando ? "Cambiando" : "Cambiar por otra"}
+        </button>
+      )}
 
       {place.website && (
         <a

@@ -63,7 +63,12 @@ que llover sobre un museo no marca nada. En temporada sale en el 92% de los
 itinerarios de tres días, y nunca cubre la jornada entera — de 1.540 días
 medidos, ninguno llovió de las nueve a las ocho seguidas.
 
-Un día se cambia escribiendo: «menos carro», «sacá el museo», «empezá a las 7».
+Cada parada se puede cambiar por otra con un botón: rehace ese día sin ella, y
+dice qué salió y qué entró. No pasa por el modelo —la parada ya trae
+identificador, así que no hay nada que interpretar—. Medido sobre 37 paradas de
+seis zonas, todas encontraron con qué sustituirse.
+
+Un día entero se cambia escribiendo: «menos carro», «sacá el museo», «empezá a las 7».
 La revisión contesta qué entendió y qué paradas sacó —nombrándolas— y se puede
 volver al itinerario anterior, porque afinar un día es normal y un cambio que
 empeora no debería costar empezar de cero.
