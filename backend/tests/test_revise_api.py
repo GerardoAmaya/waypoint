@@ -385,3 +385,97 @@ class TestCambiarUnaParadaSinModelo:
 
         assert respuesta.status_code == 404
         assert "catálogo" in respuesta.json()["detail"]
+
+
+def cuerpo_quitar(**extra):
+    base = cuerpo()
+    del base["message"]
+    base["day"] = 1
+    base["place_id"] = str(DESTINOS[0].id)
+    base.update(extra)
+    # `day` es de quitar; mover trae `from_day` y `to_day` en su lugar.
+    if base.get("day") is None:
+        base.pop("day", None)
+    return base
+
+
+class TestQuitarYMoverNoReconstruyenNada:
+    """`/plan/remove` y `/plan/move`: el hueco es el punto.
+
+    Cambiar una parada rehace el día y rellena. Quitarla y moverla no: quien
+    pulsa "quitar" quiere el día más suelto, y quien mueve una parada al día
+    siguiente no quiere que el primero se le vuelva a llenar. Los dos días se
+    reprograman con las paradas que tienen, y las horas se recalculan.
+    """
+
+    def test_quitar_deja_el_dia_con_una_parada_menos(self, cliente):
+        antes = len(cuerpo()["days"][0]["stops"])
+        respuesta = cliente.post("/plan/remove", json=cuerpo_quitar())
+
+        assert respuesta.status_code == 200
+        assert len(nombres(respuesta.json(), 1)) == antes - 1
+
+    def test_quitar_no_rellena_el_hueco(self, cliente):
+        """La diferencia con cambiar por otra, y la razón de que exista."""
+        respuesta = cliente.post("/plan/remove", json=cuerpo_quitar()).json()
+
+        assert nombres(respuesta, 1) == [DESTINOS[1].name]
+        assert respuesta["removed"] == [DESTINOS[0].name]
+
+    def test_un_dia_no_se_queda_sin_ninguna_parada(self, cliente):
+        """Un día vacío no es un día: eso es borrar el día, que no se pidió."""
+        solo_una = cuerpo_quitar()
+        solo_una["days"][0]["stops"] = [{"place_id": str(DESTINOS[0].id)}]
+
+        assert cliente.post("/plan/remove", json=solo_una).status_code == 422
+
+    def test_mover_la_saca_de_un_dia_y_la_pone_en_el_otro(self, cliente):
+        respuesta = cliente.post(
+            "/plan/move", json=cuerpo_quitar(from_day=1, to_day=2, day=None)
+        )
+
+        assert respuesta.status_code == 200
+        cuerpo_json = respuesta.json()
+        assert DESTINOS[0].name not in nombres(cuerpo_json, 1)
+        assert DESTINOS[0].name in nombres(cuerpo_json, 2)
+
+    def test_mover_lo_dice_como_mover_y_no_como_quitar(self, cliente):
+        """El fallo que trajo esto: pedir mover y pedir quitar daban el mismo
+        resultado, y la pantalla decía "Saqué X" sobre una parada que la
+        persona quería conservar."""
+        respuesta = cliente.post(
+            "/plan/move", json=cuerpo_quitar(from_day=1, to_day=2, day=None)
+        ).json()
+
+        assert respuesta["moved"] == DESTINOS[0].name
+        assert respuesta["moved_to"] == 2
+        assert respuesta["removed"] == []
+
+    def test_el_dia_de_origen_no_se_rellena(self, cliente):
+        """Mover es reequilibrar: si el día 1 se vuelve a llenar, no sirvió."""
+        respuesta = cliente.post(
+            "/plan/move", json=cuerpo_quitar(from_day=1, to_day=2, day=None)
+        ).json()
+
+        assert nombres(respuesta, 1) == [DESTINOS[1].name]
+
+    def test_mover_al_mismo_dia_se_rechaza(self, cliente):
+        respuesta = cliente.post(
+            "/plan/move", json=cuerpo_quitar(from_day=1, to_day=1, day=None)
+        )
+
+        assert respuesta.status_code == 422
+
+    def test_ninguno_llama_al_modelo(self, cliente, monkeypatch):
+        def explota(*_args, **_kwargs):
+            raise AssertionError("quitar y mover no interpretan nada")
+
+        monkeypatch.setattr("app.api.plan.interpret_revision", explota)
+
+        assert cliente.post("/plan/remove", json=cuerpo_quitar()).status_code == 200
+        assert (
+            cliente.post(
+                "/plan/move", json=cuerpo_quitar(from_day=1, to_day=2, day=None)
+            ).status_code
+            == 200
+        )

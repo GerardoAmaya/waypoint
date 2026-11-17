@@ -40,8 +40,10 @@ describe("franjas", () => {
 
 describe("lluviaEnPalabras", () => {
   it("da la franja con los minutos del final", () => {
-    /* Hasta las 15:59 y no "hasta las 15:00": la hora 15 llueve entera. */
-    expect(lluviaEnPalabras([13, 14, 15])).toBe("de 13:00 a 15:59");
+    /* Hasta las 16:00 y no "hasta las 15:00": la hora 15 llueve entera, así
+       que el tramo se cierra en su borde. El ":59" de antes era exacto y se
+       leía como un error de formato. */
+    expect(lluviaEnPalabras([13, 14, 15])).toBe("de 13:00 a 16:00");
   });
 
   it("una hora sola no se dice como franja", () => {
@@ -49,7 +51,7 @@ describe("lluviaEnPalabras", () => {
   });
 
   it("enumera dos chubascos", () => {
-    expect(lluviaEnPalabras([14, 15, 19])).toBe("de 14:00 a 15:59 y a las 19:00");
+    expect(lluviaEnPalabras([14, 15, 19])).toBe("de 14:00 a 16:00 y a las 19:00");
   });
 
   it("rellena el cero de la hora", () => {
@@ -75,5 +77,15 @@ describe("iconoDelClima", () => {
   it("un código desconocido sale como nube y no revienta", () => {
     /* La nieve existe en la tabla de la OMM y no en El Salvador. */
     expect(iconoDelClima(75)).toBe(faCloud);
+  });
+});
+
+describe("la última hora del día", () => {
+  it("no cierra en un 24:00 que no existe", () => {
+    expect(lluviaEnPalabras([22, 23])).toBe("desde las 22:00");
+  });
+
+  it("una hora suelta se nombra, no se acota", () => {
+    expect(lluviaEnPalabras([23])).toBe("a las 23:00");
   });
 });

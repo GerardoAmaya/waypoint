@@ -34,7 +34,9 @@ from app.schemas import (
     AreaOut,
     AreaPhotoOut,
     InterpretationOut,
+    MoveRequest,
     PlanMessage,
+    RemoveRequest,
     ReviseRequest,
     RevisionOut,
     SwapRequest,
@@ -315,6 +317,113 @@ def _to_constraints(peticion, db: Session) -> motor.Constraints:
         start_place=partida,
         return_to_start=peticion.return_to_start,
     )
+
+
+def _estado_de(peticion) -> list:
+    """El itinerario que el cliente tiene, en lo que el motor entiende."""
+    return [
+        motor.DayState(
+            number=dia.number,
+            stops=[(parada.place_id, parada.meal) for parada in dia.stops],
+        )
+        for dia in peticion.days
+    ]
+
+
+def _reprogramado(db, base, estado) -> RevisionOut:
+    """Recalcula las horas del itinerario dado, sin reconstruir ningun dia.
+
+    `target=None` es lo que distingue quitar y mover de cambiar: ahi el dia se
+    rehace y el hueco se rellena, y aqui el hueco es el punto.
+    """
+    resultado = motor.revise_with_routing(db, base, estado, None)
+    return RevisionOut(
+        itinerary=_to_out(
+            resultado.itinerary,
+            resultado.stats,
+            resultado.geometry,
+            base,
+            resultado.weather,
+        ),
+        missing=resultado.missing,
+    )
+
+
+@router.post("/remove", response_model=RevisionOut, dependencies=[Depends(limitar)])
+def remove(peticion: RemoveRequest) -> RevisionOut:
+    """Quita una parada y deja el dia mas corto.
+
+    Lo que faltaba al lado de "cambiar por otra": esa rehace el dia y rellena
+    el hueco, y a veces el hueco es justo lo que se quiere.
+    """
+    db = SessionLocal()
+    try:
+        estado = _estado_de(peticion)
+        catalogo = places_by_ids(db, [peticion.place_id])
+        fuera = catalogo.get(peticion.place_id)
+        if fuera is None:
+            raise HTTPException(
+                status_code=404,
+                detail="esa parada ya no está en el catálogo, así que no hay nada que quitar",
+            )
+
+        for dia in estado:
+            if dia.number == peticion.day:
+                dia.stops = [p for p in dia.stops if p[0] != peticion.place_id]
+
+        salida = _reprogramado(db, _to_constraints(peticion.constraints, db), estado)
+        salida.removed = [fuera.name]
+        return salida
+    finally:
+        db.close()
+
+
+@router.post("/move", response_model=RevisionOut, dependencies=[Depends(limitar)])
+def move(peticion: MoveRequest) -> RevisionOut:
+    """Mueve una parada de un dia a otro.
+
+    **Pedir mover y pedir quitar daban el mismo resultado.** El vocabulario de
+    la revision solo sabe quitar, asi que el modelo traducia "mové el mirador
+    al día 2" por `remove`: la parada desaparecia, no llegaba al dia 2, y la
+    pantalla decia "Saqué Mirador El Mulo" como si fuera lo pedido. Aqui el
+    destino viaja en el pedido y no hay nada que adivinar.
+    """
+    db = SessionLocal()
+    try:
+        estado = _estado_de(peticion)
+        catalogo = places_by_ids(db, [peticion.place_id])
+        mudada = catalogo.get(peticion.place_id)
+        if mudada is None:
+            raise HTTPException(
+                status_code=404,
+                detail="esa parada ya no está en el catálogo, así que no hay nada que mover",
+            )
+
+        comida = next(
+            (
+                c
+                for d in estado
+                if d.number == peticion.from_day
+                for ref, c in d.stops
+                if ref == peticion.place_id
+            ),
+            None,
+        )
+        for dia in estado:
+            if dia.number == peticion.from_day:
+                dia.stops = [p for p in dia.stops if p[0] != peticion.place_id]
+            elif dia.number == peticion.to_day:
+                # Al final: el motor reprograma en el orden que recibe, y
+                # colocarla "donde encaje" obligaria a rehacer el dia destino,
+                # que es justo lo que no se pidio.
+                dia.stops = [*dia.stops, (peticion.place_id, comida)]
+
+        salida = _reprogramado(db, _to_constraints(peticion.constraints, db), estado)
+        salida.moved = mudada.name
+        salida.moved_to = peticion.to_day
+        return salida
+    finally:
+        db.close()
 
 
 @router.post("/swap", response_model=RevisionOut, dependencies=[Depends(limitar)])

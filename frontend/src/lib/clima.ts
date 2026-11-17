@@ -60,7 +60,15 @@ export function franjas(horas: number[]): Array<[number, number]> {
 
 const dosDigitos = (n: number) => String(n).padStart(2, "0");
 
-/** "de 13:00 a 15:59", o null si no llueve. */
+/**
+ * "de 13:00 a 16:00", o null si no llueve.
+ *
+ * **El final es el límite, no el último minuto.** Decía "de 13:00 a 15:59",
+ * que es exacto —las horas con agua son la 13, la 14 y la 15, y la última
+ * acaba a las 15:59— y se lee como un error de formato: nadie dice a qué hora
+ * para la lluvia con un minuto de precisión que el pronóstico no tiene. El
+ * tramo se nombra por sus bordes, que es como se dicen los horarios.
+ */
 export function lluviaEnPalabras(horas: number[]): string | null {
   const tramos = franjas(horas);
   if (!tramos.length) return null;
@@ -68,7 +76,11 @@ export function lluviaEnPalabras(horas: number[]): string | null {
   const textos = tramos.map(([inicio, fin]) =>
     inicio === fin
       ? `a las ${dosDigitos(inicio)}:00`
-      : `de ${dosDigitos(inicio)}:00 a ${dosDigitos(fin)}:59`,
+      : // Una franja que llega a la última hora del día no puede cerrar en
+        // "24:00", que no existe en ningún reloj.
+        fin >= 23
+        ? `desde las ${dosDigitos(inicio)}:00`
+        : `de ${dosDigitos(inicio)}:00 a ${dosDigitos(fin + 1)}:00`,
   );
 
   if (textos.length === 1) return textos[0];

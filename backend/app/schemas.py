@@ -417,6 +417,12 @@ class InterpretationOut(BaseModel):
     unmapped: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
+    # La parada que cambio de dia, y a cual. Va aparte de `removed` porque no
+    # es lo mismo: "saqué el mirador" y "el mirador pasa al día 2" describen
+    # resultados distintos, y confundirlos fue el fallo que trajo esto.
+    moved: str | None = None
+    moved_to: int | None = None
+
 
 class StopRefIn(BaseModel):
     """Una parada tal como el cliente la recibio.
@@ -486,6 +492,68 @@ class SwapRequest(BaseModel):
         return self
 
 
+class MoveRequest(BaseModel):
+    """Mover una parada de un dia a otro.
+
+    **No es quitarla y volver a pedirla.** Pedir "mové el mirador al día 2" y
+    pedir "sacá el mirador" daban exactamente el mismo resultado —la parada
+    desaparecia— porque el vocabulario de la revision solo sabe quitar y el
+    modelo traducia lo uno por lo otro. Aqui el destino viaja en el pedido, asi
+    que no hay nada que adivinar.
+
+    **Ningun dia se reconstruye**: los dos se reprograman con las paradas que
+    tienen. El de origen queda mas corto —es lo que se pidio al sacarla de
+    ahi— y el de destino conserva las suyas y la suma al final. Si con ella no
+    cabe en su horario, se dice con una violacion: reordenarle a alguien un dia
+    que no pidio tocar es peor que avisarle de que ese dia se le hizo largo.
+    """
+
+    place_id: uuid.UUID
+    from_day: int = Field(ge=1, le=7)
+    to_day: int = Field(ge=1, le=7)
+    constraints: ItineraryRequest
+    days: list[DayStateIn] = Field(min_length=2, max_length=7)
+
+    @model_validator(mode="after")
+    def _el_movimiento_tiene_sentido(self) -> MoveRequest:
+        if self.from_day == self.to_day:
+            raise ValueError("el día de origen y el de destino son el mismo")
+        numeros = {d.number for d in self.days}
+        for etiqueta, numero in (("origen", self.from_day), ("destino", self.to_day)):
+            if numero not in numeros:
+                raise ValueError(f"el itinerario no tiene un día {numero} ({etiqueta})")
+        origen = next(d for d in self.days if d.number == self.from_day)
+        if self.place_id not in {p.place_id for p in origen.stops}:
+            raise ValueError(f"el día {self.from_day} no tiene esa parada")
+        return self
+
+
+class RemoveRequest(BaseModel):
+    """Quitar una parada y que el dia quede mas corto.
+
+    **No es lo mismo que cambiarla por otra**, que es lo unico que habia. Al
+    cambiarla, el motor rehace el dia y rellena el hueco; aqui el hueco es el
+    punto: quien pulsa "quitar" quiere el dia mas suelto, no otro lugar en el
+    mismo sitio.
+    """
+
+    place_id: uuid.UUID
+    day: int = Field(ge=1, le=7)
+    constraints: ItineraryRequest
+    days: list[DayStateIn] = Field(min_length=1, max_length=7)
+
+    @model_validator(mode="after")
+    def _la_parada_esta_en_ese_dia(self) -> RemoveRequest:
+        dia = next((d for d in self.days if d.number == self.day), None)
+        if dia is None:
+            raise ValueError(f"el itinerario no tiene un día {self.day}")
+        if self.place_id not in {p.place_id for p in dia.stops}:
+            raise ValueError(f"el día {self.day} no tiene esa parada")
+        if len(dia.stops) <= 1:
+            raise ValueError("ese día se quedaría sin ninguna parada")
+        return self
+
+
 class RevisionOut(BaseModel):
     """El itinerario revisado y que se entendio del pedido."""
 
@@ -496,3 +564,9 @@ class RevisionOut(BaseModel):
     missing: list[uuid.UUID] = Field(default_factory=list)
     unmapped: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+
+    # La parada que cambio de dia, y a cual. Va aparte de `removed` porque no
+    # es lo mismo: "saqué el mirador" y "el mirador pasa al día 2" describen
+    # resultados distintos, y confundirlos fue el fallo que trajo esto.
+    moved: str | None = None
+    moved_to: int | None = None

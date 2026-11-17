@@ -183,7 +183,7 @@ describe("el clima del día", () => {
       }),
     });
 
-    expect(screen.getByText(/lluvia de 13:00 a 15:59/i)).toBeInTheDocument();
+    expect(screen.getByText(/lluvia de 13:00 a 16:00/i)).toBeInTheDocument();
   });
 
   it("la fila queda como estaba cuando no se supo el clima", () => {
@@ -272,7 +272,7 @@ describe("la luz del dia en el hilo", () => {
 });
 
 describe("la lluvia en la linea", () => {
-  /** Un dia de septiembre: chubascos de 13:00 a 15:59, ocaso a las 18:10. */
+  /** Un dia de septiembre: chubascos de 13:00 a 16:00, ocaso a las 18:10. */
   const conChubascos = dia({
     sunset: "18:10:00",
     weather: {

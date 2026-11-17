@@ -398,7 +398,7 @@ class TestAvisoDeLluvia:
         assert consejos[0].kind == "rain_outdoors"
         assert consejos[0].day == 1
         assert "Cerro Verde" in consejos[0].detail
-        assert "de 15:00 a 17:59" in consejos[0].detail
+        assert "de 15:00 a 18:00" in consejos[0].detail
 
     def test_no_avisa_por_llover_sobre_un_museo(self):
         """Que llueva mientras se esta bajo techo no es un problema que resolver."""

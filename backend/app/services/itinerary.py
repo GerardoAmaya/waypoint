@@ -2562,12 +2562,23 @@ def _franjas(horas: Iterable[int]) -> list[tuple[int, int]]:
 
 
 def _franjas_en_palabras(horas: Iterable[int]) -> str:
-    """Los tramos de lluvia como los diria una persona."""
+    """Los tramos de lluvia como los diria una persona.
+
+    **El final es el limite, no el ultimo minuto.** Decia "de 13:00 a 15:59",
+    que es exacto —las horas con agua son la 13, la 14 y la 15— y se lee como
+    un error de formato: nadie dice a que hora para la lluvia con un minuto de
+    precision que el pronostico no tiene.
+    """
     tramos = _franjas(horas)
-    textos = [
-        f"de {inicio:02d}:00 a {fin:02d}:59" if inicio != fin else f"a las {inicio:02d}:00"
-        for inicio, fin in tramos
-    ]
+    textos = []
+    for inicio, fin in tramos:
+        if inicio == fin:
+            textos.append(f"a las {inicio:02d}:00")
+        elif fin >= 23:
+            # "24:00" no existe en ningun reloj.
+            textos.append(f"desde las {inicio:02d}:00")
+        else:
+            textos.append(f"de {inicio:02d}:00 a {fin + 1:02d}:00")
     if len(textos) == 1:
         return textos[0]
     return ", ".join(textos[:-1]) + " y " + textos[-1]
@@ -3635,7 +3646,7 @@ def revise_day(
     db: Session,
     constraints: Constraints,
     state: list[DayState],
-    target: int,
+    target: int | None,
     *,
     day_constraints: Constraints | None = None,
     exclude: set[uuid.UUID] | None = None,
@@ -3662,6 +3673,27 @@ def revise_day(
     # pie de "el primero en coche y el segundo caminando" se reconstruia con
     # la red del coche y con sus veinticinco kilometros. Es el mismo error que
     # ya se habia corregido en assemble(), que aqui habia sobrevivido.
+    referencias = [par[0] for dia in state for par in dia.stops]
+    catalogo = places_by_ids(db, referencias)
+    faltantes = [ref for ref in referencias if ref not in catalogo]
+
+    # **Sin dia objetivo no se reconstruye nada: se reprograma lo que llega.**
+    # Es lo que necesitan quitar una parada y moverla a otro dia, que no son
+    # "rehaceme el dia" sino "este dia es este, recalculame las horas". Elegir
+    # candidatos y armar dias para despues tirarlos costaria una consulta al
+    # catalogo y un reparto completo por nada, y de paso rellenaria el hueco
+    # que la persona acaba de abrir a proposito.
+    if target is None:
+        dias = [
+            schedule_day(dia.number, secuencia, constraints, travel)
+            for dia in sorted(state, key=lambda d: d.number)
+            if (secuencia := [(catalogo[r], c) for r, c in dia.stops if r in catalogo])
+        ]
+        itinerario = Itinerary(days=dias)
+        itinerario.violations = validate(itinerario, constraints)
+        itinerario.advice = advise(itinerario, constraints, [], travel, clima)
+        return RevisionResult(itinerary=itinerario, missing=faltantes, weather=clima)
+
     modo = restricciones_dia.mode_for(target)
     medidor = _travel_or_estimate(travel, modo)
 
@@ -3675,10 +3707,6 @@ def revise_day(
         max_travel_km_per_day=restricciones_dia.budget_for(target),
         day_modes={},
     )
-
-    referencias = [par[0] for dia in state for par in dia.stops]
-    catalogo = places_by_ids(db, referencias)
-    faltantes = [ref for ref in referencias if ref not in catalogo]
 
     # Lo que ocupan los otros dias no puede repetirse en el que se rehace.
     tomados = {
@@ -3745,7 +3773,7 @@ def revise_with_routing(
     db: Session,
     constraints: Constraints,
     state: list[DayState],
-    target: int,
+    target: int | None,
     *,
     day_constraints: Constraints | None = None,
     exclude: set[uuid.UUID] | None = None,
