@@ -17,6 +17,7 @@ import {
 
 import Asa from "./Asa";
 import FotoZona from "./FotoZona";
+import Tira from "./Tira";
 import Linea from "./Linea";
 import { itinerarioComoTexto } from "@/lib/texto";
 import { dijoAlgo, lista, type LoQueCambio } from "@/lib/revision";
@@ -200,7 +201,14 @@ export default function Panel({
     dias eso son siete paradas antes del itinerario.
   */
   const teclaEnPestanas = (e: React.KeyboardEvent) => {
-    const paso = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    // Arriba y abajo además de los lados: la lista de días es vertical desde
+    // que la tira sustituyó a las píldoras.
+    const paso =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? 1
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? -1
+          : 0;
     if (!paso) return;
     e.preventDefault();
 
@@ -395,51 +403,24 @@ export default function Panel({
         )}
       </header>
 
-      {itinerary.days.length > 1 && (
-        <div
-          ref={pestanas}
-          role="tablist"
-          aria-label="Días del itinerario"
-          onKeyDown={teclaEnPestanas}
-          className="flex shrink-0 gap-1 border-b border-borde px-5 py-2 sm:px-6 sm:py-3"
-        >
-          {itinerary.days.map((d) => {
-            const activo = d.number === dia.number;
-            return (
-              <button
-                key={d.number}
-                role="tab"
-                id={`pestana-dia-${d.number}`}
-                aria-selected={activo}
-                aria-controls="panel-dia"
-                /* Un solo punto de tabulacion para el grupo entero: dentro se
-                   navega con flechas. Es el patron de pestanas de ARIA. */
-                tabIndex={activo ? 0 : -1}
-                onClick={() => onSelectDay(d.number)}
-                className={`relative rounded-md px-3 py-1.5 text-menudo transition-colors ${
-                  activo
-                    ? "text-sobre-acento"
-                    : "text-tinta-suave hover:text-tinta"
-                }`}
-              >
-                {/*
-                  z-0 y no -z-10: con indice negativo la pildora se va detras
-                  del fondo del panel y queda texto niebla sobre panel niebla,
-                  que es invisible. El dia activo desaparecia de las pestanas.
-                */}
-                {activo && (
-                  <motion.span
-                    layoutId="dia-activo"
-                    className="absolute inset-0 z-0 rounded-md bg-acento"
-                    transition={{ type: "spring", stiffness: 380, damping: 32 }}
-                  />
-                )}
-                <span className="relative z-10">Día {d.number}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/*
+        La forma del viaje, Y el selector de día.
+
+        **Antes había dos.** La tira empezó encima de las píldoras de «Día 1 ·
+        Día 2 · Día 3» y al mirarla se veían dos selectores apilados diciendo
+        lo mismo, así que las píldoras se fueron: la tira dice el día y además
+        enseña cuántas paradas tiene y de qué tipo, que es la pregunta de antes
+        de abrir ninguno. De paso devuelve alto al panel, que en móvil es justo
+        lo que falta.
+      */}
+      <Tira
+        interpretation={interpretation}
+        itinerary={itinerary}
+        selectedDay={dia.number}
+        onSelectDay={onSelectDay}
+        refLista={pestanas}
+        onTecla={teclaEnPestanas}
+      />
 
       <div
         id="panel-dia"

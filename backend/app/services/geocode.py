@@ -139,6 +139,12 @@ FOTOS: dict[str, ZonePhoto] = {
         license="CC BY-SA 3.0",
         page="https://commons.wikimedia.org/wiki/File:MALECON_DEL_PUERTO_DE_LA_LIBERTAD._-_panoramio.jpg",
     ),
+    "el-tunco": ZonePhoto(
+        file="Tunco1.jpg",
+        author="Rafael Colindres",
+        license="CC BY-SA 3.0",
+        page="https://commons.wikimedia.org/wiki/File:Tunco1.jpg",
+    ),
     "el-zonte": ZonePhoto(
         file="El_Zonte_(01.2011)_-_panoramio.jpg",
         author="Martin Haeusler",

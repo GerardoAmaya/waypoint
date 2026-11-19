@@ -3550,6 +3550,68 @@ Banco: 25/26 límites duros, 0 lugares inventados, 0 paradas fuera de hora.
 
 ---
 
+### Las fotos por parada, medidas por tercera vez
+
+La petición era fotos en el itinerario, como en la portada. Volví a medirlo
+porque la medición anterior era de un catálogo más pequeño, y por tres vías
+distintas:
+
+| de dónde saldría la foto | cobertura |
+|---|---|
+| etiqueta `image` de OpenStreetMap | **0,1%** (9 de 6.449) |
+| enlace a Wikidata, Wikipedia o Commons | **1,8%** de los destinos |
+| fotos geolocalizadas de Commons a 300 m | **7%** (4 de 60) |
+
+Las tres dicen lo mismo. Y de los cuatro destinos con foto en Commons, uno es
+un centro comercial y otro una galería de arte. Un hueco vacío nueve de cada
+diez veces parece una aplicación rota.
+
+**Lo que sí salió de medirlo:** faltaba la foto de zona de El Tunco, que es de
+los destinos más pedidos, y Commons tiene una buena —`Tunco1.jpg`, 2048×1536,
+CC BY-SA de Rafael Colindres—. Ya son 19 de 20 zonas con foto. La única sin
+ella es Costa del Sol, y ahí Commons de verdad no tiene nada: su único
+candidato a cuatro kilómetros es una foto de la Estación Espacial mirando
+Nicaragua.
+
+**Y lo que confirmó que no se puede automatizar.** Para áreas que no son zona
+curada —Mejicanos, Santa Tecla— Commons tiene foto el 57% de las veces, lo que
+suena suficiente hasta que se miran. Las de Mejicanos y Santa Tecla son
+buenas: la alcaldía, el Cafetalón, el museo. Las dos primeras de Ciudad
+Delgado son el río Acelhuate —el más contaminado del país— y una titulada
+«esto es después de la explosión de una pequeña fábrica». Coger la primera de
+la búsqueda pondría eso como imagen principal del viaje de alguien. Por eso
+las 19 están escogidas a mano, con su crédito.
+
+---
+
+### La forma del viaje
+
+Si las fotos no se podían, lo visual tenía que salir del propio itinerario.
+Una fila por día, un punto por parada del color de su categoría: se ve de un
+vistazo cuál día va cargado y de qué, que es la pregunta de antes de abrir
+ninguna pestaña. No inventa nada — es el itinerario dibujado.
+
+Comparte `describir` con la tarjeta del enlace compartido, así que la forma de
+un viaje tiene una sola definición y las dos composiciones no pueden
+divergir.
+
+**Empezó encima de las pestañas y al mirarla se veían dos selectores apilados
+diciendo lo mismo.** Así que la tira se quedó con el papel —con su `role=tab`,
+su `aria-selected` y la navegación por flechas, ahora también arriba y abajo
+porque la lista es vertical— y las píldoras de «Día 1 · Día 2 · Día 3» se
+fueron. De paso devuelve alto al panel, que en móvil es justo lo que falta: es
+el mismo presupuesto vertical por el que la foto de zona se oculta ahí.
+
+**El día elegido se marca con fondo y una barra, no tiñéndolo del acento.** La
+primera versión pintaba la fila activa del azul del acento, y sobre ese azul
+el verde de naturaleza y el gris de alojamiento se perdían. Los colores de los
+puntos son el dato: no se pueden sacrificar para señalar cuál fila está
+elegida. También se vio al mirarlo, no al pensarlo.
+
+Con un solo día no se pinta: no hay forma que comparar ni entre qué elegir.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

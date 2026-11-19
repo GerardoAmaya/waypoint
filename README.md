@@ -56,6 +56,14 @@ y una imagen con una tira por día —un punto por parada, del color de su
 categoría—. Se genera en el servidor a partir del plan guardado, así que dos
 itinerarios distintos se ven distintos antes de abrirlos.
 
+Arriba del itinerario va la forma del viaje: una fila por día con un punto por
+parada, del color de su categoría. Se ve de un vistazo cuál día va cargado, y
+es además el selector de día. No hay fotos por parada y no es un olvido: la
+etiqueta de imagen de OpenStreetMap sale en el 0,1% de los lugares, algún
+enlace a Wikimedia en el 1,8% de los destinos, y las fotos geolocalizadas de
+Commons a 300 metros en el 7%. Las zonas sí tienen foto —19 de 20, escogidas a
+mano y con su crédito—.
+
 En los días de costa dice cómo está el mar: altura, periodo, rumbo y
 temperatura del agua. El periodo no es un adorno —1,2 m con 13 s es marejada
 de fondo del Pacífico sur y 1,2 m con 7 s es mar picado— y solo sale donde hay

@@ -312,20 +312,20 @@ describe("quitar y mover una parada", () => {
 
     expect(screen.getByRole("button", { name: /Cambiar por otra/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Quitar/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /día 2/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "día 2" })).toBeInTheDocument();
   });
 
   it("no ofrece el día en el que ya está", () => {
     abierto();
 
-    expect(screen.queryByRole("button", { name: /^día 1$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "día 1" })).toBeNull();
   });
 
   it("llama a mover con el día de destino", async () => {
     const mover = vi.fn();
     abierto({ onMoverParada: mover });
 
-    await userEvent.click(screen.getByRole("button", { name: /día 2/i }));
+    await userEvent.click(screen.getByRole("button", { name: "día 2" }));
 
     expect(mover).toHaveBeenCalledWith(conDosDias.days[0].stops[1].place.id, 2);
   });
@@ -353,14 +353,14 @@ describe("quitar y mover una parada", () => {
 
     expect(screen.queryByRole("button", { name: /Quitar/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Cambiar por otra/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /día 2/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "día 2" })).toBeNull();
   });
 
   it("mientras hay algo en curso no se puede pulsar dos veces", () => {
     abierto({ paradaOcupada: conDosDias.days[0].stops[1].place.id });
 
     expect(screen.getByRole("button", { name: /Quitar/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /día 2/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "día 2" })).toBeDisabled();
   });
 
   it("dice que la parada pasó a otro día, no que la sacó", () => {
@@ -374,3 +374,45 @@ describe("quitar y mover una parada", () => {
     expect(screen.queryByText(/Saqué/)).toBeNull();
   });
 });
+
+describe("la forma del viaje", () => {
+  const tresDias = itinerario({
+    days: [
+      dia({ number: 1, date: "2026-11-14", stops: [parada(), parada(), parada()] }),
+      dia({ number: 2, date: "2026-11-15", stops: [parada()] }),
+      dia({ number: 3, date: "2026-11-16", stops: [parada(), parada()] }),
+    ],
+  });
+
+  it("es el selector de día, no un adorno encima de otro", () => {
+    // Responde la pregunta de antes de abrir ninguna pestaña: cuál día va
+    // cargado. Las fotos por parada están descartadas por tres mediciones,
+    // así que lo visual tiene que salir del propio itinerario.
+    pinta(false, tresDias);
+
+    expect(
+      screen.getByRole("tab", { name: "Día 1, 3 paradas" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "Día 2, 1 paradas" }),
+    ).toBeInTheDocument();
+  });
+
+  it("lleva al día que se pulsa", async () => {
+    const elegir = vi.fn();
+    pinta(false, tresDias, { onSelectDay: elegir });
+
+    await userEvent.click(
+      screen.getByRole("tab", { name: "Día 3, 2 paradas" }),
+    );
+
+    expect(elegir).toHaveBeenCalledWith(3);
+  });
+
+  it("un viaje de un día no tiene forma que comparar", () => {
+    // Y la tira se comería alto del panel, que en móvil es justo lo que falta.
+    pinta(false, itinerario({ days: [dia({ number: 1, stops: [parada()] })] }));
+
+    expect(screen.queryByRole("tab")).toBeNull();
+  });
+})
