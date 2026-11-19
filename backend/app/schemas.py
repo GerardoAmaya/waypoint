@@ -218,6 +218,21 @@ class StopOut(BaseModel):
     rained_on: bool = False
 
 
+class SeaDayOut(BaseModel):
+    """Como esta el mar ese dia, solo en destinos de costa.
+
+    **El periodo viaja al lado de la altura y no es un adorno**: 1.2 m con
+    periodo de 13 s es marejada de fondo limpia y 1.2 m con 7 s es mar picado.
+    El mismo numero de altura, dos dias distintos, y sin el segundo el primero
+    no dice nada.
+    """
+
+    wave_height_m: float
+    wave_period_s: float
+    wave_direction_deg: int
+    water_temp_c: float | None = None
+
+
 class DayOut(BaseModel):
     number: int
     # La fecha de este dia, o None si no se supo cuando es el viaje.
@@ -247,6 +262,9 @@ class DayOut(BaseModel):
     # oscuras; mostrarla deja ver de un vistazo que paradas quedan con luz. No
     # cuesta ninguna peticion: es astronomia. Ver app/services/sol.py.
     sunset: time | None = None
+
+    # El estado del mar, o None si el destino no es de costa o no se supo.
+    sea: SeaDayOut | None = None
 
     # El clima de este dia, o None si no se supo.
     weather: WeatherDayOut | None = None

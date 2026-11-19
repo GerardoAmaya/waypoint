@@ -56,6 +56,12 @@ y una imagen con una tira por día —un punto por parada, del color de su
 categoría—. Se genera en el servidor a partir del plan guardado, así que dos
 itinerarios distintos se ven distintos antes de abrirlos.
 
+En los días de costa dice cómo está el mar: altura, periodo, rumbo y
+temperatura del agua. El periodo no es un adorno —1,2 m con 13 s es marejada
+de fondo del Pacífico sur y 1,2 m con 7 s es mar picado— y solo sale donde hay
+mar, que lo decide un contorno de la costa derivado del catálogo y no la API,
+cuya rejilla le daría oleaje a un pueblo de montaña.
+
 El hilo que une las paradas del día cambia de color donde cae el ocaso —el que
 el motor calcula de la latitud y la fecha, que en El Salvador va de las 17:25 a
 las 18:28 según el mes—, así que se ve de un vistazo qué paradas quedan con luz.

@@ -368,3 +368,33 @@ describe("la lluvia en la linea", () => {
     }
   });
 });
+
+describe("el mar en el resumen del día", () => {
+  const enLaPlaya = dia({
+    sea: {
+      wave_height_m: 1.16,
+      wave_period_s: 13.4,
+      wave_direction_deg: 211,
+      water_temp_c: 31,
+    },
+    stops: idaYVuelta.stops,
+  });
+
+  it("dice la marejada con su periodo y su rumbo", () => {
+    pinta({ day: enLaPlaya });
+
+    expect(screen.getByText("1,2 m · 13 s")).toBeInTheDocument();
+    expect(screen.getByText("del suroeste · marejada de fondo")).toBeInTheDocument();
+    expect(screen.getByText("· agua a 31°")).toBeInTheDocument();
+  });
+
+  it("tierra adentro no habla del mar", () => {
+    // Lo decide el servidor con el contorno de la costa: la API marina
+    // engancha su rejilla a la celda con agua más cercana y le daría oleaje a
+    // un pueblo de montaña.
+    pinta({ day: dia({ sea: null, stops: idaYVuelta.stops }) });
+
+    expect(screen.queryByText(/marejada/)).toBeNull();
+    expect(screen.queryByText(/agua a/)).toBeNull();
+  });
+})

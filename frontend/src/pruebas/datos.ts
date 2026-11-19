@@ -47,6 +47,7 @@ export function dia(parcial: Partial<Day> = {}): Day {
     number: 1,
     date: "2026-09-11",
     sunset: "18:10:00",
+    sea: null,
     weather: null,
     travel_km: 12.3,
     start: stops[0]?.arrival ?? null,

@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql osrm osrm-datos rodeo osrm-down ors-check ors-trace ors-calibrate ors-warm ors-warm-apply ors-warm-zone zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
+.PHONY: up down logs migrate test lint psql osrm osrm-datos rodeo costa osrm-down ors-check ors-trace ors-calibrate ors-warm ors-warm-apply ors-warm-zone zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
 
 up:
 	docker compose up -d --build
@@ -66,6 +66,11 @@ osrm-down:
 # no necesita OSRM: lee la tabla.
 rodeo:
 	docker compose exec api python -m scripts.calibrar_rodeo
+
+# Traza el contorno de la costa desde el catalogo. Lo que imprime se pega en
+# COSTA, en services/mar.py, y decide que destinos hablan del mar.
+costa:
+	docker compose exec api python -m scripts.trazar_costa
 
 ors-check:
 	docker compose exec api python -m scripts.check_ors

@@ -24,6 +24,7 @@ from app.schemas import (
     ItineraryOut,
     ItineraryRequest,
     PlaceOut,
+    SeaDayOut,
     StopOut,
     TravelSourceOut,
     ViolationOut,
@@ -192,11 +193,25 @@ def _to_weather_day(
     )
 
 
+def _to_sea(fecha, mar) -> SeaDayOut | None:
+    """El mar de ese dia, o None si no hay nada que decir."""
+    del_dia = mar.de(fecha) if mar is not None else None
+    if del_dia is None:
+        return None
+    return SeaDayOut(
+        wave_height_m=del_dia.ola_m,
+        wave_period_s=del_dia.periodo_s,
+        wave_direction_deg=del_dia.direccion_grados,
+        water_temp_c=del_dia.agua_c,
+    )
+
+
 def _to_day(
     dia: motor.Day,
     trazos: dict,
     constraints: motor.Constraints | None,
     clima: ClimaDelViaje | None,
+    mar=None,
 ) -> DayOut:
     """Serializa un dia con sus paradas.
 
@@ -238,11 +253,38 @@ def _to_day(
             if constraints is not None and constraints.date_of_day(dia.number)
             else None
         ),
+        sea=_to_sea(
+            constraints.date_of_day(dia.number) if constraints is not None else None,
+            mar,
+        ),
         visits=(
             motor.visits_of_day(dia, constraints)
             if constraints is not None
             else len(dia.stops)
         ),
+    )
+
+
+def _mar_del_viaje(constraints: motor.Constraints | None):
+    """El estado del mar del viaje, o nada si no toca.
+
+    **El primer corte es la costa**, y lo decide el contorno derivado del
+    catalogo y no la API: su rejilla se engancha a la celda marina mas cercana
+    y le daria oleaje a Ataco, que esta en la montaña. Ver services/mar.py.
+    """
+    if constraints is None:
+        return None
+
+    from app.core.reloj import hoy
+    from app.services.mar import load_marine, provider_from_settings
+
+    return load_marine(
+        constraints.center_lat,
+        constraints.center_lon,
+        constraints.start_date,
+        constraints.days,
+        hoy(),
+        provider_from_settings(),
     )
 
 
@@ -260,13 +302,14 @@ def _to_out(
     distintos y su trazo es el mismo.
     """
     trazos = geometry or {}
+    mar = _mar_del_viaje(constraints)
 
     return ItineraryOut(
         weather=WeatherSourceOut(
             source="forecast" if clima is not None and clima.hay else None,
             reason=clima.reason if clima is not None else None,
         ),
-        days=[_to_day(dia, trazos, constraints, clima) for dia in itinerario.days],
+        days=[_to_day(dia, trazos, constraints, clima, mar) for dia in itinerario.days],
         violations=[
             ViolationOut(constraint=v.constraint, day=v.day, detail=v.detail)
             for v in itinerario.violations

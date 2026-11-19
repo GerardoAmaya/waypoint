@@ -90,6 +90,20 @@ export interface WeatherSource {
   attribution: string;
 }
 
+/**
+ * Como esta el mar un dia, solo en destinos de costa.
+ *
+ * Null tierra adentro: lo decide el contorno de la costa en el servidor, no la
+ * API marina, cuya rejilla se engancha a la celda con agua mas cercana y le
+ * daria oleaje a un pueblo de montaña.
+ */
+export interface DaySea {
+  wave_height_m: number;
+  wave_period_s: number;
+  wave_direction_deg: number;
+  water_temp_c: number | null;
+}
+
 export interface Day {
   number: number;
 
@@ -110,6 +124,8 @@ export interface Day {
    * ver lib/luz.ts.
    */
   sunset: string | null;
+  /** El estado del mar, o null si el destino no es de costa. */
+  sea: DaySea | null;
 
   /** El clima de este dia, o null si no se supo. */
   weather: DayWeather | null;

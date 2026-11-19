@@ -14,11 +14,13 @@ import {
   faRoute,
   faTriangleExclamation,
   faUtensils,
+  faWater,
 } from "@fortawesome/free-solid-svg-icons";
 
 import Detalle from "./Detalle";
 import { CATEGORIA } from "@/lib/categorias";
 import { iconoDelClima, lluviaEnPalabras } from "@/lib/clima";
+import { aguaEnPalabras, lecturaDelMar, medidasDelMar } from "@/lib/mar";
 import { fechaEnPalabras } from "@/lib/fecha";
 import { esDeNoche, fraccionConLuz } from "@/lib/luz";
 import { tramosDeLluvia } from "@/lib/lluvia";
@@ -132,6 +134,7 @@ export default function Linea({
   /* La franja de lluvia se arma acá y no llega hecha: lo que viaja del backend
      son las horas, que es el dato; la frase es presentación. */
   const lluvia = day.weather ? lluviaEnPalabras(day.weather.rain_hours) : null;
+  const medidas = medidasDelMar(day.sea);
 
   const primera = day.stops[0];
   const ultima = day.stops[day.stops.length - 1];
@@ -248,6 +251,32 @@ export default function Linea({
             <span className="dato">{day.weather.temp_max}°</span>
             <span>{day.weather.description}</span>
             {lluvia && <span className="text-acento">· lluvia {lluvia}</span>}
+          </span>
+        )}
+
+        {/*
+          El mar, solo donde hay mar. **El periodo va al lado de la altura y
+          no es un adorno**: 1,2 m con 13 s es marejada de fondo del Pacífico
+          sur y 1,2 m con 7 s es mar picado por viento local. El mismo número
+          de altura, dos días que no se parecen, y enseñar solo la altura sería
+          enseñar la mitad que no decide.
+
+          Lo decide el servidor con el contorno de la costa, no esta pantalla:
+          la API marina engancha su rejilla a la celda con agua más cercana y
+          le daría oleaje a un pueblo de montaña.
+        */}
+        {medidas && (
+          <span className="inline-flex items-center gap-1.5">
+            <FontAwesomeIcon
+              icon={faWater}
+              aria-hidden
+              className="size-3 text-tinta-tenue"
+            />
+            <span className="dato">{medidas}</span>
+            <span>{lecturaDelMar(day.sea)}</span>
+            {aguaEnPalabras(day.sea) && (
+              <span className="text-tinta-tenue">· {aguaEnPalabras(day.sea)}</span>
+            )}
           </span>
         )}
         {/*

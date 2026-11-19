@@ -3486,6 +3486,70 @@ seis paradas— y ahora la playa también.
 
 ---
 
+### El país vende Surf City y la aplicación no sabía nada del mar
+
+Un día en El Tunco sin decir cómo está la marejada es un día a medias. Y la
+cobertura de OpenStreetMap cerraba la puerta a cualquier otra cosa: `fee`
+0,1%, `wheelchair` 0,4%, `image` 0,1% sobre 6.449 lugares. Para algo nuevo
+hacía falta un dato de fuera.
+
+Open-Meteo —el mismo proveedor del clima, sin llave ni cupo— tiene API marina.
+Medido antes de construir nada, sobre el archivo de El Tunco:
+
+| | ola | periodo |
+|---|---|---|
+| enero (fuera de temporada) | 0,70–1,20 m, mediana **0,90** | 10–14 s |
+| abril | 1,04–1,88 m | 11–15 s |
+| julio (pico del sur) | 0,86–1,74 m, mediana **1,36** | 8–14 s |
+
+La mediana se duplica entre enero y julio, entre playas hay 40% de diferencia
+el mismo día (El Cuco 0,78 vs El Zonte 1,24), y **solo aparece en días de
+costa**, así que no se dispara en todos los itinerarios como habría hecho la
+temperatura. Varía por fecha y por sitio: eso separa un dato de un adorno.
+
+**El periodo va al lado de la altura y no es decoración.** 1,2 m con periodo
+de 13 s es marejada de fondo del Pacífico sur —olas largas y limpias, las que
+hacen famosas a las puntas salvadoreñas— y 1,2 m con 7 s es mar picado por
+viento local. El mismo número de altura, dos días que no se parecen en nada.
+Enseñar solo la altura sería enseñar la mitad que no decide.
+
+**Y la trampa que obligó a trazar la costa a mano:** la API marina **no sirve
+para saber qué es costa**. Su rejilla se engancha a la celda con agua más
+cercana y le devuelve **0,92 m de oleaje a Concepción de Ataco**, que está en
+la montaña a treinta kilómetros. Los puntos a 12, 30 y 60 km sí devuelven
+nulos, pero Ataco no: no hay regla fiable en su respuesta.
+
+El contorno sale del propio catálogo, no de coordenadas escritas de memoria:
+**la frontera sur del país es el mar**, así que el lugar más austral de cada
+franja de longitud está prácticamente en la playa. De cada vecindad se toma el
+mínimo, que quita los picos tierra adentro de las franjas donde el catálogo no
+llega a la costa. `make costa` lo produce y comprueba diez lugares conocidos
+de los dos lados; separa con mucho margen:
+
+```
+El Cuco 2,0   El Tunco 3,6   El Zonte 5,3   Costa del Sol 5,5   La Libertad 6,7
+Santa Tecla 26,4   San Salvador 30,3   Ataco 31,8   Santa Ana 55,7   Suchitoto 63,3
+```
+
+Entre 7 y 26 km no hay nada, así que el corte en 12 no está peleado con nadie.
+Y el primer filtro es ese, antes de preguntar: pedirle oleaje a un viaje por
+Suchitoto gasta una petición para recibir nulos, o algo peor que nulos.
+
+Misma filosofía que el clima: sin llave, caché de una hora, horizonte corto
+—siete días, no dieciséis— y **nunca falla**. Un servicio caído devuelve
+`sin_servicio` y el itinerario se arma igual.
+
+**Producción no necesita nada nuevo**: es la misma API pública y sin llave que
+ya se usa para el clima, con la misma atribución CC-BY.
+
+En pantalla, los números van en monoespaciada y las palabras en texto, como la
+fila del clima: meter la frase entera en monoespaciada la alargaba hasta
+partirla en dos líneas, y se vio al mirarla, no al pensarla.
+
+Banco: 25/26 límites duros, 0 lugares inventados, 0 paradas fuera de hora.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento
