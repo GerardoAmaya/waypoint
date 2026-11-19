@@ -3682,6 +3682,72 @@ subcategoría, que es otra pieza.
 
 ---
 
+### «Quiero ir a la playa» tiene que dar una playa, y una buena
+
+Arreglada la penalización por variedad, el día ya traía *una* playa —entre
+naturaleza variada— pero no la que uno esperaría, y nunca El Tunco. El pedido
+se traducía a `preferred_categories: [nature]`, y naturaleza son también
+cascadas, cerros y manglares. **La categoría es demasiado gruesa para cómo la
+gente pide las cosas.**
+
+Así que las restricciones ganan `must_include_subcategories`, con un
+vocabulario cerrado de tres: `beach`, `peak` y `nature_reserve`. Son los casos
+donde la categoría se queda corta y el catálogo da para cumplirlo —81 playas,
+988 cerros, 184 reservas, todas `nature`—. `park` queda fuera aunque tenga
+687: en OSM eso incluye cada plaza de barrio.
+
+**Y entre varias playas, ¿cuál?** Las 81 empatan en calidad 0,4, el suelo,
+porque `score_quality` mide si el registro trae horarios y web y ninguna los
+trae. Hacía falta otra señal, y la hay: **alrededor de una playa a la que la
+gente va hay restaurantes y hoteles**. Medido a dos kilómetros: El Tunco 106
+servicios, Las Flores 38, Punta Roca 18, y la mediana de las 81 en 2. El Tunco
+sale solo de los datos, sin nombrarlo en ninguna parte.
+
+---
+
+### Un resort de playa no es «dónde duermo»
+
+Reportado en la misma conversación: el Royal Decameron, el Tesoro Beach y el
+Bahía del Sol no aparecían nunca. Están en el catálogo —los tres— como
+`lodging/hotel`, y el motor no propone alojamientos como parada: de ahí se
+sale, no se visita.
+
+Para media El Salvador eso es incompleto: a esos sitios se va por el día. OSM
+no los distingue de un hotel de ciudad —los dos son `tourism=hotel`— pero sí
+los distingue **dónde están**.
+
+El primer intento usó el contorno de la costa de `services/mar.py` y falló:
+pone el Decameron a 5,1 km del mar cuando está a 160 metros de su playa. Ese
+contorno se deriva del lugar más austral de cada franja de longitud y sirve
+para decir si una zona es costera con doce kilómetros de margen, no para decir
+si un hotel da a la arena.
+
+Lo que sí sirve son las playas del catálogo. Medido sobre los 515 alojamientos
+activos: 86 están a 1,5 km o menos de una, 107 a 2,5 y 146 a 4. A 2,5 la lista
+son los que uno nombraría —Decameron a 0,16 km de Playa Decameron, Tesoro
+Beach a 0,27 de Los Blancos, Bahía del Sol a 2,37 de La Puntilla, Tunco Lodge,
+Coco Surf— y a 4 empiezan a entrar hoteles de pueblo costero que no dan al
+mar.
+
+**Solo entran cuando alguien pidió playa.** El camino normal sigue sin ver
+alojamientos: un hotel en un itinerario que nadie pidió es una parada que no
+se entiende.
+
+**Y solo uno.** La primera versión metió tres en Costa del Sol —Tesoro Beach,
+Torre Porto Fino y una casa de huéspedes— y en La Libertad dos hostales. Es la
+misma razón del tope de los centros comerciales: el segundo no le interesa a
+nadie.
+
+**Y si la zona no tiene playa, se dice.** Pedirla en Suchitoto daba un día de
+cerro y museo sin una palabra sobre lo que faltaba. Priorizar no es
+garantizar: ahora sale como violación, igual que las categorías exigidas.
+
+Banco idéntico: 25/26 límites duros, 334 paradas, 0 inventados, 0 fuera de
+hora, variedad 3,52. Era de esperar, porque ningún caso del banco pide
+subcategorías y la rama de los resorts solo se abre cuando se piden.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

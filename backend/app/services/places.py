@@ -41,6 +41,29 @@ class PlaceHit:
     # Place.same_place_as y _name_key en el motor.
     same_place_as: uuid.UUID | None = None
 
+    # Cuantos comedores y alojamientos hay a dos kilometros.
+    #
+    # **Es lo unico que distingue una playa de verdad de una raya en el mapa.**
+    # `quality_score` mide si el registro esta completo —horarios, web,
+    # telefono— y una playa no tiene nada de eso: las 81 del catalogo empatan
+    # en 0.4, el suelo. Pero alrededor de una playa a la que la gente va hay
+    # restaurantes y hoteles, y alrededor de una que solo existe en OSM no hay
+    # nada. Medido: El Tunco tiene 106 servicios a dos kilometros, Las Flores
+    # 38, Punta Roca 18, y la mediana de las 81 esta en 2.
+    #
+    # Solo se usa donde la subcategoria se pidio; ver score_candidate.
+    services_nearby: int = 0
+
+    # Un alojamiento que esta sobre una playa.
+    #
+    # **Un resort de playa no es "donde duermo", es a donde voy.** El motor
+    # nunca propone un alojamiento como parada —de ahi se sale, no se
+    # visita— y para el Royal Decameron o Tesoro Beach eso deja fuera lo que
+    # media El Salvador entiende por "ir a la playa". OSM no los distingue de
+    # un hotel de ciudad: los dos son `tourism=hotel`. Lo que si los
+    # distingue es donde estan.
+    beach_side: bool = False
+
 
 # Cocina en castellano. OSM la escribe en ingles y con guiones bajos, y
 # "regional;pupusa" es un valor perfectamente valido: hay que partirlo.
@@ -273,6 +296,7 @@ def _row_to_hit(row) -> PlaceHit:
         distance_m=round(row.distance_m, 1) if getattr(row, "distance_m", None) else None,
         tags=getattr(row, "tags", None),
         same_place_as=getattr(row, "same_place_as", None),
+        services_nearby=getattr(row, "services_nearby", 0) or 0,
     )
 
 
@@ -572,6 +596,68 @@ def suggestions(candidatos: list[Candidato], *, limit: int = 3) -> list[PlaceHit
     return [c.hit for c in candidatos if c.encaje >= ENCAJE_PARA_SUGERIR][:limit]
 
 
+# Hasta donde un alojamiento cuenta como "de playa".
+#
+# Medido sobre los 515 alojamientos activos: 86 estan a 1,5 km o menos de una
+# playa del catalogo, 107 a 2,5 km y 146 a 4. A 2,5 la lista son los resorts
+# que uno nombraria —Royal Decameron a 0,16 km de Playa Decameron, Tesoro
+# Beach a 0,27 de Playa Los Blancos, Bahia del Sol a 2,37 de La Puntilla,
+# Tunco Lodge, Coco Surf— y a 4 empiezan a entrar hoteles de pueblo costero
+# que no dan a la arena.
+PLAYA_CERCA_M = 2500
+
+
+def beach_side_lodging(
+    db: Session, lat: float, lon: float, *, radius_m: int, limit: int = 12
+) -> list[PlaceHit]:
+    """Los alojamientos que estan sobre una playa, como destino.
+
+    **Solo se piden cuando alguien pidio playa.** El camino normal sigue sin
+    ver alojamientos: un hotel en un itinerario que nadie pidio es una parada
+    que no se entiende.
+
+    La cercania se mide contra las playas del catalogo y no contra el contorno
+    de la costa de `services/mar.py`: ese contorno se deriva del lugar mas
+    austral de cada franja de longitud, sirve para decir si una zona es
+    costera con doce kilometros de margen, y a esta escala se queda corto
+    —pone el Decameron a 5,1 km del mar cuando esta a 160 metros de su playa—.
+    """
+    filas = db.execute(
+        text("""
+            SELECT h.id, h.name, h.category::text AS category, h.subcategory,
+                   h.lat, h.lon, h.quality_score, h.tags, h.same_place_as,
+                   ST_Distance(h.geom, ST_GeogFromText(:punto)) AS distance_m,
+                   (SELECT count(*) FROM places v
+                     WHERE v.is_active
+                       AND v.category IN ('food', 'lodging')
+                       AND ST_DWithin(v.geom, h.geom, 2000)) AS services_nearby
+            FROM places h
+            WHERE h.is_active
+              AND h.category = 'lodging'
+              AND ST_DWithin(h.geom, ST_GeogFromText(:punto), :radius)
+              AND EXISTS (
+                  SELECT 1 FROM places b
+                   WHERE b.is_active AND b.subcategory = 'beach'
+                     AND ST_DWithin(h.geom, b.geom, :playa)
+              )
+            ORDER BY h.quality_score DESC, distance_m
+            LIMIT :limite
+        """),
+        {
+            "punto": f"SRID=4326;POINT({lon} {lat})",
+            "radius": min(max(radius_m, 1), MAX_RADIUS_M),
+            "playa": PLAYA_CERCA_M,
+            "limite": min(max(limit, 1), 30),
+        },
+    ).fetchall()
+    hits = []
+    for fila in filas:
+        hit = _row_to_hit(fila)
+        hit.beach_side = True
+        hits.append(hit)
+    return hits
+
+
 def search_in_area(
     db: Session,
     lat: float,
@@ -600,6 +686,11 @@ def search_in_area(
                 SELECT p.id, p.name, p.category::text AS category, p.subcategory,
                        p.lat, p.lon, p.quality_score, p.tags, p.same_place_as,
                        ST_Distance(p.geom, ST_GeogFromText(:punto)) AS distance_m,
+                       -- Cuanto hay alrededor. Ver PlaceHit.services_nearby.
+                       (SELECT count(*) FROM places v
+                         WHERE v.is_active
+                           AND v.category IN ('food', 'lodging')
+                           AND ST_DWithin(v.geom, p.geom, 2000)) AS services_nearby,
                        ROW_NUMBER() OVER (
                            PARTITION BY p.category
                            ORDER BY p.quality_score DESC,

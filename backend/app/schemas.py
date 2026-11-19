@@ -115,6 +115,12 @@ class ItineraryRequest(BaseModel):
     # comprueba sobre el itinerario terminado.
     must_include_categories: list[Category] = Field(default_factory=list)
 
+    # Subcategorias que el itinerario tiene que incluir, de un vocabulario
+    # cerrado. **"Quiero ir a la playa" no cabe en una categoria**: se traducia
+    # a preferir `nature`, y naturaleza son tambien cascadas y cerros, asi que
+    # el dia salia sin playa. Ver SUBCATEGORIAS_EXIGIBLES en interpret.
+    must_include_subcategories: list[str] = Field(default_factory=list, max_length=4)
+
     # Modo de cada dia cuando no todos van igual: {"1": "driving", "2":
     # "walking"}. La clave es el numero de dia en texto porque JSON no tiene
     # claves numericas. Los dias que no aparecen usan `mode`.

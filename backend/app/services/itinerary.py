@@ -554,6 +554,15 @@ class Constraints:
     # en dos dias quiere un museo, no dos.
     must_include_categories: list[Category] = field(default_factory=list)
 
+    # Subcategorias que el dia TIENE que incluir, como "beach".
+    #
+    # **Una categoria no alcanza para "quiero ir a la playa".** El pedido se
+    # traducia a preferir `nature`, y naturaleza son tambien cascadas, cerros
+    # y manglares: el dia salia variado y sin playa, que para quien viene al
+    # mar no es un dia variado, es un dia equivocado. La subcategoria es el
+    # nivel al que la gente pide las cosas.
+    must_include_subcategories: list[str] = field(default_factory=list)
+
     # Modo de cada dia, cuando no todos van igual: "el primer dia en coche, el
     # segundo a pie". La clave es el numero de dia; los que no aparecen usan
     # `mode`.
@@ -1026,6 +1035,21 @@ def score_candidate(hit: PlaceHit, constraints: Constraints) -> float:
     if nombre_no_identifica(hit.name):
         puntaje -= NOMBRE_VAGO_PENALIZACION
 
+    # **Lo exigido por subcategoria gana la semilla, y entre varios gana el que
+    # mas vida tiene alrededor.** Las 81 playas del catalogo empatan en
+    # calidad —0.4, el suelo, porque ninguna trae horarios ni web— asi que sin
+    # este desempate "la playa" caia en la primera que tocara. Los servicios a
+    # dos kilometros las separan solas: El Tunco 106, Las Flores 38, Punta
+    # Roca 18. Ver PlaceHit.services_nearby.
+    #
+    # Solo se aplica a lo que se pidio: un itinerario que no exige
+    # subcategorias puntua exactamente igual que antes.
+    pedida = hit.subcategory in constraints.must_include_subcategories or (
+        hit.beach_side and "beach" in constraints.must_include_subcategories
+    )
+    if pedida:
+        puntaje += 3.0 + min(hit.services_nearby, 120) / 120
+
     if hit.category in {c.value for c in constraints.preferred_categories}:
         puntaje += 0.6
     if hit.category in {c.value for c in constraints.avoided_categories}:
@@ -1262,6 +1286,24 @@ REQUIRED_BONUS_KM = 60.0
 TOPE_POR_SUBCATEGORIA: dict[str, int] = {"mall": 1}
 
 
+# Como se nombran en castellano las subcategorias que se pueden exigir.
+ETIQUETA_SUBCATEGORIA: dict[str, str] = {
+    "beach": "una playa",
+    "peak": "un cerro o volcán",
+    "nature_reserve": "un parque natural",
+}
+
+
+# Cuantos alojamientos de playa admite un itinerario.
+#
+# **Uno, por la misma razon que un centro comercial.** Son destino cuando
+# alguien pide playa —el Decameron o el Tesoro Beach son a donde se va, no
+# donde se duerme— pero el segundo no le interesa a nadie. Sin tope, "un dia
+# de playa en Costa del Sol" salia con el Tesoro Beach, el Torre Porto Fino y
+# una casa de huespedes: tres alojamientos en un dia de cinco paradas.
+TOPE_ALOJAMIENTO_DE_PLAYA = 1
+
+
 def _name_key(lugar: PlaceHit) -> str:
     """Con que se compara si dos paradas son "el mismo sitio" para el viajero.
 
@@ -1312,6 +1354,7 @@ def _fill_cost(
     faltantes: frozenset[str] = frozenset(),
     lugares_pendientes: frozenset[uuid.UUID] = frozenset(),
     preferidas: frozenset[str] = frozenset(),
+    subs_faltantes: frozenset[str] = frozenset(),
 ) -> float:
     """Lo que cuesta agregar un candidato: distancia, repeticion y requisitos.
 
@@ -1345,6 +1388,8 @@ def _fill_cost(
     if nombre_no_identifica(candidato.name):
         coste += NOMBRE_VAGO_KM
     if candidato.category in faltantes:
+        coste -= REQUIRED_BONUS_KM
+    if candidato.subcategory is not None and candidato.subcategory in subs_faltantes:
         coste -= REQUIRED_BONUS_KM
     # Un lugar pedido con nombre pesa el doble que una categoria pendiente:
     # una categoria la cubre cualquier museo, y esto lo cubre uno solo.
@@ -1472,6 +1517,10 @@ def build_days(
         {c.value for c in constraints.preferred_categories}
         | {c.value for c in constraints.must_include_categories}
     )
+    # Las subcategorias exigidas, contadas sobre el itinerario entero igual
+    # que las categorias: quien pide playa quiere ir a la playa, no una por dia.
+    subs_requeridas = frozenset(constraints.must_include_subcategories)
+    subs_cubiertas: set[str] = set()
 
     disponibles = sorted(
         admisibles, key=lambda h: score_candidate(h, constraints), reverse=True
@@ -1499,7 +1548,12 @@ def build_days(
     # Las subcategorias con tope, contadas sobre el itinerario entero.
     usadas_sub: dict[str, int] = {}
 
+    usados_playa = [0]
+
     def cupo_de_sub(hit: PlaceHit) -> bool:
+        if getattr(hit, "beach_side", False):
+            if usados_playa[0] >= TOPE_ALOJAMIENTO_DE_PLAYA:
+                return False
         tope = TOPE_POR_SUBCATEGORIA.get(hit.subcategory or "")
         return tope is None or usadas_sub.get(hit.subcategory or "", 0) < tope
 
@@ -1647,6 +1701,8 @@ def build_days(
             # Se recalcula en cada vuelta: lo que falta cambia con cada
             # parada que entra.
             faltantes = frozenset(requeridas - cubiertas - {p.category for p in dia})
+            subs_del_dia = {p.subcategory for p in dia if p.subcategory}
+            subs_faltantes = frozenset(subs_requeridas - subs_cubiertas - subs_del_dia)
             # Se recalcula en cada vuelta: el comedor mas cercano depende de
             # donde esta el dia, y el dia se mueve con cada parada.
             reserva_km = _meal_km_reserve(
@@ -1674,7 +1730,14 @@ def build_days(
                     )
                 ),
                 key=lambda h: _fill_cost(
-                    dia, h, semilla, medidor, faltantes, ids_pendientes, preferidas
+                    dia,
+                    h,
+                    semilla,
+                    medidor,
+                    faltantes,
+                    ids_pendientes,
+                    preferidas,
+                    subs_faltantes,
                 ),
             )
             agregado = False
@@ -1694,6 +1757,8 @@ def build_days(
                     continue
                 dia.append(candidato)
                 nombres_usados.add(_name_key(candidato))
+                if getattr(candidato, "beach_side", False):
+                    usados_playa[0] += 1
                 if candidato.subcategory:
                     usadas_sub[candidato.subcategory] = (
                         usadas_sub.get(candidato.subcategory, 0) + 1
@@ -1717,6 +1782,7 @@ def build_days(
             break
 
         cubiertas |= {p.category for p in dia}
+        subs_cubiertas |= {p.subcategory for p in dia if p.subcategory}
         dias.append(_pinned_order(ancla, dia, medidor))
 
     return dias
@@ -2561,6 +2627,30 @@ def validate(itinerario: Itinerary, constraints: Constraints) -> list[Violation]
                 )
             )
 
+    # Lo mismo con las subcategorias exigidas. **Priorizar no es garantizar**:
+    # pedir playa en una zona sin playa daba un dia de volcan y cascada sin
+    # decir que lo pedido no estaba, que es exactamente lo que este proyecto
+    # no hace.
+    subs_presentes = {
+        parada.place.subcategory for dia in itinerario.days for parada in dia.stops
+    }
+    en_la_playa = any(
+        getattr(parada.place, "beach_side", False)
+        for dia in itinerario.days
+        for parada in dia.stops
+    )
+    for sub in constraints.must_include_subcategories:
+        if sub in subs_presentes or (sub == "beach" and en_la_playa):
+            continue
+        violaciones.append(
+            Violation(
+                "must_include_subcategories",
+                None,
+                f"pediste {ETIQUETA_SUBCATEGORIA.get(sub, sub)} y no hay ninguna "
+                "en la zona que entre en el día",
+            )
+        )
+
     # Un lugar pedido por su nombre que no aparece. Mismo criterio que las
     # categorias: el motor lo prioriza fuerte al armar, y priorizar no es
     # garantizar —el lugar puede quedar fuera del presupuesto de traslado de
@@ -3322,6 +3412,28 @@ def select_candidates(
 
     comidas = [c for c in candidatos if c.category == Category.food.value]
     destinos = [c for c in candidatos if c.category != Category.food.value]
+
+    # **Los resorts de playa son destino solo cuando alguien pidio playa.**
+    # Un alojamiento no se visita, se duerme en el, y por eso el camino normal
+    # ni los mira. Pero media El Salvador entiende "ir a la playa" como ir al
+    # Decameron o al Tesoro Beach, y OSM no los distingue de un hotel de
+    # ciudad: los dos son `tourism=hotel`. Lo que si los distingue es estar
+    # sobre la arena. Ver beach_side_lodging.
+    if "beach" in constraints.must_include_subcategories:
+        from app.services.places import beach_side_lodging
+
+        ya = {d.id for d in destinos}
+        destinos += [
+            h
+            for h in beach_side_lodging(
+                db,
+                constraints.center_lat,
+                constraints.center_lon,
+                radius_m=constraints.radius_m,
+            )
+            if h.id not in ya
+        ]
+
     return comidas, destinos
 
 

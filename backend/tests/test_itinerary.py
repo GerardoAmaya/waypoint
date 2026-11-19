@@ -47,12 +47,14 @@ from app.services.itinerary import (
     _sequence_end,
     _trim_to_budget,
     advise,
+    appeal_of,
     assemble,
     build_days,
     estimate_travel,
     nombre_no_identifica,
     order_by_proximity,
     schedule_day,
+    score_candidate,
     total_visits,
     validate,
 )
@@ -3844,3 +3846,89 @@ class TestLoPedidoNoPagaVariedad:
         coste_cerro = _fill_cost(dia, un_cerro, dia[0], medidor, preferidas=preferidas)
 
         assert coste_playa > coste_cerro
+
+
+class TestPedirPlaya:
+    """«Quiero ir a la playa» tiene que dar una playa, y una buena.
+
+    **Reportado desde la demo.** La zona salía bien pero el día salía sin
+    playa: el pedido se traducía a preferir `nature`, y naturaleza son también
+    cascadas y cerros. Para quien viene al mar, un día variado sin playa no es
+    variado, es equivocado.
+    """
+
+    def _playa(self, nombre, lat, lon, servicios=0):
+        return PlaceHit(
+            id=uuid.uuid4(),
+            name=nombre,
+            category=Category.nature.value,
+            subcategory="beach",
+            lat=lat,
+            lon=lon,
+            quality_score=0.4,
+            services_nearby=servicios,
+        )
+
+    def test_exigir_playa_la_pone(self):
+        destinos = [
+            lugar("Cascada", 13.500, -89.330, Category.nature),
+            lugar("Museo", 13.502, -89.332, Category.culture),
+            self._playa("Playa Lejana", 13.520, -89.350),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.50,
+            center_lon=-89.33,
+            max_stops_per_day=3,
+            include_meals=False,
+            must_include_subcategories=["beach"],
+        )
+
+        itinerario = assemble([], destinos, restricciones)
+
+        subs = {p.place.subcategory for p in itinerario.days[0].stops}
+        assert "beach" in subs, [p.place.name for p in itinerario.days[0].stops]
+
+    def test_entre_varias_gana_la_que_tiene_vida_alrededor(self):
+        """**Las 81 playas del catálogo empatan en calidad.** `score_quality`
+        mide si el registro trae horarios y web, y ninguna los trae, así que
+        sin otro desempate «la playa» caía en la primera que tocara. Los
+        servicios a dos kilómetros las separan: El Tunco 106, Las Flores 38,
+        Punta Roca 18."""
+        pelada = self._playa("Playa Pelada", 13.501, -89.331, servicios=1)
+        famosa = self._playa("Playa Famosa", 13.501, -89.331, servicios=110)
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.50,
+            center_lon=-89.33,
+            must_include_subcategories=["beach"],
+        )
+
+        assert score_candidate(famosa, restricciones) > score_candidate(pelada, restricciones)
+
+    def test_una_zona_sin_playa_lo_dice(self):
+        """Priorizar no es garantizar. Pedir playa tierra adentro daba un día
+        de volcán y cascada sin una palabra sobre lo que faltaba."""
+        destinos = [
+            lugar("Cerro", 13.900, -89.030, Category.nature),
+            lugar("Museo", 13.902, -89.032, Category.culture),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.90,
+            center_lon=-89.03,
+            include_meals=False,
+            must_include_subcategories=["beach"],
+        )
+
+        itinerario = assemble([], destinos, restricciones)
+
+        assert any(v.constraint == "must_include_subcategories" for v in itinerario.violations)
+
+    def test_sin_pedir_playa_nada_cambia(self):
+        """El bono solo se aplica a lo que se pidió: un itinerario que no
+        exige subcategorías puntúa exactamente igual que antes."""
+        playa = self._playa("Playa", 13.501, -89.331, servicios=110)
+        sin_pedir = Constraints(days=1, center_lat=13.50, center_lon=-89.33)
+
+        assert score_candidate(playa, sin_pedir) == appeal_of(playa) * 2 + playa.quality_score

@@ -129,6 +129,7 @@ def _stream(mensaje: str) -> Iterator[str]:
             preferred_categories=list(resultado.request.preferred_categories),
             avoided_categories=list(resultado.request.avoided_categories),
             must_include_categories=list(resultado.request.must_include_categories),
+            must_include_subcategories=list(resultado.request.must_include_subcategories),
             day_modes={
                 int(numero): modo for numero, modo in resultado.request.day_modes.items()
             },
@@ -303,6 +304,7 @@ def _to_constraints(peticion, db: Session) -> motor.Constraints:
         preferred_categories=list(peticion.preferred_categories),
         avoided_categories=list(peticion.avoided_categories),
         must_include_categories=list(peticion.must_include_categories),
+        must_include_subcategories=list(peticion.must_include_subcategories),
         day_modes={int(numero): modo for numero, modo in peticion.day_modes.items()},
         include_meals=peticion.include_meals,
         must_include_meals=list(peticion.must_include_meals),

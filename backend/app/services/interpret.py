@@ -80,6 +80,12 @@ marcas de bloque de codigo.
 Campos:
 - "area": string. La zona o lugar donde quiere viajar, tal como lo nombro. \
 Si no menciona ninguno, null.
+  **"la playa", "la costa" y "Surf City" SON lugares.** Quien dice "quiero ir \
+a la playa" dijo a donde quiere ir, aunque no nombre una playa concreta: va \
+"playa" en "area", y ademas ["beach"] en "must_include_subcategories". Lo \
+mismo "la costa" y "Surf City", que es la marca de la costa de La Libertad. \
+El nombre de un pais no es una zona: "ire a El Salvador y quiero ver la \
+playa" tiene area "playa", no "El Salvador".
 - "days": entero de 1 a 7. Si no lo dice, 1.
 - "start_date": "YYYY-MM-DD" o null. El dia en que arranca el viaje, SOLO si \
 lo dice. "hoy", "manana", "el sabado", "el 20 de diciembre", "el otro fin de \
@@ -104,6 +110,13 @@ usa "mode".
 - "preferred_categories": lista de estas y solo estas: "food", "nature", \
 "culture", "viewpoint", "attraction", "lodging".
 - "avoided_categories": la misma lista.
+- "must_include_subcategories": lista con "beach", "peak" y/o \
+"nature_reserve", o null. Es para cuando la categoria se queda corta: "quiero \
+ir a la playa" es ["beach"], "quiero subir un volcan" o "un cerro" es \
+["peak"], "un parque nacional" o "una reserva" es ["nature_reserve"]. Solo \
+esos tres valores; cualquier otra cosa va en "preferred_categories" o en \
+"unmapped". No lo deduzcas de la zona: ir a la costa no es pedir playa, \
+pedirla es pedirla.
 - "must_include_categories": la misma lista. Van aca las categorias que la \
 persona EXIGE, no las que le gustan. "quiero ver minimo un museo" y "que \
 incluya al menos un mirador" son requisitos: culture y viewpoint. "me gustan \
@@ -315,6 +328,33 @@ def _clamp(valor, minimo, maximo, por_defecto, notes: list[str], campo: str):
         notes.append(f"se pidio {campo}={numero} y el maximo es {maximo}")
         return maximo
     return numero
+
+
+# Las subcategorias que se pueden exigir.
+#
+# **Cerrado a proposito y chico a proposito.** Son los tres casos donde la
+# categoria se queda corta y el catalogo da para cumplirlo: la gente pide "la
+# playa", "un volcan" y "un parque nacional", y las tres cosas son `nature`.
+# Medido sobre el catalogo activo: 81 playas, 988 cerros y 184 reservas.
+#
+# `park` queda fuera aunque tenga 687: en OSM eso incluye cada plaza de barrio,
+# asi que exigir uno no cambia nada —ya salen solos— y abriria la puerta a que
+# el modelo marque cualquier mencion de "parque".
+SUBCATEGORIAS_EXIGIBLES = frozenset({"beach", "peak", "nature_reserve"})
+
+
+def _subcategorias(valores, notes: list[str]) -> list[str]:
+    """Las subcategorias exigidas, descartando lo que no este en la lista."""
+    if not isinstance(valores, list):
+        return []
+    salida: list[str] = []
+    for valor in valores:
+        if valor in SUBCATEGORIAS_EXIGIBLES:
+            if valor not in salida:
+                salida.append(valor)
+        else:
+            notes.append(f"{valor!r} no es algo que se pueda exigir, se ignoro")
+    return salida
 
 
 def _categories(valores, notes: list[str], campo: str) -> list[Category]:
@@ -709,6 +749,7 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
     preferidas = _categories(datos.get("preferred_categories"), notes, "preferred")
     evitadas = _categories(datos.get("avoided_categories"), notes, "avoided")
     exigidas = _categories(datos.get("must_include_categories"), notes, "must_include")
+    subexigidas = _subcategorias(datos.get("must_include_subcategories"), notes)
 
     # Exigir y evitar la misma categoria no se puede cumplir. Gana evitarla por
     # la misma razon que con las preferidas: es mas facil que el modelo la
@@ -776,6 +817,7 @@ def interpret(db: Session, frase: str, client=None) -> Interpretation:
             preferred_categories=preferidas,
             avoided_categories=evitadas,
             must_include_categories=exigidas,
+            must_include_subcategories=subexigidas,
             include_meals=bool(datos.get("include_meals", True)),
             must_include_meals=_meals(datos.get("must_include_meals"), notes),
             meal_cuisines=_meal_cuisines(datos.get("meal_cuisines"), notes),

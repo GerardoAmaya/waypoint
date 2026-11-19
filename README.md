@@ -30,6 +30,12 @@ otro caminando, cena los dos días, vuelta al hotel antes de las once, y el traz
 por carretera dibujado en el mapa. Lo que **no** pudo cumplir lo dice, con el
 número que lo explica.
 
+Y entiende el nivel al que la gente pide las cosas: «quiero ir a la playa»
+exige una playa de verdad —y entre las 81 del catálogo elige la que tiene vida
+alrededor, que es El Tunco con 106 restaurantes y hoteles a dos kilómetros—,
+además de abrir la puerta a los resorts de playa como el Decameron o el Tesoro
+Beach, que OSM guarda como hoteles. Si la zona no tiene playa, lo dice.
+
 También entiende lo genérico cuando es todo lo que se dijo: «un día en la
 playa» o «Surf City» caen en la costa de La Libertad, que es la zona costera
 con más lugares catalogados y cuyo radio cubre El Tunco y El Sunzal. Nombrar
