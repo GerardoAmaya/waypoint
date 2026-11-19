@@ -3612,6 +3612,76 @@ Con un solo día no se pinta: no hay forma que comparar ni entre qué elegir.
 
 ---
 
+### Preferir una categoría daba exactamente una parada de esa categoría
+
+Reportado desde la demo: «mañana viernes quiero ir a la playa». La zona salía
+bien —La Libertad, que es lo que se arregló con los alias exactos— y el día
+salía así:
+
+```
+09:00  Cascada de San Antonio        10:29  Centro Comercial el Faro
+12:13  Centro Obrero del MTPS        13:54  Cherito Cafe
+15:50  Sitio Arqueologico Zinacatan  18:00  Papa John's
+```
+
+Ninguna playa. Y no era que no hubiera: el catálogo tiene 81 con
+`subcategory=beach`, seis alrededor de La Libertad, entre ellas El Tunco y
+Punta Roca.
+
+**Las tres primeras sospechas eran falsas, y conviene anotarlas** porque cada
+una parecía la explicación obvia:
+
+- *«Las playas puntúan bajo»*: su `quality_score` es 0,4, el suelo. Pero
+  `score_quality` mide si el registro está completo —horarios, web, teléfono—
+  y una playa no tiene nada de eso. El motor ya lo compensa: `appeal_of` da a
+  `beach` un 0,95, segundo solo tras `waterfall`, y el puntaje es
+  `appeal × 2 + quality`. Una playa saca 2,90 y un centro comercial con toda
+  la documentación 1,95.
+- *«Hay un tope por subcategoría»*: lo hay, pero solo para `mall`.
+- *«Se colapsan por nombre»*: las claves son distintas.
+
+Medido candidato a candidato, el resultado era absurdo: **Playa Las Flores
+estaba a 1,6 km de la semilla y puntuaba 2,90; el Centro Comercial el Faro a
+2,7 km y puntuaba 1,40, y entraba el centro comercial.**
+
+La causa estaba en `_fill_cost`, que cuenta repeticiones por **categoría**:
+
+```python
+repetidas = sum(1 for parada in dia if parada.category == candidato.category)
+coste = distancia + repetidas * REPEAT_PENALTY_KM     # 24 km
+```
+
+La semilla era la cascada, que es `nature`. La playa también. Así que pagaba
+24 km de penalización **por ser lo mismo que se había pedido**: 1,6 + 24 =
+25,6 contra los 2,7 del centro comercial.
+
+El efecto es perverso y general, no es cosa de playas: **preferir una
+categoría hacía que el motor la eligiera de semilla y después la evitara el
+resto del día.** Quien pedía museos tenía un museo; quien pedía naturaleza,
+una parada de naturaleza.
+
+El arreglo es que lo pedido —`preferred_categories` y
+`must_include_categories`— no pague esa penalización. La variedad es un valor
+por defecto razonable, pero no puede contradecir una preferencia explícita.
+**La de subcategoría se mantiene siempre**, así que tres playas se dispersan
+dentro del día sin prohibirse: variar no es lo mismo que contradecir.
+
+El día ahora sale con cascada, manglar y Playa Las Flores.
+
+Banco sin coste: 25/26 límites duros, 0 inventados, 0 paradas fuera de hora,
+variedad 3,52 contra 3,54, rachas de tres iguales en el 19% igual que antes, y
+ningún día de una sola categoría. Era de esperar: la excepción solo se activa
+cuando alguien pidió algo, y la mayoría de los casos del banco no piden
+categorías.
+
+**Lo que esto NO arregla:** «la playa» se traduce a `preferred_categories:
+[nature]`, que es demasiado grueso. Ahora sale una playa entre naturaleza
+variada, pero el motor sigue sin saber que una playa no es un cerro. Para que
+«quiero ir a la playa» dé un día de playas haría falta preferencia a nivel de
+subcategoría, que es otra pieza.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

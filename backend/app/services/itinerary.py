@@ -1311,9 +1311,33 @@ def _fill_cost(
     medidor: TravelProvider,
     faltantes: frozenset[str] = frozenset(),
     lugares_pendientes: frozenset[uuid.UUID] = frozenset(),
+    preferidas: frozenset[str] = frozenset(),
 ) -> float:
-    """Lo que cuesta agregar un candidato: distancia, repeticion y requisitos."""
-    repetidas = sum(1 for parada in dia if parada.category == candidato.category)
+    """Lo que cuesta agregar un candidato: distancia, repeticion y requisitos.
+
+    **Lo que se pidio no paga la penalizacion por repetir.** La variedad es un
+    valor por defecto razonable —nadie quiere tres museos seguidos sin haberlo
+    pedido— pero no puede contradecir una preferencia explicita. Sin esta
+    excepcion, pedir naturaleza daba exactamente UNA parada de naturaleza: la
+    semilla entraba por puntaje y a partir de ahi cada candidato de la misma
+    categoria sumaba 24 km de penalizacion, asi que el resto del dia se iba en
+    lo que NO se habia pedido.
+
+    El caso del reporte era "quiero ir a la playa": la zona salia bien —La
+    Libertad— y el dia salia con una cascada, un centro comercial y un Papa
+    John's. Playa Las Flores estaba a 1,6 km de la semilla y con mejor puntaje
+    que el centro comercial, y perdia por 24 km de penalizacion por ser
+    tambien naturaleza.
+
+    La penalizacion por SUBCATEGORIA se mantiene siempre: dispersa tres playas
+    dentro del dia sin impedir que haya tres, que es justo la diferencia entre
+    variar y contradecir.
+    """
+    repetidas = (
+        0
+        if candidato.category in preferidas
+        else sum(1 for parada in dia if parada.category == candidato.category)
+    )
     coste = medidor.between(semilla, candidato)[0] + repetidas * REPEAT_PENALTY_KM
     if candidato.subcategory is not None:
         iguales = sum(1 for parada in dia if parada.subcategory == candidato.subcategory)
@@ -1442,6 +1466,12 @@ def build_days(
     # filtrado antes deja el limite a merced de quien llame.
     evitadas = {c.value for c in constraints.avoided_categories}
     admisibles = [h for h in candidatos if h.category not in evitadas]
+
+    # Lo pedido no paga variedad. Ver _fill_cost.
+    preferidas = frozenset(
+        {c.value for c in constraints.preferred_categories}
+        | {c.value for c in constraints.must_include_categories}
+    )
 
     disponibles = sorted(
         admisibles, key=lambda h: score_candidate(h, constraints), reverse=True
@@ -1643,7 +1673,9 @@ def build_days(
                         or (_name_key(h) not in nombres_usados and cupo_de_sub(h))
                     )
                 ),
-                key=lambda h: _fill_cost(dia, h, semilla, medidor, faltantes, ids_pendientes),
+                key=lambda h: _fill_cost(
+                    dia, h, semilla, medidor, faltantes, ids_pendientes, preferidas
+                ),
             )
             agregado = False
             for candidato in cercanos[:15]:

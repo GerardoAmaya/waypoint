@@ -3772,3 +3772,75 @@ class TestUnLugarPedidoFueraDeAlcance:
 
         nombres = [p.place.name for d in itinerario.days for p in d.stops]
         assert "Museo pedido" in nombres
+
+
+class TestLoPedidoNoPagaVariedad:
+    """Preferir una categoría daba exactamente UNA parada de esa categoría.
+
+    **Reportado desde la demo:** «quiero ir a la playa». La zona salía bien
+    —La Libertad— y el día salía con una cascada, un centro comercial y un
+    Papa John's. Playa Las Flores estaba a 1,6 km de la semilla y puntuaba
+    2,90 contra 1,40 del centro comercial, y perdía por los 24 km de
+    `REPEAT_PENALTY_KM` que pagaba por ser también naturaleza.
+
+    La semilla entra por puntaje —lo preferido gana— y a partir de ahí la
+    penalización por repetir echaba del día justo lo que se había pedido.
+    """
+
+    def _con_sub(self, nombre, lat, lon, categoria, sub):
+        """`lugar` fija subcategory=None, y aquí la subcategoría es el punto."""
+        return PlaceHit(
+            id=uuid.uuid4(),
+            name=nombre,
+            category=categoria.value,
+            subcategory=sub,
+            lat=lat,
+            lon=lon,
+            quality_score=0.5,
+        )
+
+    def _escena(self, preferidas):
+        cerca = [
+            self._con_sub("Playa Uno", 13.500, -89.330, Category.nature, "beach"),
+            self._con_sub("Playa Dos", 13.502, -89.332, Category.nature, "beach"),
+            self._con_sub("Cascada", 13.498, -89.328, Category.nature, "waterfall"),
+            self._con_sub("Centro Comercial", 13.504, -89.334, Category.attraction, "mall"),
+            self._con_sub("Museo", 13.506, -89.336, Category.culture, "museum"),
+        ]
+        restricciones = Constraints(
+            days=1,
+            center_lat=13.50,
+            center_lon=-89.33,
+            max_stops_per_day=4,
+            include_meals=False,
+            preferred_categories=preferidas,
+        )
+        return assemble([], cerca, restricciones)
+
+    def test_pedir_naturaleza_da_mas_de_una_parada_de_naturaleza(self):
+        itinerario = self._escena([Category.nature])
+
+        naturaleza = [p for p in itinerario.days[0].stops if p.place.category == "nature"]
+        assert len(naturaleza) >= 2, [p.place.name for p in itinerario.days[0].stops]
+
+    def test_sin_pedir_nada_la_variedad_sigue_mandando(self):
+        """La penalización no se quita: se aparta solo ante lo pedido."""
+        itinerario = self._escena([])
+
+        categorias = {p.place.category for p in itinerario.days[0].stops}
+        assert len(categorias) >= 2
+
+    def test_la_penalizacion_por_subcategoria_sobrevive(self):
+        """**Variar no es lo mismo que contradecir.** Tres playas se dispersan
+        dentro del día, pero no se prohíben: la de subcategoría se mantiene
+        incluso para lo pedido."""
+        dia = [self._con_sub("Playa Uno", 13.500, -89.330, Category.nature, "beach")]
+        otra_playa = self._con_sub("Playa Dos", 13.5005, -89.3305, Category.nature, "beach")
+        un_cerro = self._con_sub("Cerro", 13.5005, -89.3305, Category.nature, "peak")
+        medidor = EstimatedTravel("driving")
+        preferidas = frozenset({"nature"})
+
+        coste_playa = _fill_cost(dia, otra_playa, dia[0], medidor, preferidas=preferidas)
+        coste_cerro = _fill_cost(dia, un_cerro, dia[0], medidor, preferidas=preferidas)
+
+        assert coste_playa > coste_cerro
