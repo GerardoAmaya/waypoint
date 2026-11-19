@@ -30,6 +30,11 @@ otro caminando, cena los dos días, vuelta al hotel antes de las once, y el traz
 por carretera dibujado en el mapa. Lo que **no** pudo cumplir lo dice, con el
 número que lo explica.
 
+También entiende lo genérico cuando es todo lo que se dijo: «un día en la
+playa» o «Surf City» caen en la costa de La Libertad, que es la zona costera
+con más lugares catalogados y cuyo radio cubre El Tunco y El Sunzal. Nombrar
+una playa concreta manda, claro.
+
 Entiende, entre otras cosas: la zona o el punto de partida por su nombre, la
 fecha, las horas de inicio y fin, un modo de transporte distinto por día, las
 comidas y cuánto duran, cuánto tiempo pasar en cada tipo de lugar, categorías

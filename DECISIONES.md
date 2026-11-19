@@ -3442,6 +3442,50 @@ Banco: 25/26 límites duros, 0 lugares inventados, 0 paradas fuera de hora.
 
 ---
 
+### «La playa» es una zona; «la playa de El Cuco» no
+
+Pedir un día «en la playa» devolvía **Playa K59**, un spot menor del catálogo,
+con total confianza. «Surf City» —la marca oficial de la costa de La
+Libertad— no resolvía nada.
+
+A qué debe apuntar lo genérico lo deciden los números: La Libertad tiene **424
+lugares** catalogados, frente a 375 de El Tunco, 293 de El Zonte y 58 de Costa
+del Sol. Y su radio de 20 km **cubre El Tunco y El Sunzal**, que quedan a seis
+kilómetros y medio, así que «la playa» a secas cae donde hay de todo sin dejar
+fuera lo famoso.
+
+**Lo que no se podía hacer era añadirlo como alias normal.** El emparejado de
+`find_zone` es por contención y gana el alias más largo, así que un «playa»
+suelto habría mandado «playa El Cuco» —a 150 km— y cualquier otra playa con
+nombre a La Libertad. Por eso las zonas tienen ahora un segundo tipo de alias,
+`aliases_exactos`, que solo gana cuando el texto es exactamente eso: lo
+genérico vale cuando no hay nada más específico en la frase, y se aparta en
+cuanto lo hay.
+
+Es la misma forma de error que destapó esta tanda, y que sigue abierta en dos
+sitios que conviene anotar antes de que se olviden:
+
+**«Zacamil» resuelve a un cantón de Morazán.** El nomenclátor tiene tres filas
+que se le parecen, y gana un *village* a 110 km con similitud 1.00 y 23
+destinos cerca. La colonia de verdad está ahí —con 172 destinos cerca— bajo su
+nombre oficial, **Centro Urbano José Simeón Cañas**, que no se parece nada a
+«Zacamil». El itinerario sale con cerros de Morazán y **sin una sola
+violación**. La raíz está en `load_gazetteer`, que lee `tags["name"]` y tira
+`alt_name` y `short_name`: el nombre popular nunca entra. Arreglarlo pide una
+columna de alias, su migración y recargar el nomenclátor, así que queda
+escrito y no empezado a medias.
+
+**«Playa Las Flores» resuelve a Concepción de Ataco**, porque «las flores» es
+alias de la Ruta de las Flores y lo contiene. Es preexistente y de la misma
+familia: un alias corto secuestrando un nombre propio. Se arreglaría exigiendo
+que la contención cubra una parte suficiente del texto, pero eso toca el orden
+de resolución entero y merece su propia medición.
+
+Lo que sí cambia hoy: Mejicanos ya funcionaba —1.270 lugares alrededor, día de
+seis paradas— y ahora la playa también.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

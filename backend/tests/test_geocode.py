@@ -173,3 +173,36 @@ def test_el_area_del_catalogo_no_trae_foto():
     assert set(FOTOS) <= {z.key for z in ZONES}, (
         "hay fotos con claves que no corresponden a ninguna zona"
     )
+
+
+class TestLoGenericoSoloGanaSiEsTodoLoQueDijeron:
+    """«la playa» es una zona; «la playa de El Cuco» no.
+
+    Los alias normales se emparejan por contención, así que un «playa» suelto
+    habría secuestrado cualquier playa del país hacia La Libertad —la misma
+    forma del error que manda «Zacamil» a un cantón de Morazán—. Los alias
+    exactos solo ganan cuando no hay nada más específico en la frase.
+    """
+
+    def test_la_playa_a_secas_es_la_libertad(self):
+        """**La zona costera con más material**: 424 lugares frente a 375 de
+        El Tunco, 293 de El Zonte y 58 de Costa del Sol. Y su radio de 20 km
+        cubre El Tunco y El Sunzal, que quedan a seis kilómetros y medio."""
+        for texto in ("la playa", "las playas", "playa", "la costa"):
+            zona = find_zone(texto)
+            assert zona is not None and zona.key == "la-libertad", texto
+
+    def test_surf_city_es_la_misma_costa(self):
+        """Es la marca oficial de la costa de La Libertad."""
+        assert find_zone("Surf City").key == "la-libertad"
+        assert find_zone("dos días en Surf City").key == "la-libertad"
+
+    def test_una_playa_con_nombre_no_cae_en_la_generica(self):
+        """Lo que hace falta que NO pase: El Cuco está a 150 km de ahí."""
+        assert find_zone("la playa de El Cuco") is None
+        assert find_zone("playa El Espino") is None
+
+    def test_las_playas_con_zona_propia_siguen_siendo_suyas(self):
+        assert find_zone("Playa El Tunco").key == "el-tunco"
+        assert find_zone("un día en El Zonte").key == "el-zonte"
+        assert find_zone("Costa del Sol").key == "costa-del-sol"

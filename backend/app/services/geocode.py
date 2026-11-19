@@ -58,6 +58,14 @@ class Zone:
     lon: float
     radius_m: int
     aliases: tuple[str, ...] = field(default=())
+    # Alias que SOLO valen si el texto es exactamente eso.
+    #
+    # **"la playa" es una zona cuando es todo lo que dijeron.** Como alias
+    # normal seria un desastre: el emparejado de abajo es por contencion, asi
+    # que "la playa de El Cuco" —que esta a 150 km— tambien contendria "playa"
+    # y acabaria aqui. Lo generico solo puede ganar cuando no hay nada mas
+    # especifico en la frase.
+    aliases_exactos: tuple[str, ...] = field(default=())
     photo: ZonePhoto | None = None
 
 
@@ -208,7 +216,20 @@ _ZONAS_SIN_FOTO: tuple[Zone, ...] = (
         13.4883,
         -89.3222,
         20_000,
-        ("puerto de la libertad",),
+        ("puerto de la libertad", "surf city", "surfcity"),
+        # **Surf City es oficialmente esta costa**, y La Libertad es la zona
+        # costera con mas material: 424 lugares frente a 375 de El Tunco, 293
+        # de El Zonte y 58 de Costa del Sol. Su radio de 20 km cubre El Tunco
+        # y El Sunzal, que quedan a seis kilometros y medio, asi que "la
+        # playa" a secas cae donde hay de todo sin dejar fuera lo famoso.
+        aliases_exactos=(
+            "la playa",
+            "las playas",
+            "playa",
+            "playas",
+            "la costa",
+            "el mar",
+        ),
     ),
     Zone("el-tunco", "Playa El Tunco", 13.4936, -89.3819, 15_000, ("el tunco", "tunco")),
     Zone("el-zonte", "Playa El Zonte", 13.4936, -89.4400, 12_000, ("el zonte",)),
@@ -282,6 +303,12 @@ def find_zone(texto: str) -> Zone | None:
         return None
 
     candidatas: list[tuple[int, Zone]] = []
+
+    # Lo exacto, antes que nada: si lo unico que dijeron fue "la playa", eso
+    # es una zona; si nombraron una playa concreta, que conteste el resto.
+    for zona in ZONES:
+        if any(objetivo == _normalize(n) for n in zona.aliases_exactos):
+            return zona
 
     for zona in ZONES:
         for nombre in (zona.name, zona.key.replace("-", " "), *zona.aliases):
