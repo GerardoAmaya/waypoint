@@ -3496,7 +3496,7 @@ def plan_streaming(
     # Cuesta una peticion mas cuando el viaje mezcla modos, y solo entonces:
     # un itinerario entero en coche sigue costando una. La alternativa era
     # estimar los dias a pie, y la estimacion esta calibrada contra rutas en
-    # coche —DETOUR_FACTOR sale de 812 pares de ORS en carro— asi que para
+    # coche —el factor de rodeo se mide en carro— asi que para
     # caminar esta doblemente mal.
     lugares_por_modo: dict[str, list[PlaceHit]] = {}
     for dia in borrador.days:

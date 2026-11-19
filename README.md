@@ -268,7 +268,10 @@ imperativo— y quedó como dependencia muerta.
 - **El volcado del catálogo no borra.** `make dump` es aditivo, así que un lugar
   retirado en local sobrevive en producción.
 - **El OSRM propio es solo local.** El despliegue sigue midiendo con ORS y su
-  cupo: llevarlo a producción pide hornear el grafo en una imagen.
+  cupo: llevarlo a producción pide hornear el grafo en una imagen. Sí se usa
+  para calibrar: `make rodeo` mide el desvío de la carretera zona por zona y
+  lo que sale se versiona, así que producción lee la tabla sin necesitar el
+  grafo.
 - **Los itinerarios compartidos no se borran solos.** La tabla lleva la fecha y
   la cuenta de aperturas para poder limpiarla, pero nadie la limpia todavía.
 

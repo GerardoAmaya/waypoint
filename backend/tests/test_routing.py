@@ -14,8 +14,10 @@ from app.models import Category
 from app.services import routing
 from app.services.geo import (
     ARRIVAL_OVERHEAD_MINUTES,
-    DETOUR_FACTOR,
+    RODEO_NACIONAL,
+    RODEO_POR_ZONA,
     EstimatedTravel,
+    factor_de_rodeo,
     haversine_km,
 )
 from app.services.itinerary import Constraints, build_days
@@ -302,8 +304,11 @@ class TestTravelMatrix:
         matriz = TravelMatrix(fallback=EstimatedTravel("driving"))
 
         km, minutos = matriz.between(a, b)
-        # El estimador redondea a tres decimales, como el resto del proyecto.
-        esperado = round(haversine_km(*SAN_SALVADOR, *SANTA_ANA) * DETOUR_FACTOR, 3)
+        # Contra el propio estimador y no contra un factor fijo: lo que se
+        # prueba es que un par desconocido cae al respaldo, no cuanto vale el
+        # desvio. Desde que el factor depende de la zona, escribirlo a mano
+        # ataba este test a la calibracion y lo rompia al recalibrar.
+        esperado, _ = EstimatedTravel("driving").between(a, b)
 
         assert km == pytest.approx(esperado)
         assert minutos > 0
@@ -1241,3 +1246,49 @@ class TestCadaEndpointConSuTecho:
         cliente = ORSClient("llave", daily_budget=45)
 
         assert cliente.directions_quota.budget == 45
+
+
+class TestElRodeoDependeDeLaZona:
+    """El desvio de la carretera no es el mismo en todo el pais.
+
+    Medido contra OSRM sobre 10.726 pares dentro de las veinte zonas, tres
+    muestras cada una: la mediana nacional es 1.53 y por zona va de 1.36 en
+    San Salvador a 2.19 en La Palma. Una constante trataba la montaña como la
+    carretera panamericana.
+    """
+
+    def test_la_montana_rodea_mas_que_la_ciudad(self):
+        de_la_palma = factor_de_rodeo(14.3167, -89.1667)
+        de_san_salvador = factor_de_rodeo(13.6929, -89.2182)
+
+        assert de_la_palma > de_san_salvador
+
+    def test_un_punto_fuera_de_toda_zona_usa_el_nacional(self):
+        """**El respaldo importa tanto como la tabla.** El catalogo tiene
+        lugares fuera de las veinte zonas, y para esos el numero honesto es el
+        del pais, no el de la zona que casualmente este menos lejos."""
+        # En el Pacifico, a doscientos kilometros de la costa.
+        assert factor_de_rodeo(11.5, -89.0) == RODEO_NACIONAL
+
+    def test_cada_zona_devuelve_lo_suyo_en_su_centro(self):
+        for lat, lon, _radio, factor in RODEO_POR_ZONA:
+            assert factor_de_rodeo(lat, lon) == pytest.approx(factor)
+
+    def test_ningun_factor_encoge_la_carretera(self):
+        """Un factor por debajo de 1 diria que la carretera es mas corta que
+        la linea recta, que no puede ser."""
+        for *_, factor in RODEO_POR_ZONA:
+            assert factor > 1.0
+        assert RODEO_NACIONAL > 1.0
+
+    def test_la_estimacion_sigue_al_terreno(self):
+        """Lo que importa de todo esto: el mismo tramo, medido en dos sitios
+        distintos, no da lo mismo."""
+        montana = EstimatedTravel("driving").between(
+            lugar("A", 14.3167, -89.1667), lugar("B", 14.3267, -89.1567)
+        )
+        ciudad = EstimatedTravel("driving").between(
+            lugar("A", 13.6929, -89.2182), lugar("B", 13.7029, -89.2082)
+        )
+
+        assert montana[0] > ciudad[0]

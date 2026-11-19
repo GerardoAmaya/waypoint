@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate test lint psql osrm osrm-datos osrm-down ors-check ors-trace ors-calibrate ors-warm ors-warm-apply ors-warm-zone zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
+.PHONY: up down logs migrate test lint psql osrm osrm-datos rodeo osrm-down ors-check ors-trace ors-calibrate ors-warm ors-warm-apply ors-warm-zone zones refilter evaluate evaluate-real gazetteer gazetteer-dry web web-build web-check web-test dump restore
 
 up:
 	docker compose up -d --build
@@ -60,6 +60,12 @@ osrm:
 
 osrm-down:
 	docker compose --profile osrm stop osrm-car osrm-foot
+
+# Mide el desvio de la carretera frente a la recta, zona por zona, contra el
+# OSRM local. Lo que imprime se pega en RODEO_POR_ZONA, en geo.py. Produccion
+# no necesita OSRM: lee la tabla.
+rodeo:
+	docker compose exec api python -m scripts.calibrar_rodeo
 
 ors-check:
 	docker compose exec api python -m scripts.check_ors

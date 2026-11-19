@@ -16,6 +16,8 @@ from app.schemas import ItineraryRequest
 from app.services.geo import (
     ARRIVAL_OVERHEAD_MINUTES,
     DETOUR_FACTOR,
+    RODEO_NACIONAL,
+    RODEO_POR_ZONA,
     EstimatedTravel,
     haversine_km,
     speed_kmh,
@@ -2984,16 +2986,46 @@ class TestLaSalidaQueSeOfreceSirveEnSuModo:
     ocho a sesenta.
     """
 
-    # El comedor tiene que quedar fuera del techo de SU modo, y los techos sin
-    # pedir son ocho a pie y sesenta en coche.
-    LEJOS = {"walking": 13.78, "driving": 14.30}
+    MARGEN = {"walking": 1.9, "driving": 2.8}
+
+    def _lejos(self, modo, centro_lat):
+        """Un comedor justo fuera del techo de SU modo.
+
+        **Se calcula en vez de escribirse.** Estaban puestas a mano las dos
+        latitudes que dejaban el comedor fuera del presupuesto con el factor
+        de rodeo de entonces; al calibrarlo por zona el factor bajo en San
+        Salvador, la distancia estimada encogio, el comedor se colo dentro del
+        techo y el aviso dejo de salir. El test se rompio por un numero que no
+        era lo que queria decir.
+
+        Se usa el factor MAS BAJO de la tabla: con el, la distancia por
+        carretera queda por encima del techo cualquiera que sea la zona.
+
+        El margen es distinto por modo, y eso no es arbitrario: hay una banda
+        estrecha donde el aviso sale POR EL PRESUPUESTO, que es lo que esta
+        escena quiere. Medido, con el comedor al norte del centro:
+
+            margen   a pie            en coche
+            1.5      sin aviso        sin aviso
+            1.8      presupuesto      sin aviso
+            2.0      presupuesto      sin aviso
+            2.5      fuera de hora    presupuesto
+            3.0      fuera de hora    presupuesto
+
+        Por debajo el motor aun cuela el comedor —el presupuesto recorta pero
+        no prohibe— y por encima lo que se rompe es el horario del almuerzo y
+        el aviso cambia de razon. Cada valor cae en mitad de su banda.
+        """
+        menor = min([RODEO_NACIONAL, *(f for *_, f in RODEO_POR_ZONA)])
+        km = BUDGET_BY_MODE[modo] * self.MARGEN[modo] / menor
+        return centro_lat + km / 111.0
 
     def _escena(self, modo):
         destinos = [
             lugar("Museo", 13.700, -89.220, Category.culture),
             lugar("Teatro", 13.7015, -89.2215, Category.culture),
         ]
-        comedor = lugar("Comedor Lejano", self.LEJOS[modo], -89.22, Category.food)
+        comedor = lugar("Comedor Lejano", self._lejos(modo, 13.70), -89.22, Category.food)
         restricciones = Constraints(
             days=1,
             center_lat=13.70,

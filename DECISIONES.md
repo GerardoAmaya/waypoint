@@ -3323,6 +3323,73 @@ franja que llega al final del día dice «desde las 22:00» en vez de cerrar en 
 
 ---
 
+### El desvío de la carretera no es una constante
+
+Cuando ORS se queda sin cupo el motor cae a la estimación geodésica, y esa
+estimación multiplicaba la línea recta por **1.45** en todo el país. El número
+venía de medir 812 pares contra ORS sobre una muestra de treinta lugares, y
+esa medición concluyó «sin tendencia clara».
+
+La conclusión era correcta para lo que midió y equivocada para lo que se usa.
+Treinta lugares repartidos por el país son sobre todo **pares largos entre
+ciudades**, que van por la mejor carretera que hay. Los itinerarios se mueven
+**dentro** de una zona, y ahí manda la montaña: Rio Managuita y Mr. Croissant
+están a 10,67 km en línea recta y a **70,55 km por carretera** — un factor de
+6,6, no de 1,45.
+
+Levantar OSRM lo convirtió en algo medible. El grafo es local, no tiene cupo,
+así que la calibración pasa de ser un número heredado que nadie se atreve a
+tocar a algo que se repite con `make rodeo`. Medido sobre **10.726 pares**
+dentro de las veinte zonas, **tres muestras por zona**:
+
+| | mediana |
+|---|---|
+| San Salvador | 1,36 |
+| San Miguel | 1,38 |
+| Santa Ana | 1,37 |
+| Juayúa | 1,61 |
+| Metapán | 1,74 |
+| Suchitoto | 1,80 |
+| Perquín | 1,96 |
+| **La Palma** | **2,19** |
+| **nacional** | **1,53** |
+
+**Tres muestras y no una, porque una sola baila.** Con semillas distintas la
+mediana de Suchitoto se movió 0,84 y la de Santa Ana 0,06: el ruido depende de
+cómo esté repartido el catálogo en esa zona. La tabla guarda el promedio y el
+comentario de cada línea anota cuánto bailó, para que quien la lea sepa de
+cuál fiarse. Lo que no cambia entre muestras es la separación: San Miguel y
+Nahuizalco siempre cerca de 1,3; La Palma, Perquín y Suchitoto siempre por
+encima de 1,7.
+
+**El factor sale del punto medio del tramo, no de un parámetro.** Había
+catorce sitios que construyen un estimador; enrutar la zona por todos ellos
+habría ensuciado el motor entero. `between()` ya recibe las dos coordenadas,
+así que el factor se deduce ahí y `EstimatedTravel` sigue siendo pura y sin
+estado, que es lo que deja a los tests del motor funcionar sin red ni base.
+
+**Producción no necesita OSRM.** Es una herramienta de medición, no una
+dependencia de ejecución: `osrm_car_url` se queda en None, el despliegue sigue
+midiendo con ORS, y lo que viaja es la tabla de veinte números. Mismo patrón
+que las fuentes: convertir en local, versionar el resultado.
+
+Banco después del cambio: 25/26 límites duros, 0 lugares inventados, 0 paradas
+fuera de hora. Las paradas generadas bajan de 334 a 331 y los días con «llevá
+comida» suben del 15% al 16%, que es exactamente lo que predice el cambio:
+los días se miden más largos, así que cabe menos. Esa diferencia existía
+antes; lo que no existía era saberlo.
+
+**Dos tests se rompieron, y los dos por la misma razón:** fijaban un número
+que no era lo que querían decir. Uno comparaba la estimación contra la
+constante nacional cuando lo que probaba era que un par desconocido cae al
+respaldo; ahora compara contra el propio estimador. El otro colocaba un
+comedor en una latitud escrita a mano para que quedara fuera del presupuesto;
+ahora la calcula desde el techo del modo y el factor más bajo de la tabla, con
+el margen medido —hay una banda estrecha donde el aviso salta por el
+presupuesto y no por el horario, y es distinta a pie que en coche—.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

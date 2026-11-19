@@ -19,15 +19,72 @@ from typing import Protocol, runtime_checkable
 # Los caminos reales no van en linea recta. Este factor convierte la distancia
 # geodesica en una aproximacion de la distancia por carretera.
 #
-# Medido contra ORS sobre 812 pares del catalogo (scripts/calibrate_travel,
-# muestra de 30 lugares, semilla 42): la mediana por tramo dio 1.36, 1.48,
-# 1.41 y 1.51, sin tendencia clara con la distancia. O sea que una constante
-# describe bien el desvio, pero no era 1.35.
+# **No es una constante: depende del terreno.** La version anterior usaba 1.45
+# para todo el pais, calibrado contra ORS sobre 812 pares de una muestra de
+# treinta lugares, y esa medicion concluyo "sin tendencia clara". Pero treinta
+# lugares repartidos por el pais son sobre todo pares largos entre ciudades,
+# que van por la mejor carretera que hay. Los itinerarios se mueven DENTRO de
+# una zona, y ahi manda la montaña.
 #
-# El valor viejo salio de una sola medicion, San Salvador a Santa Ana, que dio
-# 1.26 y nos habria llevado a bajarlo. Ese par es la mejor carretera del pais
-# y no representa al resto.
-DETOUR_FACTOR = 1.45
+# Medido de nuevo contra OSRM —local, sin cupo, repetible— sobre 10.726 pares
+# dentro de las veinte zonas del nomenclator, tres muestras por zona
+# (scripts/calibrar_rodeo): la mediana nacional es 1.53, y por zona va de 1.36
+# en San Salvador a 2.19 en La Palma. Con 1.45 un dia "de 55 km" en La Palma
+# son 83 en carretera, y el motor lo arma como si cupiera.
+RODEO_NACIONAL = 1.53
+
+# El factor de cada zona, con su centro y su radio en kilometros. El "±" del
+# comentario es cuanto se movio la mediana entre las tres muestras: donde es
+# grande —La Palma, Suchitoto, Costa del Sol— el catalogo esta repartido de
+# forma que una muestra distinta da otra cosa, y el numero es menos firme.
+#
+# Lo produce `make rodeo`. Produccion no necesita OSRM para nada de esto: lee
+# la tabla, que es lo que se versiona.
+RODEO_POR_ZONA: tuple[tuple[float, float, float, float], ...] = (
+    (13.9214, -89.845, 15.0, 1.47),  # ahuachapan, ±0.05
+    (13.5069, -88.4897, 12.0, 1.59),  # alegria, ±0.10
+    (13.8547, -89.8036, 12.0, 1.53),  # apaneca, ±0.04
+    (13.8697, -89.8467, 20.0, 1.53),  # ataco, ±0.04
+    (13.8258, -89.6314, 18.0, 1.55),  # cerro-verde, ±0.04
+    (13.8667, -89.55, 15.0, 1.45),  # coatepeque, ±0.04
+    (13.3167, -88.9167, 20.0, 1.61),  # costa-del-sol, ±0.20
+    (13.4936, -89.3819, 15.0, 1.44),  # el-tunco, ±0.03
+    (13.4936, -89.44, 12.0, 1.65),  # el-zonte, ±0.11
+    (13.8414, -89.7461, 12.0, 1.61),  # juayua, ±0.00
+    (13.4883, -89.3222, 20.0, 1.50),  # la-libertad, ±0.15
+    (14.3167, -89.1667, 15.0, 2.19),  # la-palma, ±0.33
+    (14.3333, -89.45, 25.0, 1.74),  # metapan, ±0.04
+    (13.7789, -89.7375, 10.0, 1.39),  # nahuizalco, ±0.08
+    (13.9564, -88.1583, 15.0, 1.96),  # perquin, ±0.12
+    (13.4833, -88.1833, 20.0, 1.38),  # san-miguel, ±0.00
+    (13.6929, -89.2182, 15.0, 1.36),  # san-salvador, ±0.01
+    (13.9942, -89.5597, 25.0, 1.37),  # santa-ana, ±0.05
+    (13.7189, -89.7242, 15.0, 1.39),  # sonsonate, ±0.06
+    (13.9356, -89.0272, 15.0, 1.80),  # suchitoto, ±0.23
+)
+
+# El nombre viejo, para quien lo importe. Es el nacional: el que se usaba
+# cuando el factor no sabia donde estaba.
+DETOUR_FACTOR = RODEO_NACIONAL
+
+
+def factor_de_rodeo(lat: float, lon: float) -> float:
+    """Cuanto se desvia la carretera de la recta en ese punto.
+
+    La zona cuyo centro queda mas cerca, si el punto cae dentro de su radio;
+    si no cae en ninguna, el nacional. **El respaldo importa tanto como la
+    tabla**: el catalogo tiene lugares fuera de las veinte zonas, y para esos
+    el numero honesto es el del pais, no el de la zona que casualmente este
+    menos lejos.
+    """
+    mejor = RODEO_NACIONAL
+    distancia_mejor = None
+    for centro_lat, centro_lon, radio_km, factor in RODEO_POR_ZONA:
+        distancia = haversine_km(lat, lon, centro_lat, centro_lon)
+        if distancia <= radio_km and (distancia_mejor is None or distancia < distancia_mejor):
+            mejor, distancia_mejor = factor, distancia
+    return mejor
+
 
 # La velocidad, en cambio, no aguanta ser una constante. Medida sobre los
 # mismos pares, en carro sube de 35 a 62 km/h segun el largo del viaje: el
@@ -143,7 +200,13 @@ class EstimatedTravel:
 
     def between(self, origen: Waypoint, destino: Waypoint) -> tuple[float, int]:
         recta = haversine_km(origen.lat, origen.lon, destino.lat, destino.lon)
-        km = recta * DETOUR_FACTOR
+        # El factor sale del punto medio del tramo y no de un parametro: asi
+        # esta funcion sigue siendo pura y ningun sitio tiene que acordarse de
+        # pasarle la zona. Un tramo que cruza de una zona a otra se juzga por
+        # donde pasa, que es lo mas justo que da un solo numero.
+        km = recta * factor_de_rodeo(
+            (origen.lat + destino.lat) / 2, (origen.lon + destino.lon) / 2
+        )
         velocidad = speed_kmh(self.mode, recta)
         minutos = max(1, round(km / velocidad * 60))
         return round(km, 3), with_arrival_overhead(minutos, self.mode)
