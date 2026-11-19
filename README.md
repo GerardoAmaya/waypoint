@@ -71,7 +71,9 @@ día. **Moverla a otro día** la saca de uno y la pone en el otro sin rellenar e
 que la pierde, porque mover es reequilibrar. Las tres dicen qué salió y qué
 entró, y se pueden deshacer.
 
-Un día entero se cambia escribiendo: «menos carro», «sacá el museo», «empezá a las 7».
+Un día entero se cambia escribiendo: «menos carro», «sacá el museo», «empezá a
+las 7», «mové el mirador al día 2», «agregá la Catedral». Un lugar que no esté
+en el catálogo se dice que no está, en vez de colar el que más se le parezca.
 La revisión contesta qué entendió y qué paradas sacó —nombrándolas— y se puede
 volver al itinerario anterior, porque afinar un día es normal y un cambio que
 empeora no debería costar empezar de cero.

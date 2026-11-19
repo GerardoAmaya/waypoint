@@ -479,3 +479,75 @@ class TestQuitarYMoverNoReconstruyenNada:
             ).status_code
             == 200
         )
+
+
+class TestElChatEscritoSabeMoverYAgregar:
+    """Lo que el vocabulario de la revisión no sabía decir.
+
+    **Mover escribiéndolo borraba la parada.** El vocabulario solo tenía
+    `remove`, así que el modelo traducía «mové el mirador al día 2» por «sacá
+    el mirador»: desaparecía del viaje, nunca llegaba al día 2, y la pantalla
+    decía «Saqué Mirador El Mulo» como si fuera lo pedido. El botón lo arregló;
+    escribirlo, que es la función principal del producto, siguió roto.
+
+    Y agregar no existía: se podía sacar, nunca traer.
+    """
+
+    def test_mover_no_borra(self, cliente, monkeypatch):
+        con_revision(monkeypatch, Revision(move=[(DESTINOS[2].name, 1)]))
+
+        respuesta = cliente.post("/plan/revise", json=cuerpo(day=2)).json()
+
+        assert DESTINOS[2].name not in nombres(respuesta, 2)
+        assert DESTINOS[2].name in nombres(respuesta, 1)
+        assert respuesta["moved"] == DESTINOS[2].name
+        assert respuesta["moved_to"] == 1
+        assert respuesta["removed"] == []
+
+    def test_mover_no_rellena_el_dia_de_origen(self, cliente, monkeypatch):
+        """Mover es reequilibrar: si el día se vuelve a llenar, no sirvió."""
+        con_revision(monkeypatch, Revision(move=[(DESTINOS[2].name, 1)]))
+
+        respuesta = cliente.post("/plan/revise", json=cuerpo(day=2)).json()
+
+        assert nombres(respuesta, 2) == [DESTINOS[3].name]
+
+    def test_un_destino_que_no_existe_no_mueve_nada(self, cliente, monkeypatch):
+        """Un día inventado le movería la parada a cualquier parte."""
+        con_revision(monkeypatch, Revision(move=[(DESTINOS[2].name, 6)]))
+
+        respuesta = cliente.post("/plan/revise", json=cuerpo(day=2))
+
+        assert respuesta.status_code == 422
+
+    def test_agregar_trae_el_lugar_y_no_rehace_el_dia(self, cliente, monkeypatch):
+        """Quien agrega un lugar quiere SU día más ese lugar, no otro día."""
+        con_revision(monkeypatch, Revision(add=[DESTINOS[4].name]))
+        monkeypatch.setattr("app.api.plan.search_by_name", lambda db, q, **kw: [DESTINOS[4]])
+
+        antes = nombres(cliente.post("/plan/revise", json=cuerpo(day=2)).json(), 2)
+
+        assert DESTINOS[4].name in antes
+        # Las que ya estaban siguen: agregar no es rehacer.
+        assert DESTINOS[2].name in antes
+        assert DESTINOS[3].name in antes
+
+    def test_un_nombre_que_no_esta_en_el_catalogo_no_cuela_otro(self, cliente, monkeypatch):
+        """**La búsqueda por trigramas devuelve lo que comparte letras.**
+        Pedir "Catedral de Ataco" —que no existe— devolvía "Café de Ataco", y
+        agregarlo habría metido una cafetería diciendo que era lo pedido."""
+        con_revision(monkeypatch, Revision(add=["Catedral de Ataco"]))
+        monkeypatch.setattr("app.api.plan.search_by_name", lambda db, q, **kw: [DESTINOS[0]])
+
+        respuesta = cliente.post("/plan/revise", json=cuerpo(day=2))
+
+        assert respuesta.status_code == 422
+        assert "Catedral de Ataco" in respuesta.json()["detail"]
+
+    def test_una_peticion_que_fallo_no_mueve_el_dia(self, cliente, monkeypatch):
+        """El efecto secundario que tenía: la nota salía y el día se rehacía
+        igual, así que fallar costaba dos paradas cambiadas."""
+        con_revision(monkeypatch, Revision(add=["No Existe"]))
+        monkeypatch.setattr("app.api.plan.search_by_name", lambda db, q, **kw: [])
+
+        assert cliente.post("/plan/revise", json=cuerpo(day=2)).status_code == 422

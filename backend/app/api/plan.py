@@ -45,6 +45,7 @@ from app.services import compartir
 from app.services import itinerary as motor
 from app.services.interpret import interpret, interpret_revision
 from app.services.places import by_ids as places_by_ids
+from app.services.places import search_by_name
 
 logger = logging.getLogger(__name__)
 
@@ -349,6 +350,35 @@ def _reprogramado(db, base, estado) -> RevisionOut:
     )
 
 
+def _lugar_pedido(db, nombre: str):
+    """El lugar que se pidio agregar, o None y el porque.
+
+    **La busqueda por trigramas devuelve lo que comparte letras.** Pedir
+    "Catedral de Ataco" —que no existe en el catalogo— devolvia "Cafe de
+    Ataco" como mejor resultado, y agregarlo habria metido una cafeteria en el
+    dia diciendo que era lo pedido. Es el mismo error que cambiar una comida
+    por otra sin avisar, pero peor: aqui la persona nombro el lugar.
+
+    Asi que no basta con que algo salga: el nombre pedido tiene que estar
+    DENTRO del encontrado. "cerro verde" vale para "Cerro Verde"; "catedral de
+    ataco" no vale para "Cafe de Ataco".
+
+    Cuando varios lo contienen se toma el primero y se nombran los otros: con
+    "Casa Blanca" el catalogo tiene un hotel y un parque arqueologico, y elegir
+    en silencio es elegir mal la mitad de las veces.
+    """
+    pedido = nombre.strip().lower()
+    candidatos = [h for h in search_by_name(db, nombre, limit=5) if pedido in h.name.lower()]
+    if not candidatos:
+        return None, f"no encontré ningún lugar llamado {nombre!r}"
+    if len(candidatos) > 1:
+        otros = ", ".join(h.name for h in candidatos[1:3])
+        return candidatos[0], (
+            f"puse {candidatos[0].name}; si querías otro, también hay {otros}"
+        )
+    return candidatos[0], None
+
+
 @router.post("/remove", response_model=RevisionOut, dependencies=[Depends(limitar)])
 def remove(peticion: RemoveRequest) -> RevisionOut:
     """Quita una parada y deja el dia mas corto.
@@ -529,8 +559,59 @@ def revise(peticion: ReviseRequest) -> RevisionOut:
         por_nombre = {hit.name: ref for ref, hit in catalogo.items()}
         excluir = {por_nombre[n] for n in cambio.remove if n in por_nombre}
 
+        # Agregar: el lugar entra en el dia tal cual, sin rehacerlo.
+        agregados: list = []
+        for nombre in cambio.add:
+            hit, nota = _lugar_pedido(db, nombre)
+            if nota:
+                cambio.notes.append(nota)
+            if hit is not None:
+                agregados.append(hit)
+                objetivo.stops = [*objetivo.stops, (hit.id, None)]
+
+        # **Mover: la parada sale de su dia y entra en el otro, y ninguno de
+        # los dos se rellena.** Mover es reequilibrar; si el dia de origen se
+        # vuelve a llenar solo, no sirvio de nada. Por eso, cuando mover es lo
+        # unico que se pidio, se reprograma sin reconstruir —el mismo camino
+        # que el boton— y si vino acompañado de otros cambios, el dia objetivo
+        # si se rehace, ya sin la parada que se fue.
+        mudadas: list[tuple[str, int]] = []
+        for nombre, destino in cambio.move:
+            ref = por_nombre.get(nombre)
+            if ref is None or destino not in {d.number for d in estado}:
+                cambio.notes.append(f"no pude mover {nombre!r} al día {destino}")
+                continue
+            for dia in estado:
+                if dia.number == peticion.day:
+                    dia.stops = [p for p in dia.stops if p[0] != ref]
+                elif dia.number == destino:
+                    comida = next((c for r, c in objetivo.stops if r == ref), None)
+                    dia.stops = [*dia.stops, (ref, comida)]
+            mudadas.append((nombre, destino))
+
+        # **Una peticion que no se pudo resolver no mueve nada.** "agregá la
+        # Catedral de Ataco" —que no existe en el catalogo— dejaba la nota
+        # puesta y de paso rehacia el dia, asi que la persona veia dos paradas
+        # cambiadas como efecto secundario de algo que fallo.
+        if not (cambio.changes or excluir or mudadas or agregados):
+            raise HTTPException(
+                status_code=422,
+                detail=" ".join(["no pude aplicar ese cambio.", *cambio.notes]),
+            )
+
+        # **Mover y agregar cambian el dia, no lo rehacen.** Si lo unico que
+        # se pidio fue eso, se reprograma sin reconstruir —el mismo camino que
+        # los botones— porque quien agrega un lugar quiere su dia MAS ese
+        # lugar, no un dia distinto que lo contenga. Con otros cambios de por
+        # medio el dia objetivo si se rehace, ya con el estado corregido.
+        solo_estado = bool(mudadas or agregados) and not (cambio.changes or excluir)
         resultado = motor.revise_with_routing(
-            db, base, estado, peticion.day, day_constraints=del_dia, exclude=excluir
+            db,
+            base,
+            estado,
+            None if solo_estado else peticion.day,
+            day_constraints=None if solo_estado else del_dia,
+            exclude=None if solo_estado else excluir,
         )
 
         return RevisionOut(
@@ -545,6 +626,8 @@ def revise(peticion: ReviseRequest) -> RevisionOut:
             ),
             applied={k: _json_llano(v) for k, v in cambio.changes.items()},
             removed=cambio.remove,
+            moved=mudadas[0][0] if mudadas else None,
+            moved_to=mudadas[0][1] if mudadas else None,
             missing=resultado.missing,
             unmapped=cambio.unmapped,
             notes=cambio.notes,

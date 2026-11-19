@@ -3390,6 +3390,58 @@ presupuesto y no por el horario, y es distinta a pie que en coche—.
 
 ---
 
+### El chat escrito solo sabía quitar
+
+Los botones de la parada arreglaron mover. **Escribirlo seguía borrando**, y
+escribir es la función principal del producto. Lo di por arreglado y lo estaba
+a medias; comprobado contra la API después de darlo por bueno:
+
+```
+«mové Mirador El Mulo al día 2»  →  removed=['Mirador El Mulo'], moved=None
+                                    ¿llegó al día 2? False
+```
+
+El vocabulario de la revisión tenía un solo verbo sobre paradas —`remove`— así
+que el modelo traducía mover por quitar. Ahora tiene tres, y el prompt dice en
+voz alta por qué no son lo mismo: *«MOVER NO ES SACAR: sacarlo lo hace
+desaparecer del viaje, y lo que pidió fue conservarlo en otro día»*.
+
+**Agregar no existía.** Se podía sacar, nunca traer, ni desde el chat ni desde
+los botones. Ahora «agregá la Catedral de Ataco» o «quiero ir también al
+Mirador de la Cruz» traen el lugar.
+
+Y al construirlo apareció el mismo error de siempre, esta vez en la búsqueda:
+
+**La búsqueda por trigramas devuelve lo que comparte letras.** `search_by_name`
+con «Catedral de Ataco» —que no existe en el catálogo— devolvía **«Café de
+Ataco»** como mejor resultado. Agregarlo habría metido una cafetería en el día
+diciendo que era lo pedido, y la persona había nombrado el lugar: no hay
+margen para interpretar. Ahora el nombre pedido tiene que estar **dentro** del
+encontrado, y si no, se dice que no existe. Cuando varios lo contienen —«Casa
+Blanca» es un hotel y un parque arqueológico— se toma el primero y se nombran
+los otros, porque elegir en silencio es elegir mal la mitad de las veces.
+
+**Ni mover ni agregar rehacen el día.** Quien agrega un lugar quiere su día
+*más* ese lugar, no un día distinto que lo contenga. La primera versión usaba
+`must_include_places` y reconstruía: pedir una catedral devolvía el día con
+cinco lugares nuevos. Ahora los dos modifican el estado y reprograman —el
+mismo camino `target=None` que usan los botones— y si con el añadido el día ya
+no cabe, eso es una violación: pedir «agregá el mirador» devolvió el lugar
+dentro y un `max_travel_km_per_day` que lo explica.
+
+**Y una petición que falla no mueve nada.** «Agregá la Catedral de Ataco»
+dejaba la nota puesta *y además* rehacía el día, así que fallar costaba dos
+paradas cambiadas como efecto secundario. Ahora es un 422 con el motivo y el
+día se queda como estaba.
+
+La pantalla no necesitó nada: `moved`/`moved_to` ya los pintaba el bloque de
+respuesta desde los botones, y lo que entra lo calcula el cliente comparando
+con el día anterior.
+
+Banco: 25/26 límites duros, 0 lugares inventados, 0 paradas fuera de hora.
+
+---
+
 ---
 
 ## Cómo se mide el cumplimiento

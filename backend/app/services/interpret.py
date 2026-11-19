@@ -855,7 +855,20 @@ parque" es {"nature": 120}.
 - "remove": lista con los nombres de las paradas de ESE dia que la persona \
 quiere sacar, copiados tal cual de la lista que se te da. Lista vacia si no \
 pidio sacar ninguna.
+- "move": lista de objetos {"name": ..., "to_day": N} con las paradas de ESE \
+dia que la persona quiere MOVER a otro dia. El nombre, copiado tal cual de la \
+lista. "moveé el mirador al día 2" es [{"name": "Mirador El Mulo", \
+"to_day": 2}]. Lista vacia si no pidio mover ninguna.
+- "add": lista de nombres de lugares que la persona quiere AGREGAR a ese dia. \
+Van tal cual los dijo, aunque no esten en la lista: la lista es lo que el dia \
+YA tiene, y agregar es traer algo de fuera. "agregá la Catedral de Ataco" es \
+["Catedral de Ataco"]. Lista vacia si no pidio agregar ninguna.
 - "unmapped": lista de strings con lo que entendiste y no pudiste representar.
+
+MOVER NO ES SACAR. "moveé el mirador al día 2" va en "move", nunca en \
+"remove": sacarlo lo hace desaparecer del viaje, y lo que pidio fue \
+conservarlo en otro dia. Si dice que lo mueva pero no a donde, eso va a \
+"unmapped": un dia de destino inventado le mueve la parada a cualquier parte.
 
 NUNCA fuerces algo dentro de un campo porque se parece. El presupuesto no \
 existe como campo: si dice que un dia "se ve caro", eso va a "unmapped". \
@@ -868,6 +881,16 @@ class Revision:
 
     changes: dict = field(default_factory=dict)
     remove: list[str] = field(default_factory=list)
+    # Las paradas que cambian de dia: (nombre, dia de destino).
+    #
+    # **Aparte de `remove` porque no son lo mismo.** El vocabulario solo sabia
+    # quitar, asi que el modelo traducia "move el mirador al dia 2" por
+    # "saca el mirador": la parada desaparecia del viaje, nunca llegaba al
+    # dia 2, y la pantalla cantaba exito sobre algo que la persona queria
+    # conservar.
+    move: list[tuple[str, int]] = field(default_factory=list)
+    # Los nombres de lugares que se piden traer de fuera a ese dia.
+    add: list[str] = field(default_factory=list)
     unmapped: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     error: str | None = None
@@ -878,7 +901,35 @@ class Revision:
 
     @property
     def touches_anything(self) -> bool:
-        return bool(self.changes or self.remove)
+        return bool(self.changes or self.remove or self.move or self.add)
+
+
+def _la_misma_parada(pedido: str, conocidos: dict[str, str]) -> str | None:
+    """El nombre exacto de la parada que se pidio, o None si no esta.
+
+    Solo se aceptan nombres que existan en ese dia. Uno inventado se descarta
+    con aviso: sacar "el museo" de un dia que no tiene museo no es una
+    operacion silenciosa, es un malentendido.
+
+    Se acepta el parecido solo cuando no hay duda: "el mirador" vale si el dia
+    tiene uno, y no vale si tiene dos.
+    """
+    clave = pedido.strip().lower()
+    if clave in conocidos:
+        return conocidos[clave]
+    parecidos = [orig for k, orig in conocidos.items() if clave in k]
+    return parecidos[0] if len(parecidos) == 1 else None
+
+
+def _strings_de_objetos(valor, campo: str) -> list[tuple[str, object]]:
+    """De [{"name": x, "to_day": n}] a [(x, n)], saltando lo que no lo sea."""
+    if not isinstance(valor, list):
+        return []
+    salida = []
+    for item in valor:
+        if isinstance(item, dict) and isinstance(item.get(campo), str):
+            salida.append((item[campo], item.get("to_day")))
+    return salida
 
 
 def _revision_context(paradas: list[str]) -> str:
@@ -968,19 +1019,30 @@ def interpret_revision(frase: str, stops: list[str], client=None) -> Revision:
     conocidos = {n.strip().lower(): n for n in stops}
     remove: list[str] = []
     for pedido in _strings(datos.get("remove")):
-        exacto = conocidos.get(pedido.lower())
-        if exacto:
-            remove.append(exacto)
-            continue
-        parecidos = [orig for clave, orig in conocidos.items() if pedido.lower() in clave]
-        if len(parecidos) == 1:
-            remove.append(parecidos[0])
-        else:
+        exacto = _la_misma_parada(pedido, conocidos)
+        if exacto is None:
             notes.append(f"no hay ninguna parada llamada {pedido!r} en ese día")
+        else:
+            remove.append(exacto)
+
+    # Mover: solo paradas de ese dia, y solo a un dia que exista. Un destino
+    # inventado le mueve la parada a cualquier parte, asi que se avisa.
+    move: list[tuple[str, int]] = []
+    for pedido in _strings_de_objetos(datos.get("move"), "name"):
+        nombre, destino = pedido
+        exacto = _la_misma_parada(nombre, conocidos)
+        if exacto is None:
+            notes.append(f"no hay ninguna parada llamada {nombre!r} en ese día")
+        elif not isinstance(destino, int) or not 1 <= destino <= 7:
+            notes.append(f"no entendí a qué día mover {nombre!r}")
+        else:
+            move.append((exacto, destino))
 
     return Revision(
         changes=cambios,
         remove=remove,
+        move=move,
+        add=_strings(datos.get("add")),
         unmapped=_strings(datos.get("unmapped")),
         notes=notes,
     )
